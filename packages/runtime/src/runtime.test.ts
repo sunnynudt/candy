@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { ManualClock } from "@candy/platform";
 import {
   BrowserUnavailableError,
   CandyRuntime,
   DeterministicAgentEngine,
+  InMemorySessionStore,
+  ReadOnlyWorkspaceTool,
+  TaskController,
+  TaskScheduler,
   UnavailableBrowserCapability,
+  WorkspacePathError,
 } from "./index.js";
 
 test("deterministic agent engine drives a complete read-only turn", async () => {
@@ -48,4 +56,52 @@ test("TUI browser capability is explicitly unavailable", async () => {
     browser.open("task-1", "https://example.invalid", new AbortController().signal),
     BrowserUnavailableError,
   );
+});
+
+test("read-only workspace tool contains paths and returns structured outcomes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-read-only-"));
+  await writeFile(`${root}/fixture.txt`, "fixture content", "utf8");
+  const tool = new ReadOnlyWorkspaceTool(root);
+  const ok = await tool.read("fixture.txt", new AbortController().signal);
+  assert.deepEqual(ok, { ok: true, path: "fixture.txt", content: "fixture content", bytes: 15 });
+  assert.equal((await tool.read("missing.txt", new AbortController().signal)).error, "not_found");
+  assert.equal(
+    (await tool.read("../outside.txt", new AbortController().signal)).error,
+    "outside_workspace",
+  );
+  assert.throws(() => tool.containedPath("../outside.txt"), WorkspacePathError);
+});
+
+test("session entries reject secret-shaped content and reload deterministically", async () => {
+  const clock = new ManualClock(10);
+  const sessions = new InMemorySessionStore(clock);
+  await sessions.create("task-1", "session-1");
+  await sessions.append("task-1", { type: "user", text: "inspect" });
+  await sessions.append("task-1", { type: "assistant", text: "safe" });
+  await assert.rejects(
+    sessions.append("task-1", { type: "assistant", text: "Bearer canary" }),
+    /Secret/u,
+  );
+  assert.deepEqual((await sessions.load("task-1")).entries, [
+    { type: "user", text: "inspect" },
+    { type: "assistant", text: "safe" },
+  ]);
+});
+
+test("task controller fences stale revisions and scheduler preserves FIFO with a five-task hard limit", () => {
+  const task = new TaskController("task-1");
+  const running = task.setOwner("owner-1", 0);
+  assert.equal(running.state, "running");
+  assert.throws(() => task.transition("completed", 0), /stale/u);
+  assert.equal(task.transition("completed", 1).state, "completed");
+
+  const scheduler = new TaskScheduler();
+  scheduler.enqueue("a");
+  scheduler.enqueue("b");
+  scheduler.enqueue("c");
+  scheduler.enqueue("d");
+  assert.deepEqual(scheduler.startAvailable(), ["a", "b", "c"]);
+  scheduler.finish("a");
+  assert.deepEqual(scheduler.startAvailable(), ["b", "c", "d"]);
+  assert.throws(() => scheduler.startAvailable(6), /between 1 and 5/u);
 });
