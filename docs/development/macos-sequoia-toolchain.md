@@ -142,4 +142,3 @@ The smoke must compile, link, launch, and exit successfully. The temporary outpu
 - It does not prove packaged Electron startup, credential storage, signing, notarization, or Browser Workspace behavior.
 - It does not prove provider entitlement or live-provider compatibility.
 - It does not replace the GitHub Windows/macOS CI matrix or the final product acceptance evidence package.
-
