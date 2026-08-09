@@ -5,7 +5,7 @@ Updated: 2026-08-09
 | Phase | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | 0. Compatibility Gate | In progress | Accepted architecture and conditional Gate reports | Live credentials, macOS, native/security verification |
-| 1. Repository foundation | In progress | Windows: `npm run check` passes 12 tests; TUI smoke passes; Pi closure is 7 packages at `0.84.1`; lockfile is stable after `npm ci --ignore-scripts`; Windows/macOS 15 ARM CI is configured | First macOS CI execution and recorded result |
+| 1. Repository foundation | Pass | [CI run 31321570063](https://github.com/sunnynudt/candy/actions/runs/31321570063) passes on Windows and macOS 15 ARM; 12 tests and TUI smoke pass; Pi closure is 7 packages at `0.84.1`; lockfile is stable after `npm ci --ignore-scripts` | — |
 | 2. Runtime proof | Pending | Phase 1 Pi root-import and deterministic Runtime seams exist | Pi-backed engine, provider contract, read-only tool, session reload |
 | 3. Task Runtime and TUI | Pending | — | Task state, ownership, leases, TUI |
 | 4. Models and attachments | Pending | — | DeepSeek Pro, MiniMax M3, image flow |
