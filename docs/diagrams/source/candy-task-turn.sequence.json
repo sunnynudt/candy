@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Candy Task Turn Sequence",
+    "subtitle": "A Desktop turn with model streaming, approval-gated browser work, persistence, and normalized events",
+    "output": "candy-task-turn-sequence.html",
+    "viewBox": [1000, 1320]
+  },
+  "participants": [
+    { "id": "user", "type": "external", "label": "User", "sublabel": "developer" },
+    { "id": "client", "type": "frontend", "label": "Desktop", "sublabel": "renderer + main" },
+    { "id": "runtime", "type": "backend", "label": "Runtime", "sublabel": "task owner" },
+    { "id": "store", "type": "database", "label": "Task Store", "sublabel": "session" },
+    { "id": "pi", "type": "backend", "label": "Pi Adapter", "sublabel": "agent loop" },
+    { "id": "provider", "type": "cloud", "label": "Provider", "sublabel": "selected model" },
+    { "id": "tools", "type": "messagebus", "label": "Tool Host", "sublabel": "policy" },
+    { "id": "browser", "type": "frontend", "label": "Browser", "sublabel": "Electron main" }
+  ],
+  "segments": [
+    { "from": 150, "to": 340, "label": "01 / START TURN" },
+    { "from": 350, "to": 790, "label": "02 / MODEL + TOOL" },
+    { "from": 800, "to": 1120, "label": "03 / CONTINUE + PERSIST" }
+  ],
+  "messages": [
+    { "from": "user", "to": "client", "y": 185, "label": "submit task input", "variant": "emphasis" },
+    { "from": "client", "to": "runtime", "y": 230, "label": "task.start_turn", "variant": "emphasis" },
+    { "from": "runtime", "to": "store", "y": 275, "label": "load task + session" },
+    { "from": "store", "to": "runtime", "y": 320, "label": "snapshot", "variant": "return" },
+    { "from": "runtime", "to": "pi", "y": 375, "label": "run turn", "variant": "emphasis" },
+    { "from": "pi", "to": "provider", "y": 420, "label": "stream model request", "variant": "emphasis" },
+    { "from": "provider", "to": "pi", "y": 465, "label": "tool call", "variant": "return" },
+    { "from": "pi", "to": "tools", "y": 510, "label": "execute browser action" },
+    { "from": "tools", "to": "runtime", "y": 555, "label": "approval required", "variant": "security" },
+    { "from": "runtime", "to": "client", "y": 600, "label": "permission.requested", "variant": "security" },
+    { "from": "client", "to": "user", "y": 645, "label": "show site + action", "variant": "security" },
+    { "from": "user", "to": "client", "y": 690, "label": "approve", "variant": "return" },
+    { "from": "client", "to": "runtime", "y": 735, "label": "permission.resolve", "variant": "security" },
+    { "from": "runtime", "to": "tools", "y": 780, "label": "continue tool", "variant": "return" },
+    { "from": "tools", "to": "browser", "y": 835, "label": "act at revision", "variant": "emphasis" },
+    { "from": "browser", "to": "tools", "y": 880, "label": "observation + screenshot id", "variant": "return" },
+    { "from": "tools", "to": "pi", "y": 925, "label": "tool result", "variant": "return" },
+    { "from": "pi", "to": "provider", "y": 970, "label": "continue model turn", "variant": "emphasis" },
+    { "from": "provider", "to": "pi", "y": 1015, "label": "final response", "variant": "return" },
+    { "from": "pi", "to": "runtime", "y": 1060, "label": "normalized completion", "variant": "return" },
+    { "from": "runtime", "to": "store", "y": 1105, "label": "persist completed records", "variant": "dashed" },
+    { "from": "runtime", "to": "client", "y": 1150, "label": "events + snapshot cursor", "variant": "return" },
+    { "from": "client", "to": "user", "y": 1195, "label": "response + review", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "runtime", "from": 220, "to": 1160, "type": "backend" },
+    { "participant": "pi", "from": 370, "to": 1070, "type": "backend" },
+    { "participant": "provider", "from": 415, "to": 1025, "type": "cloud" },
+    { "participant": "tools", "from": 505, "to": 935, "type": "messagebus" },
+    { "participant": "browser", "from": 830, "to": 890, "type": "frontend" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "One Runtime Contract", "items": ["Commands enter through the Runtime Module", "Clients consume normalized sequenced events", "Pi and provider payloads stay internal"] },
+    { "dot": "rose", "title": "Approval + Browser", "items": ["Tool Host requests permission before sensitive action", "Browser actions carry an observation revision", "Browser auth values never return to the task"] },
+    { "dot": "emerald", "title": "Safe Persistence", "items": ["Only completed messages and tool results persist", "Screenshots persist by attachment identifier", "Uncertain side effects are never replayed"] }
+  ]
+}

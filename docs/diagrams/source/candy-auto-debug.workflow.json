@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Candy Auto Debug Workflow",
+    "subtitle": "One long-running task reuses the normal agent loop, tools, approvals, and explicit validator",
+    "output": "candy-auto-debug-workflow.html"
+  },
+  "lanes": [
+    { "id": "user", "label": "User" },
+    { "id": "engine", "label": "Task Engine" },
+    { "id": "tools", "label": "Tool Host" },
+    { "id": "evidence", "label": "Validator + Browser" },
+    { "id": "exceptions", "label": "Pause Conditions", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "define", "label": "Define", "fromCol": 0, "toCol": 0 },
+    { "id": "reproduce", "label": "Reproduce + inspect", "fromCol": 1, "toCol": 2 },
+    { "id": "repair", "label": "Repair + rerun", "fromCol": 3, "toCol": 4, "variant": "emphasis" },
+    { "id": "finish", "label": "Verify", "fromCol": 5, "toCol": 5 }
+  ],
+  "groups": [
+    { "id": "agent_loop", "label": "Normal Pi agent loop", "lane": "engine", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "stop_group", "label": "No automatic escalation", "lane": "exceptions", "fromCol": 2, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["goal", "reproduce", "evidence", "repair", "rerun", "verify", "done"],
+  "nodes": [
+    { "id": "goal", "lane": "user", "col": 0, "type": "external", "label": "Define Goal", "sublabel": "outcome + validator", "width": 96 },
+    { "id": "done", "lane": "user", "col": 5, "type": "frontend", "label": "Review Result", "sublabel": "evidence + diff", "width": 100 },
+    { "id": "repair", "lane": "engine", "col": 3, "type": "backend", "label": "Diagnose + Edit", "sublabel": "normal agent turn", "width": 104, "tag": "same model" },
+    { "id": "reproduce", "lane": "tools", "col": 1, "type": "messagebus", "label": "Run Validator", "sublabel": "reproduce failure", "width": 100 },
+    { "id": "rerun", "lane": "tools", "col": 4, "type": "messagebus", "label": "Rerun Validator", "sublabel": "same proof", "width": 100 },
+    { "id": "evidence", "lane": "evidence", "col": 2, "type": "database", "label": "Capture Evidence", "sublabel": "test / build / UI", "width": 104 },
+    { "id": "verify", "lane": "evidence", "col": 5, "type": "security", "label": "Verify Outcome", "sublabel": "pass or fail", "width": 100, "tag": "definition of done" },
+    { "id": "approval", "lane": "exceptions", "col": 2, "type": "security", "label": "Needs Approval", "sublabel": "pause task", "width": 96 },
+    { "id": "stalled", "lane": "exceptions", "col": 4, "type": "security", "label": "No Progress", "sublabel": "stall detected", "width": 90 },
+    { "id": "paused", "lane": "exceptions", "col": 5, "type": "messagebus", "label": "Paused", "sublabel": "steer or cancel", "width": 86 }
+  ],
+  "edges": [
+    { "from": "goal", "to": "reproduce", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "reproduce", "to": "evidence", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "evidence", "to": "repair", "label": "failure evidence", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "from": "repair", "to": "rerun", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "rerun", "to": "verify", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "verify", "to": "done", "label": "success", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "from": "verify", "to": "repair", "label": "failed", "variant": "dashed", "role": "return", "fromSide": "top", "toSide": "right", "route": "up-channel" },
+    { "from": "repair", "to": "approval", "variant": "security", "fromSide": "bottom", "toSide": "top", "via": [[380, 290], [380, 550], [300, 550]] },
+    { "from": "approval", "to": "paused", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "bottom", "route": "bottom-channel" },
+    { "from": "verify", "to": "stalled", "label": "repeated state", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelAt": [563, 539] },
+    { "from": "stalled", "to": "paused", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Completion", "items": ["Validator is chosen before the loop", "Every iteration produces observable evidence", "Success requires the same validator to pass"] },
+    { "dot": "rose", "title": "Safety", "items": ["Permissions never expand automatically", "Stall, budget, ownership loss, or user stop pauses work", "No automatic commit, push, release, or deploy"] },
+    { "dot": "cyan", "title": "Architecture", "items": ["Auto Debug is a Long-running Task policy", "It reuses Pi, Tool Host, Browser, and Task Store", "No second scheduler or workflow engine"] }
+  ]
+}
