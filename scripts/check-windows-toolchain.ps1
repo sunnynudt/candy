@@ -31,15 +31,17 @@ function Add-Result {
 function Read-Version {
   param(
     [string]$Command,
-    [string[]]$Arguments
+    [string[]]$Arguments,
+    [string]$FallbackPath
   )
 
   $resolved = Get-Command $Command -ErrorAction SilentlyContinue
-  if (-not $resolved) {
+  $source = if ($resolved) { $resolved.Source } elseif ($FallbackPath -and (Test-Path -LiteralPath $FallbackPath)) { $FallbackPath } else { $null }
+  if (-not $source) {
     return $null
   }
 
-  return ((& $resolved.Source @Arguments 2>&1 | Select-Object -First 1) -join '').Trim()
+  return ((& $source @Arguments 2>&1 | Select-Object -First 1) -join '').Trim()
 }
 
 function Format-Value {
@@ -61,16 +63,20 @@ $nodeVersion = Read-Version 'node' @('--version')
 $npmVersion = Read-Version 'npm' @('--version')
 $gitVersion = Read-Version 'git' @('--version')
 $ghVersion = Read-Version 'gh' @('--version')
+$cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+$rustupPath = Join-Path $cargoBin 'rustup.exe'
+$rustcPath = Join-Path $cargoBin 'rustc.exe'
+$cargoPath = Join-Path $cargoBin 'cargo.exe'
 
 Add-Result 'Node.js' ($nodeVersion -eq 'v22.23.2') "expected v22.23.2, received $(Format-Value $nodeVersion)"
 Add-Result 'npm' ($npmVersion -eq '10.9.8') "expected 10.9.8, received $(Format-Value $npmVersion)"
 Add-Result 'Git' ($null -ne $gitVersion) (Format-Value $gitVersion)
 Add-Result 'GitHub CLI' ($null -ne $ghVersion) (Format-Value $ghVersion)
 
-$rustupVersion = Read-Version 'rustup' @('--version')
-$rustcVersion = Read-Version 'rustc' @('--version')
-$cargoVersion = Read-Version 'cargo' @('--version')
-$activeRust = if ($rustupVersion) { Read-Version 'rustup' @('show', 'active-toolchain') } else { $null }
+$rustupVersion = Read-Version 'rustup' @('--version') $rustupPath
+$rustcVersion = Read-Version 'rustc' @('--version') $rustcPath
+$cargoVersion = Read-Version 'cargo' @('--version') $cargoPath
+$activeRust = if ($rustupVersion) { Read-Version 'rustup' @('show', 'active-toolchain') $rustupPath } else { $null }
 $nativeRequired = [bool]$RequireNative
 
 Add-Result 'Rustup' ($null -ne $rustupVersion) (Format-Value $rustupVersion) $nativeRequired

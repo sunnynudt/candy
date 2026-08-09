@@ -53,6 +53,19 @@ Verified on 2026-08-10:
 
 The exact Rust release is not yet a repository compatibility pin because no Rust package exists. Add and commit `rust-toolchain.toml` before the first native-helper implementation; from then on it becomes the authoritative Rust version instead of the moving `stable` channel.
 
+### Recorded native-chain verification
+
+Verified on 2026-08-10 on Windows 11 Pro x64, build `26200`:
+
+- Rustup `1.29.0` selected `stable-x86_64-pc-windows-msvc` as the active default toolchain;
+- rustc `1.97.1`, Cargo `1.97.1`, rustfmt `1.9.0`, and Clippy `0.1.97` are installed;
+- MSVC `14.44.35207` provides `cl.exe` and `link.exe`;
+- Windows SDK `10.0.26100.0` provides the resource, manifest, and signing tools;
+- `rustc` compiled a smoke program through the Visual Studio x64 developer environment;
+- the resulting `smoke.exe` linked, launched, and printed `candy-rust-msvc-smoke` with exit code `0`.
+
+This is evidence that the Windows Rust → MSVC → SDK → CRT chain is usable. It does not claim that the Sandbox Runner itself is implemented or accepted.
+
 ## New-machine installation order
 
 Run installers separately. Restart the terminal after installers change `PATH` or native tool registrations.
