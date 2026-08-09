@@ -13,7 +13,8 @@ Implement `docs/architecture/implementation-plan-v1.md` in phase order. At each 
 3. run the applicable deterministic checks;
 4. fix failures before moving on;
 5. update `docs/implementation/progress-v1.md` with evidence;
-6. record unavailable external evidence in `docs/implementation/blockers-v1.md` and continue independent work.
+6. record unavailable external evidence in `docs/implementation/blockers-v1.md` and continue independent work;
+7. commit the coherent checkpoint, push it to the canonical branch, and verify remote synchronization before starting the next work packet.
 
 An unresolved Gate blocks capability availability, acceptance, and release claims. It does not require placeholder code, guessed compatibility, or stopping unrelated implementation.
 
@@ -33,6 +34,16 @@ npm run check:pi-versions
 
 Later phases add focused contract, integration, packaging, and end-to-end commands without changing the meaning of the root checks.
 
+## Branch continuity and cloud durability
+
+- `codex/candy-v1-foundation` is the canonical V1 implementation and delivery branch.
+- Fetch the canonical remote branch before changing code. Fast-forward if it is ahead; do not continue automatically when histories diverge.
+- Keep commits scoped to coherent, verified checkpoints and preserve unrelated user changes.
+- Scan staged content for provider credentials and other credential material before every commit and push.
+- Push every successful checkpoint commit to `origin/codex/candy-v1-foundation`, then verify that the local and remote commit identifiers match.
+- Never force-push, rewrite published history, or use another delivery branch unless the user explicitly changes this policy.
+- If synchronization fails after bounded retries, record the exact failure and stop before starting another work packet. A local commit is not a durable checkpoint until the remote verification succeeds.
+
 ## Unattended behavior
 
 - Do not ask for credentials, account access, signing identities, or target machines during an unattended run.
@@ -40,7 +51,7 @@ Later phases add focused contract, integration, packaging, and end-to-end comman
 - Mark missing external resources Blocked and continue independent work.
 - Never weaken a security invariant to make a test pass.
 - Never claim macOS, provider, signing, sandbox, or packaged-runtime acceptance without the required evidence.
-- Local commits are allowed when explicitly authorized for the run. Push, pull request, publishing, release, and deployment remain prohibited unless separately authorized.
+- Checkpoint commits and pushes to `origin/codex/candy-v1-foundation` are authorized and required by the branch-continuity policy. Pull requests, publishing, release, and deployment remain prohibited unless separately authorized.
 
 ## Phase 2 checkpoint
 

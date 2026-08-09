@@ -61,6 +61,10 @@ V1 does not include:
 
 ## Development rules
 
+- The canonical V1 implementation and delivery branch is `codex/candy-v1-foundation`. Continue V1 work on this branch unless the user explicitly changes the branch policy.
+- Before a work packet, fetch `origin/codex/candy-v1-foundation`. Fast-forward when the remote is ahead; stop for explicit resolution if local and remote histories diverge.
+- After each coherent, verified V1 checkpoint, inspect the staged scope, scan it for credential material, commit it, push it to `origin/codex/candy-v1-foundation`, and verify that the remote branch resolves to the same commit before starting the next work packet.
+- Never force-push or rewrite published V1 branch history. If a checkpoint push still fails after bounded retries, stop before accumulating further local-only work and report the synchronization blocker.
 - Treat the exact Pi release as the compatibility anchor for the agent runtime. Node.js must stay on a Pi-tested major line, TypeScript must match the pinned Pi release, and npm must remain compatible with Pi's lockfile/install workflow.
 - Pin direct dependencies and the complete `@earendil-works/pi-*` package family to exact accepted versions through the root lockfile and install assertions. Do not allow a mixed Pi package graph.
 - Do not upgrade Pi, the agent-runtime Node major, the npm major, or the TypeScript minor/major independently. Upgrade them as one compatibility change and rerun the Pi Adapter matrix on macOS and Windows.
@@ -75,7 +79,7 @@ V1 does not include:
 - Reuse Pi tools behind a thin Candy Tool Host.
 - Do not add abstractions for hypothetical requirements.
 - Preserve unrelated user changes.
-- Do not commit, push, publish, or create pull requests unless explicitly requested.
+- The user has explicitly authorized checkpoint commits and pushes for V1 work on the canonical branch under the rules above. Publishing releases, creating pull requests, and Git operations outside that scope still require explicit authorization.
 
 ## Agent skills
 
