@@ -141,6 +141,15 @@ export class SQLiteTaskStore {
     return row === undefined ? undefined : mapTaskMetadata(row);
   }
 
+  public queued(): readonly TaskMetadata[] {
+    return this.#database
+      .prepare(
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+      )
+      .all()
+      .map((row) => mapTaskMetadata(row));
+  }
+
   public transition(
     taskId: string,
     expectedRevision: number,

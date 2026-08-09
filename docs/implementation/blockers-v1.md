@@ -29,7 +29,7 @@ Updated: 2026-08-10
 
 ## 2026-08-10 control-plane and persistence checkpoint
 
-- Deterministic result: latest sequential run passes format, lint, typecheck, build, 36 tests, protocol stdio, TUI smoke and read-only task smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, real Git worktree fixture, and native Rust `cargo check --locked` on Windows.
+- Deterministic result: latest sequential run passes format, lint, typecheck, build, 37 tests, protocol stdio, TUI smoke and read-only task smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, durable queued FIFO restoration, real Git worktree fixture, and native Rust `cargo check --locked` on Windows.
 - Persistence: `node:sqlite` is now covered by a Candy-owned metadata store with schema version 2, WAL, full synchronization, a 2.5-second busy timeout, extension loading disabled, restart recovery, interruption recovery, revision-fenced transitions, and bounded task-run metadata. Packaged app-server and macOS topology tests remain open.
 - Long-running/workspace seams: `TaskController` reloads through the metadata store; validator progress stores only bounded counters, stop reasons, and SHA-256 fingerprint hashes; Git worktree fixtures create, inspect, unlock, and clean a detached task worktree without force removal.
 - Protocol: task create/run/pause/resume/cancel/approval command shapes and state events are versioned and secret-rejected; legacy snapshot fixtures remain compatible.

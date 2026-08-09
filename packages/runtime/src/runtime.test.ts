@@ -119,3 +119,12 @@ test("task controller can reload and fence through the Candy metadata store", ()
   assert.equal(store.get("task-persisted")?.state, "completed");
   store.close();
 });
+
+test("task scheduler restores queued FIFO order from durable metadata", () => {
+  const store = new SQLiteTaskStore(":memory:");
+  store.create("task-later", "read-only", 2);
+  store.create("task-first", "read-only", 1);
+  const scheduler = new TaskScheduler(3, 5, store);
+  assert.deepEqual(scheduler.queued(), ["task-first", "task-later"]);
+  store.close();
+});

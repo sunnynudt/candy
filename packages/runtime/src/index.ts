@@ -311,10 +311,12 @@ export class TaskScheduler {
   public constructor(
     public readonly defaultLimit = 3,
     public readonly hardLimit = 5,
+    queueStore?: TaskQueueStore,
   ) {
     if (!Number.isInteger(defaultLimit) || defaultLimit < 1 || defaultLimit > hardLimit) {
       throw new Error("Invalid scheduler default limit.");
     }
+    if (queueStore) this.#queue.push(...queueStore.queued().map((task) => task.taskId));
   }
 
   public enqueue(taskId: string): void {
@@ -343,6 +345,10 @@ export class TaskScheduler {
   public queued(): readonly string[] {
     return [...this.#queue];
   }
+}
+
+export interface TaskQueueStore {
+  queued(): readonly { readonly taskId: string }[];
 }
 
 function assertNoSecret(value: string): void {
