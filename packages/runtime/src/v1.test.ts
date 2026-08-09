@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { SQLiteTaskStore } from "@candy/platform";
 import {
   ApplyChangesGuard,
   AttachmentStore,
@@ -167,6 +170,27 @@ test("long-running tasks complete only on validator success and stop stalled evi
   });
 });
 
+test("long-running validator progress persists only bounded evidence metadata", async () => {
+  const store = new SQLiteTaskStore(":memory:");
+  store.create("debug-task", "read-only");
+  const result = { ok: true, fingerprint: "pass", evidence: "fixture", durationMs: 1 } as const;
+  const completed = await new LongRunningTaskRunner(3).run(
+    async () => undefined,
+    new FixedValidator(result),
+    new AbortController().signal,
+    {
+      store: {
+        record: (progress) => store.recordRun({ taskId: "debug-task", ...progress }),
+      },
+    },
+  );
+  assert.equal(completed.stopReason, "validator_succeeded");
+  assert.equal(store.getRun("debug-task")?.completed, true);
+  assert.equal(store.getRun("debug-task")?.evidenceCount, 1);
+  assert.match(store.getRun("debug-task")?.lastFingerprintHash ?? "", /^[a-f0-9]{64}$/u);
+  store.close();
+});
+
 test("Apply Changes guard fails closed for dirty, changed-base, escaped, and secret-containing patches", () => {
   const guard = new ApplyChangesGuard("C:/workspace");
   const base = {
@@ -207,4 +231,42 @@ test("Git worktree planning uses argument arrays and handoff blocks unsafe trans
   handoff.startWorktree();
   handoff.beginApply("blocked");
   assert.equal(handoff.state, "blocked");
+});
+
+test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "candy-git-fixture-"));
+  const repository = path.join(root, "repo");
+  const worktree = path.join(root, "task-worktree");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  try {
+    git(["init", "-q"], repository);
+    writeFileSync(path.join(repository, "README.md"), "fixture\n");
+    git(["add", "README.md"], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      repository,
+    );
+    const baseCommit = git(["rev-parse", "HEAD"], repository).trim();
+    const plan = planGitWorktree(repository, worktree, "task-fixture", baseCommit);
+
+    git(plan.createArgs, repository);
+    assert.equal(existsSync(path.join(worktree, "README.md")), true);
+    assert.match(git(plan.inspectArgs, repository), /candy:task-fixture/u);
+    git(plan.unlockArgs, repository);
+    git(plan.removeArgs, repository);
+    assert.equal(existsSync(worktree), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

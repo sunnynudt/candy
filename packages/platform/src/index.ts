@@ -41,8 +41,20 @@ export interface TaskMetadata {
   readonly revision: number;
   readonly state: PersistedTaskState;
   readonly approvalProfile: "read-only" | "auto";
-  readonly queueOrder: number | undefined;
-  readonly ownerId: string | undefined;
+  readonly queueOrder?: number;
+  readonly ownerId?: string;
+}
+
+export type PersistedRunStopReason =
+  "running" | "validator_succeeded" | "budget_exhausted" | "stall_detected" | "cancelled" | "error";
+
+export interface TaskRunMetadata {
+  readonly taskId: string;
+  readonly rounds: number;
+  readonly evidenceCount: number;
+  readonly completed: boolean;
+  readonly stopReason: PersistedRunStopReason;
+  readonly lastFingerprintHash?: string;
 }
 
 /**
@@ -79,9 +91,29 @@ export class SQLiteTaskStore {
         queue_order INTEGER,
         owner_id TEXT
       );
-      PRAGMA user_version = 1;
+      CREATE TABLE IF NOT EXISTS task_runs (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+        rounds INTEGER NOT NULL,
+        evidence_count INTEGER NOT NULL,
+        completed INTEGER NOT NULL,
+        stop_reason TEXT NOT NULL,
+        last_fingerprint_hash TEXT
+      );
+      PRAGMA user_version = 2;
       `);
-    } else if (schemaVersion !== 1) {
+    } else if (schemaVersion === 1) {
+      this.#database.exec(`
+        CREATE TABLE IF NOT EXISTS task_runs (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          rounds INTEGER NOT NULL,
+          evidence_count INTEGER NOT NULL,
+          completed INTEGER NOT NULL,
+          stop_reason TEXT NOT NULL,
+          last_fingerprint_hash TEXT
+        );
+        PRAGMA user_version = 2;
+      `);
+    } else if (schemaVersion !== 2) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -136,6 +168,59 @@ export class SQLiteTaskStore {
     );
   }
 
+  public recordRun(progress: TaskRunMetadata): void {
+    assertTaskId(progress.taskId);
+    if (!Number.isSafeInteger(progress.rounds) || progress.rounds < 0)
+      throw new Error("Task run rounds are invalid.");
+    if (!Number.isSafeInteger(progress.evidenceCount) || progress.evidenceCount < 0)
+      throw new Error("Task run evidence count is invalid.");
+    if (
+      progress.lastFingerprintHash !== undefined &&
+      !/^[a-f0-9]{64}$/u.test(progress.lastFingerprintHash)
+    ) {
+      throw new Error("Task run fingerprint hash is invalid.");
+    }
+    this.#database
+      .prepare(
+        `INSERT INTO task_runs
+          (task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET
+          rounds = excluded.rounds,
+          evidence_count = excluded.evidence_count,
+          completed = excluded.completed,
+          stop_reason = excluded.stop_reason,
+          last_fingerprint_hash = excluded.last_fingerprint_hash`,
+      )
+      .run(
+        progress.taskId,
+        progress.rounds,
+        progress.evidenceCount,
+        progress.completed ? 1 : 0,
+        progress.stopReason,
+        progress.lastFingerprintHash ?? null,
+      );
+  }
+
+  public getRun(taskId: string): TaskRunMetadata | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash FROM task_runs WHERE task_id = ?",
+      )
+      .get(taskId);
+    if (row === undefined) return undefined;
+    return {
+      taskId: String(row.task_id),
+      rounds: Number(row.rounds),
+      evidenceCount: Number(row.evidence_count),
+      completed: Number(row.completed) === 1,
+      stopReason: String(row.stop_reason) as PersistedRunStopReason,
+      ...(row.last_fingerprint_hash === null
+        ? {}
+        : { lastFingerprintHash: String(row.last_fingerprint_hash) }),
+    };
+  }
+
   public close(): void {
     this.#database.close();
   }
@@ -148,13 +233,16 @@ export class SQLiteTaskStore {
 }
 
 function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
-  return {
+  const metadata = {
     taskId: String(row.task_id),
     revision: Number(row.revision),
     state: String(row.state) as PersistedTaskState,
     approvalProfile: String(row.approval_profile) as "read-only" | "auto",
-    queueOrder: row.queue_order === null ? undefined : Number(row.queue_order),
-    ownerId: row.owner_id === null ? undefined : String(row.owner_id),
+  };
+  return {
+    ...metadata,
+    ...(row.queue_order !== null ? { queueOrder: Number(row.queue_order) } : {}),
+    ...(row.owner_id !== null ? { ownerId: String(row.owner_id) } : {}),
   };
 }
 

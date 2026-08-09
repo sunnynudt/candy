@@ -299,6 +299,28 @@ export interface LongRunningResult {
   readonly evidence: readonly ValidatorResult[];
 }
 
+export interface LongRunningProgress {
+  readonly rounds: number;
+  readonly evidenceCount: number;
+  readonly completed: boolean;
+  readonly stopReason:
+    | "running"
+    | "validator_succeeded"
+    | "budget_exhausted"
+    | "stall_detected"
+    | "cancelled"
+    | "error";
+  readonly lastFingerprintHash?: string;
+}
+
+export interface LongRunningProgressStore {
+  record(progress: LongRunningProgress): void;
+}
+
+export interface LongRunningProgressBinding {
+  readonly store: LongRunningProgressStore;
+}
+
 export class LongRunningTaskRunner {
   public constructor(
     private readonly maxRounds: number,
@@ -309,28 +331,80 @@ export class LongRunningTaskRunner {
     turn: (round: number, signal: AbortSignal) => Promise<void>,
     validator: Validator,
     signal: AbortSignal,
+    progress?: LongRunningProgressBinding,
   ): Promise<LongRunningResult> {
     const evidence: ValidatorResult[] = [];
     let unchanged = 0;
     for (let round = 1; round <= this.maxRounds; round += 1) {
-      if (signal.aborted)
+      if (signal.aborted) {
+        persistProgress(progress, {
+          rounds: round - 1,
+          evidenceCount: evidence.length,
+          completed: false,
+          stopReason: "cancelled",
+        });
         return { completed: false, stopReason: "cancelled", rounds: round - 1, evidence };
+      }
       try {
         await turn(round, signal);
         const result = await validator.run(signal);
         const previous = evidence.at(-1);
         unchanged = previous?.fingerprint === result.fingerprint ? unchanged + 1 : 0;
         evidence.push(result);
-        if (result.ok)
+        const fingerprintHash = createHash("sha256").update(result.fingerprint).digest("hex");
+        if (result.ok) {
+          persistProgress(progress, {
+            rounds: round,
+            evidenceCount: evidence.length,
+            completed: true,
+            stopReason: "validator_succeeded",
+            lastFingerprintHash: fingerprintHash,
+          });
           return { completed: true, stopReason: "validator_succeeded", rounds: round, evidence };
-        if (unchanged >= this.stallLimit)
+        }
+        if (unchanged >= this.stallLimit) {
+          persistProgress(progress, {
+            rounds: round,
+            evidenceCount: evidence.length,
+            completed: false,
+            stopReason: "stall_detected",
+            lastFingerprintHash: fingerprintHash,
+          });
           return { completed: false, stopReason: "stall_detected", rounds: round, evidence };
+        }
+        persistProgress(progress, {
+          rounds: round,
+          evidenceCount: evidence.length,
+          completed: false,
+          stopReason: "running",
+          lastFingerprintHash: fingerprintHash,
+        });
       } catch {
-        return { completed: false, stopReason: "error", rounds: round, evidence };
+        const stopReason = signal.aborted ? "cancelled" : "error";
+        persistProgress(progress, {
+          rounds: round,
+          evidenceCount: evidence.length,
+          completed: false,
+          stopReason,
+        });
+        return { completed: false, stopReason, rounds: round, evidence };
       }
     }
+    persistProgress(progress, {
+      rounds: this.maxRounds,
+      evidenceCount: evidence.length,
+      completed: false,
+      stopReason: "budget_exhausted",
+    });
     return { completed: false, stopReason: "budget_exhausted", rounds: this.maxRounds, evidence };
   }
+}
+
+function persistProgress(
+  binding: LongRunningProgressBinding | undefined,
+  progress: LongRunningProgress,
+): void {
+  binding?.store.record(progress);
 }
 
 export interface ApplyChangesInput {
@@ -368,6 +442,7 @@ export interface GitWorktreePlan {
   readonly baseCommit: string;
   readonly createArgs: readonly string[];
   readonly inspectArgs: readonly string[];
+  readonly unlockArgs: readonly string[];
   readonly removeArgs: readonly string[];
 }
 
@@ -398,6 +473,7 @@ export function planGitWorktree(
       baseCommit,
     ],
     inspectArgs: ["worktree", "list", "--porcelain", "-z"],
+    unlockArgs: ["worktree", "unlock", worktreePath],
     removeArgs: ["worktree", "remove", worktreePath],
   };
 }

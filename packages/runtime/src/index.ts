@@ -193,13 +193,39 @@ export interface RuntimeTaskSnapshot {
   readonly ownerId?: string;
 }
 
+/** Synchronous persistence seam implemented by Candy's platform-owned task store. */
+export interface TaskMetadataStore {
+  create(
+    taskId: string,
+    approvalProfile: ApprovalProfile,
+    queueOrder?: number,
+  ): RuntimeTaskSnapshot;
+  get(taskId: string): RuntimeTaskSnapshot | undefined;
+  transition(
+    taskId: string,
+    expectedRevision: number,
+    state: TaskState,
+    ownerId?: string,
+  ): RuntimeTaskSnapshot;
+}
+
 export class TaskStateError extends Error {}
 
 export class TaskController {
   #snapshot: RuntimeTaskSnapshot;
 
-  public constructor(taskId: string, approvalProfile: ApprovalProfile = "read-only") {
-    this.#snapshot = { taskId, revision: 0, state: "queued", approvalProfile };
+  public constructor(
+    taskId: string,
+    approvalProfile: ApprovalProfile = "read-only",
+    private readonly persistence?: TaskMetadataStore,
+  ) {
+    this.#snapshot = persistence?.get(taskId) ??
+      persistence?.create(taskId, approvalProfile) ?? {
+        taskId,
+        revision: 0,
+        state: "queued",
+        approvalProfile,
+      };
   }
 
   public snapshot(): RuntimeTaskSnapshot {
@@ -215,7 +241,31 @@ export class TaskController {
     if (!allowedTransition(this.#snapshot.state, next)) {
       throw new TaskStateError(`Cannot transition ${this.#snapshot.state} to ${next}.`);
     }
-    this.#snapshot = { ...this.#snapshot, state: next, revision: this.#snapshot.revision + 1 };
+    const ownerId =
+      next === "completed" || next === "cancelled" || next === "interrupted"
+        ? undefined
+        : this.#snapshot.ownerId;
+    if (this.persistence) {
+      this.#snapshot = this.persistence.transition(
+        taskIdOf(this.#snapshot),
+        expectedRevision,
+        next,
+        ownerId,
+      );
+    } else {
+      const nextSnapshot = {
+        ...this.#snapshot,
+        state: next,
+        revision: this.#snapshot.revision + 1,
+      };
+      if (ownerId === undefined) {
+        const withoutOwner = { ...nextSnapshot };
+        delete withoutOwner.ownerId;
+        this.#snapshot = withoutOwner;
+      } else {
+        this.#snapshot = { ...nextSnapshot, ownerId };
+      }
+    }
     return this.snapshot();
   }
 
@@ -229,14 +279,20 @@ export class TaskController {
     ) {
       throw new TaskStateError("Only resumable tasks can acquire an owner.");
     }
-    this.#snapshot = {
-      ...this.#snapshot,
-      ownerId,
-      state: "running",
-      revision: this.#snapshot.revision + 1,
-    };
+    this.#snapshot = this.persistence
+      ? this.persistence.transition(taskIdOf(this.#snapshot), expectedRevision, "running", ownerId)
+      : {
+          ...this.#snapshot,
+          ownerId,
+          state: "running",
+          revision: this.#snapshot.revision + 1,
+        };
     return this.snapshot();
   }
+}
+
+function taskIdOf(snapshot: RuntimeTaskSnapshot): string {
+  return snapshot.taskId;
 }
 
 function allowedTransition(current: TaskState, next: TaskState): boolean {
@@ -321,6 +377,9 @@ export type {
   BrowserTabSnapshot,
   LongRunningResult,
   LongRunningStopReason,
+  LongRunningProgress,
+  LongRunningProgressBinding,
+  LongRunningProgressStore,
   Validator,
   ValidatorResult,
   GitWorktreePlan,

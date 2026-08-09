@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ManualClock } from "@candy/platform";
+import { ManualClock, SQLiteTaskStore } from "@candy/platform";
 import {
   BrowserUnavailableError,
   CandyRuntime,
@@ -104,4 +104,18 @@ test("task controller fences stale revisions and scheduler preserves FIFO with a
   scheduler.finish("a");
   assert.deepEqual(scheduler.startAvailable(), ["b", "c", "d"]);
   assert.throws(() => scheduler.startAvailable(6), /between 1 and 5/u);
+});
+
+test("task controller can reload and fence through the Candy metadata store", () => {
+  const store = new SQLiteTaskStore(":memory:");
+  const first = new TaskController("task-persisted", "read-only", store);
+  const running = first.setOwner("owner-1", 0);
+  assert.equal(running.revision, 1);
+
+  const second = new TaskController("task-persisted", "read-only", store);
+  assert.deepEqual(second.snapshot(), running);
+  assert.throws(() => second.transition("completed", 0), /stale/u);
+  assert.equal(first.transition("completed", 1).ownerId, undefined);
+  assert.equal(store.get("task-persisted")?.state, "completed");
+  store.close();
 });
