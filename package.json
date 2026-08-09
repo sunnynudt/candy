@@ -19,6 +19,7 @@
     "check:lifecycle-scripts": "node scripts/check-lifecycle-scripts.mjs",
     "check:pi-versions": "node scripts/check-pi-versions.mjs",
     "check:toolchain": "node scripts/assert-toolchain.mjs",
+    "check:windows-toolchain": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-toolchain.ps1",
     "format": "prettier --write package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "format:check": "prettier --check package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "lint": "eslint apps packages scripts",
