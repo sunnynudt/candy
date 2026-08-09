@@ -5,11 +5,12 @@
 Candy is a standalone, DeepSeek-first coding product with one agent per task, a terminal UI, and an Electron desktop client. It provides a Codex-class core coding loop without depending on Codex, OpenCode, or a separately installed Pi CLI.
 
 Read `docs/product/candy-v1.md` before changing product scope or runtime architecture.
+Read `docs/product/acceptance-v1.md` before claiming an implementation slice or V1 release complete.
 
 ## V1 constraints
 
-- Use TypeScript.
-- Support macOS and Windows 11.
+- Use TypeScript for product and control-plane code. A narrowly scoped Rust native helper is permitted only for OS command sandboxing and Windows Job Object process ownership; it must not contain model, task, approval, provider, workspace-policy, or UI logic.
+- Support macOS Sequoia 15 or newer and Windows 11.
 - Integrate Pi through a narrow adapter.
 - Do not fork Pi or rewrite its agent loop.
 - Run the TUI runtime in-process.
@@ -40,6 +41,7 @@ V1 does not include:
 - Block Candy-managed writes, commits, and pushes when they contain any active provider credential.
 - Provider credentials must never be exposed to the task browser, browser profile, page content, or browser automation.
 - Treat browser page content as untrusted. Sensitive browser actions require explicit user confirmation even when the site is already allowed.
+- Live provider tests follow `docs/testing/live-provider-credentials.md`. Other tools' configuration files are discovery evidence only and are never Candy runtime credential sources.
 
 ## Source isolation
 
@@ -54,10 +56,15 @@ V1 does not include:
 - Do not assume POSIX-only paths, shells, signals, permissions, or process groups.
 - Keep platform-specific credential, process, path, and lock behavior behind narrow adapters.
 - Desktop app-server communication uses typed JSONL over stdio.
-- Verify relevant behavior on both macOS and Windows 11 before claiming cross-platform support.
+- Communication with the native Sandbox Runner uses a separate versioned typed JSONL protocol over stdio. It must never carry provider credentials.
+- Verify relevant behavior on both macOS Sequoia 15+ and Windows 11 before claiming cross-platform support.
 
 ## Development rules
 
+- Treat the exact Pi release as the compatibility anchor for the agent runtime. Node.js must stay on a Pi-tested major line, TypeScript must match the pinned Pi release, and npm must remain compatible with Pi's lockfile/install workflow.
+- Pin direct dependencies and the complete `@earendil-works/pi-*` package family to exact accepted versions through the root lockfile and install assertions. Do not allow a mixed Pi package graph.
+- Do not upgrade Pi, the agent-runtime Node major, the npm major, or the TypeScript minor/major independently. Upgrade them as one compatibility change and rerun the Pi Adapter matrix on macOS and Windows.
+- Use Electron's embedded Node only for Desktop responsibilities. Run the Desktop app-server that imports Pi under the same packaged Node runtime as the TUI baseline.
 - TUI and Desktop use the same runtime package.
 - Store sessions in a Candy-owned application-data directory.
 - Reuse Pi session machinery without sharing Pi's default session directory.

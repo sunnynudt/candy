@@ -52,6 +52,18 @@ _Avoid_: Headless browser, browser tool process
 Candy-owned browsing identity and history kept separate from the user's regular browser profile and provider credentials.
 _Avoid_: Chrome profile, task credentials
 
+**Browser Control Owner**:
+The single user or agent currently allowed to operate a Browser Workspace tab. Control always returns to the user through detected user interaction or an explicit Take Control action.
+_Avoid_: Browser lock, tab owner
+
+**Sandbox Runner**:
+The audited native helper that applies operating-system command containment and owns the launched process tree. Candy task, model, approval, provider, and product policy remain outside it.
+_Avoid_: Shell wrapper, sandbox service
+
+**Acceptance Gate**:
+A named set of observable pass criteria and required evidence that a Candy slice or release must satisfy before it is considered complete.
+_Avoid_: QA phase, test checklist
+
 **Long-running Task**:
 A Candy Task with an explicit outcome and verification criteria that may continue, pause, resume, and be steered while Candy remains running.
 _Avoid_: Detached job, workflow

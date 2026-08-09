@@ -2,7 +2,7 @@
 
 ## Product statement
 
-Candy is a standalone, DeepSeek-first coding product for macOS and Windows 11. It uses domestic models to provide a Codex-class core coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each task has one agent, while multiple independent tasks may run concurrently within a bounded limit.
+Candy is a standalone, DeepSeek-first coding product for macOS Sequoia 15 or newer and Windows 11. It uses domestic models to provide a Codex-class core coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each task has one agent, while multiple independent tasks may run concurrently within a bounded limit.
 
 It provides:
 
@@ -22,9 +22,9 @@ Candy V1 is:
 - single-user;
 - single-agent per task;
 - bounded to three concurrent tasks by default and five at most;
-- TypeScript-only;
+- TypeScript for product and control-plane code, with one audited Rust native-helper exception for OS command sandboxing and Windows process-tree ownership;
 - BYOK for DeepSeek and MiniMax domestic Token Plan;
-- supported on macOS and Windows 11.
+- supported on macOS Sequoia 15 or newer and Windows 11.
 
 Candy V1 does not include:
 
@@ -109,7 +109,7 @@ The execution lock contains:
 
 A client without a task's lock may inspect that task's saved state but cannot start or continue its execution.
 
-Normal task exit releases its lock. Crash recovery must detect stale locks safely on macOS and Windows 11.
+Normal task exit releases its lock. Crash recovery must detect stale locks safely on macOS Sequoia 15+ and Windows 11.
 
 Cross-client continuation means:
 
@@ -147,7 +147,7 @@ V1 does not:
 - rewrite the agent loop;
 - promise compatibility with the full Pi extension ecosystem.
 
-Pin exact Pi package versions and verify session behavior on both supported operating systems. The initial V1 compatibility target is the latest stable npm release verified during planning, `0.84.1`; upgrades require an explicit compatibility pass and lockfile update.
+Pin the complete Pi package family to exact `0.84.1` and verify session behavior on both supported operating systems. Pi is the agent-runtime compatibility anchor: Node stays on Pi's tested Node 22 line, TypeScript matches Pi `5.9.3`, and npm follows the selected Node distribution and Pi's lockfile workflow. Pi and these boundary-sensitive toolchain versions upgrade as one compatibility change, never as independent freshness updates.
 
 ## Tool boundary
 
@@ -175,6 +175,8 @@ Candy follows a two-layer local control model:
 
 The default Auto profile permits reading, editing, and running commands inside the active workspace. Model-generated commands have no network access by default. Writing outside the workspace, enabling command network access, destructive actions, credential access, commits, pushes, releases, deployments, and other external side effects require approval. A Read-only profile supports analysis without modifications. V1 does not expose a mode that bypasses both approvals and sandboxing.
 
+Strong command containment is implemented through the narrow native Sandbox Runner accepted in ADR-0005. It owns only OS sandbox and process-tree mechanics; Candy's task, approval, provider, workspace, and product policies remain in the TypeScript Runtime. Shell-enabled Auto and Shell-based Auto Debug remain unavailable on a platform until its native backend passes the required security and cancellation gates.
+
 Provider HTTPS requests run through privileged provider adapters and are not ordinary tool-network access. Provider credentials are never inherited by tools, commands, browser processes, or browser pages.
 
 ## Model portfolio and multimodal input
@@ -199,7 +201,7 @@ The built-in browser uses a Candy-owned persistent Browser Profile that is separ
 
 The user must allow a site before the agent can operate it. Site permission does not make page content trusted. Submitting information, purchasing, changing permissions, deleting data, publishing content, or using full browser-debug access requires explicit confirmation. Automated file upload is not included in V1. Downloads use a user-configured location and remain visible to the user.
 
-User interaction immediately takes control of the affected tab and cancels or pauses the conflicting agent action. The agent cannot silently retake control.
+Candy uses a single Browser Control Owner per tab. When packaged Electron can reliably identify physical user interaction, that interaction immediately returns control to the user and cancels or pauses the conflicting agent action. Otherwise V1 presents a visible Take Control action that performs the same transfer before the user operates the page. The agent cannot silently retake control.
 
 ## Long-running tasks and Auto Debug
 
@@ -262,17 +264,23 @@ Each provider credential may authenticate only to its approved HTTPS endpoint. A
 
 Candy V1 has no remote telemetry or automatic crash upload.
 
+## V1 acceptance
+
+[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is the authoritative definition of complete. Each implementation slice must pass its mapped Acceptance Gates with reviewable evidence on macOS Sequoia 15+ and Windows 11. V1 release requires every mandatory product journey, live provider contract, security invariant, recovery case, and responsiveness target to pass with zero open P0/P1 defects.
+
+Real provider tests follow the [Live Provider Credential Procedure](../testing/live-provider-credentials.md). Existing Claude Code or OpenCode configurations may be inspected only through a user-authorized redacted audit; Candy never treats them as runtime credential sources or automatically imports their tokens.
+
 ## First vertical slice
 
 Implement and verify only:
 
 1. initialize the TypeScript workspace;
-2. pin Node, package-manager, and Pi SDK versions, initially targeting Pi `0.84.1`;
-3. run one DeepSeek V4 Flash prompt through the Pi SDK;
+2. pin the Pi-compatible Gate baseline: Node.js `22.23.2`, bundled npm `10.9.8`, TypeScript `5.9.3`, and every resolved `@earendil-works/pi-*` package at exact `0.84.1`, while importing only the documented coding-agent root SDK export;
+3. run one `deepseek-v4-flash` prompt through `https://api.deepseek.com/chat/completions` and the Pi SDK;
 4. stream the response;
 5. execute one read-only tool call;
 6. persist the session in Candy's application-data directory;
-7. load the same session on macOS and Windows 11;
+7. load the same session on macOS Sequoia 15+ and Windows 11;
 8. verify the credential does not enter logs, sessions, tool subprocesses, or the repository.
 
 Do not start the full TUI or Electron UI before this slice passes.
@@ -293,9 +301,19 @@ Until then, keep TUI execution in-process and Desktop execution in its app-manag
 
 ## Decision records and handoff
 
-- [Proposed V1 architecture](../architecture/candy-v1.md)
+- [Accepted V1 architecture](../architecture/candy-v1.md)
+- [Conditionally accepted technical plan](../architecture/technical-plan-v1.md)
+- [Coding implementation plan](../architecture/implementation-plan-v1.md)
+- [Pi/provider Compatibility Gate 0](../research/compatibility-gate-0.md)
+- [Pi-compatible toolchain baseline](../research/pi-toolchain-baseline.md)
+- [Platform Compatibility Gate 0](../research/platform-gate-0.md)
 - [Bounded parallel tasks](../adr/0001-bounded-parallel-tasks.md)
 - [Superseded DeepSeek-primary decision](../adr/0002-deepseek-primary-minimax-vision.md)
 - [DeepSeek-first model portfolio with MiniMax M3](../adr/0003-deepseek-first-multimodal-model-portfolio.md)
 - [Codex-style local control baseline](../adr/0004-codex-style-local-control-baseline.md)
+- [Narrow native Sandbox Runner](../adr/0005-allow-narrow-native-sandbox-runner.md)
+- [Explicit Browser takeover fallback](../adr/0006-use-explicit-browser-takeover-fallback.md)
+- [macOS Sequoia 15 minimum](../adr/0007-require-macos-sequoia-15.md)
+- [V1 product acceptance standard](./acceptance-v1.md)
+- [Live provider credential procedure](../testing/live-provider-credentials.md)
 - [Current grilling handoff](./grilling-handoff.md)

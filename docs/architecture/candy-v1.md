@@ -1,8 +1,8 @@
 # Candy V1 Architecture
 
-Status: proposed
+Status: accepted; concrete adapters remain compatibility-gated
 
-This document turns the accepted Candy V1 product decisions into a small set of deep modules and stable seams. It defines the target architecture and delivery order; compatibility spikes still choose exact package versions and concrete adapters.
+This document turns the accepted Candy V1 product decisions into a small set of deep modules and stable seams. It defines the target architecture and delivery order. The selected implementation shape is in [the technical plan](technical-plan-v1.md), the staged coding work is in [the implementation plan](implementation-plan-v1.md), and external evidence is recorded in the [provider/Pi](../research/compatibility-gate-0.md) and [platform](../research/platform-gate-0.md) Gate reports.
 
 Interactive Archify views: [system architecture](../diagrams/candy-system-architecture.html), [runtime modules](../diagrams/candy-runtime-modules.html), [task turn sequence](../diagrams/candy-task-turn-sequence.html), [Auto Debug workflow](../diagrams/candy-auto-debug-workflow.html), and [task lifecycle](../diagrams/candy-task-lifecycle.html). JSON sources and regeneration instructions are in the [diagram index](../diagrams/README.md).
 
@@ -57,7 +57,7 @@ The TUI creates the Candy Runtime Module in-process. It renders normalized event
 
 ### Desktop
 
-Electron main owns the window lifecycle, renderer bridge, Browser Module, OS integration, and app-server child. The app-server owns the task scheduler and one runtime instance for every executing task. Electron main and the app-server communicate only through versioned JSONL over stdio.
+Electron main owns the window lifecycle, renderer bridge, Browser Module, OS integration, and app-server child. The app-server runs under the same packaged Pi-compatible Node runtime as TUI, rather than Electron's embedded Node, and owns the task scheduler and one runtime instance for every executing task. Electron main and the app-server communicate only through versioned JSONL over stdio.
 
 Closing the window leaves Electron main and the app-server alive in the tray or menu bar. Explicit application quit cancels active work, persists interruption state, and terminates the child. The child may never become a system-wide daemon or survive its parent application.
 
@@ -91,7 +91,7 @@ The Task Engine emits only normalized Candy events. Pi messages, tool types, ses
 
 The Pi Adapter is the only implementation allowed to import Pi packages. It translates between Candy inputs/events and Pi's public agent, model, tool, and session contracts. It does not expose Pi types to clients or other packages, fork Pi, run Pi interactive mode, or reimplement the agent loop.
 
-Pi version changes require adapter contract tests and macOS/Windows session compatibility tests before the lockfile changes.
+Pi version changes require adapter contract tests and macOS Sequoia 15+/Windows 11 session compatibility tests before the lockfile changes.
 
 ### Provider Module
 
@@ -157,13 +157,13 @@ interface TaskBrowser {
 
 `BrowserObservation` contains a tab identifier, URL, title, monotonic revision, structured page outline, and optional screenshot attachment identifier. It never contains cookies, saved passwords, authentication headers, or raw credential-store values. Every action references the observation revision; stale actions fail instead of targeting a changed page.
 
-The Browser Module owns site permission and sensitive-action confirmation. User input immediately changes control to the user and cancels a conflicting agent action. Full CDP inspection requires separate approval. Automated uploads are unavailable in V1; downloads remain visible and use a configured destination.
+The Browser Module owns site permission and sensitive-action confirmation. Verified physical user input immediately changes control to the user and cancels a conflicting agent action. If packaged Electron cannot distinguish physical from synthesized input reliably, the visible Take Control action performs that transfer. Full CDP inspection requires separate approval. Automated uploads are unavailable in V1; downloads remain visible and use a configured destination.
 
-The implementation spike may choose Electron `WebContentsView` plus a thin CDP adapter or place a compatible automation package behind this interface. That choice must not change callers.
+The selected V1 implementation is Electron `WebContentsView` plus a persistent Electron Session, `DownloadItem`, and a thin allowlisted `webContents.debugger`/CDP adapter. Playwright may test the packaged application externally; agent-browser and browser-use are not production Browser Module dependencies.
 
 ### Platform Module
 
-The Platform Module hides application-data paths, OS credential stores, process lifecycle, locks, and platform-specific cancellation. Windows, macOS, and in-memory test adapters justify this seam. No caller may assume POSIX paths, signals, permissions, shells, or process groups.
+The Platform Module hides application-data paths, OS credential stores, process lifecycle, locks, platform-specific cancellation, and the Sandbox Runner protocol. Windows 11, macOS Sequoia 15+, and in-memory test adapters justify this seam. Product and control-plane behavior remains TypeScript; one audited Rust helper implements only native command containment and process-tree ownership. No caller may assume POSIX paths, signals, permissions, shells, or process groups.
 
 ## Commands, events, and transport
 
@@ -250,7 +250,7 @@ The logical names are stable; exact filenames and platform paths are implementat
 6. **Browser Workspace**: add the visible browser, persistent profile, site permissions, observation/actions, takeover, screenshots, and browser validation.
 7. **Long-running tasks**: add explicit completion criteria, pause/resume/steering, validators, stall detection, optional budgets, and Auto Debug.
 
-Each slice must pass on macOS and Windows 11 before the next slice can claim cross-platform support.
+Each slice must pass on macOS Sequoia 15+ and Windows 11 before the next slice can claim cross-platform support.
 
 ## Required compatibility spikes
 
@@ -258,6 +258,6 @@ Each slice must pass on macOS and Windows 11 before the next slice can claim cro
 - DeepSeek V4 Flash/Pro domestic model identifiers, thinking modes, streaming, and tool calling;
 - MiniMax M3 domestic endpoint model identifier, Token Plan authentication, image schema, tool calling, streaming, cancellation, and limits;
 - Electron embedded-browser control through CDP and the value, if any, of an external automation adapter;
-- Windows and macOS credential stores, locks, process cancellation, task recovery, and worktree behavior.
+- Windows 11 and macOS Sequoia 15+ credential stores, locks, process cancellation, task recovery, and worktree behavior.
 
 These spikes may change adapters and internal implementation. They must not weaken the accepted product or security invariants without a new decision.

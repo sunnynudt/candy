@@ -8,13 +8,13 @@ This document records the accepted product decisions and the remaining grilling 
 
 ### Product foundation
 
-- Candy is a standalone, local-first, TypeScript-based coding product for macOS and Windows 11. It does not depend on Codex, OpenCode, or a separately installed Pi CLI.
+- Candy is a standalone, local-first coding product for macOS Sequoia 15 or newer and Windows 11. Product and control-plane code is TypeScript, with one audited Rust native-helper exception for OS command containment and Windows process-tree ownership.
 - Candy is DeepSeek-first: DeepSeek V4 Flash is the default Primary Model, with DeepSeek V4 Pro and MiniMax M3 selectable per task.
 - MiniMax M3 is a native multimodal Primary Model in V1, not a secondary vision-only service.
 - Browser Workspace and Auto Debug are required V1 capabilities.
 - Permissions, Local/Worktree behavior, browser identity, and long-running tasks follow Codex's public product behavior unless a Candy-specific security invariant is stricter.
 - Pi is integrated through a narrow adapter without forking Pi, exposing Pi internal types, running Pi interactive mode, or rewriting the agent loop.
-- Use exact Pi package versions and a lockfile. The latest stable npm version verified during planning was `0.84.1`; re-check the registry before a future upgrade.
+- Pi `0.84.1` is the agent-runtime compatibility anchor. Use the Pi-tested Node 22 line, TypeScript `5.9.3`, npm's lockfile-v3 workflow, and an exact unmixed Pi package closure; upgrade these as one compatibility train.
 - The first vertical slice remains intentionally small and must pass before full TUI or Electron work begins.
 
 ### Bounded parallel tasks
@@ -49,25 +49,36 @@ This document records the accepted product decisions and the remaining grilling 
 
 ## Verified implementation facts
 
-- Pi exposes tool lifecycle events and hooks suitable for Candy permissions, status projection, and graceful stopping.
+- The accepted architecture, conditionally accepted [technical plan](../architecture/technical-plan-v1.md), staged [coding implementation plan](../architecture/implementation-plan-v1.md), and Gate reports now exist. Product coding has not started.
+- Pi `0.84.1` publishes a documented coding-agent SDK root export and exposes tool lifecycle events and hooks suitable for Candy permissions, status projection, and graceful stopping.
 - Pi's tool execution mode defaults to parallel. Candy therefore needs an explicit policy: allow parallel side-effect-free tools while serializing mutations and shell commands inside a task.
-- MiniMax M3 product material describes native image and video input, but Candy still needs to verify the domestic API's exact model identifier, multimodal message schema, tool calling, streaming, cancellation, and Token Plan authentication.
+- DeepSeek's verified API model identifiers are `deepseek-v4-flash` and `deepseek-v4-pro`, both through the domestic Chat Completions path. MiniMax's verified model identifier is `MiniMax-M3`; Pi's domestic provider route uses the Anthropic-compatible endpoint.
+- MiniMax M3's static contract covers native image and video input, but Pi `0.84.1` public types support only text and image. Candy V1 video therefore remains disabled. Text/image, thinking/tool replay, cancellation, and the supplied Token Plan account entitlement still require real-credential tests.
 - A Token Plan MCP example that passes credentials through a child-process environment conflicts with Candy's credential-isolation invariant and must not be copied directly.
+- Browser Workspace has a selected implementation path: Electron `WebContentsView`, a persistent Electron Session, `DownloadItem`, and a narrow `webContents.debugger`/CDP Adapter. Playwright is an external test tool; agent-browser and browser-use are not V1 production dependencies.
+- Candy has accepted one audited Rust Sandbox Runner as the only exception to the TypeScript product/control-plane rule. It owns OS containment and Windows Job Object process trees only; Shell-enabled Auto and Shell-based Auto Debug remain disabled until its platform backends pass G2.
+- Automatic Browser takeover remains preferred. A visible Take Control action is the accepted fallback when packaged Electron cannot reliably distinguish physical input from CDP-synthesized input.
+- V1 completeness is now defined by `docs/product/acceptance-v1.md`; passing implementation tests without the mapped product, security, recovery, live-provider, and platform evidence is insufficient.
+- Real DeepSeek/MiniMax tests follow `docs/testing/live-provider-credentials.md`. Claude Code/OpenCode configuration may supply redacted discovery evidence but is not a Candy credential source.
+- The Pi-compatible baseline is Node `22.23.2`, bundled npm `10.9.8`, TypeScript `5.9.3`, and every `@earendil-works/pi-*` package at exact `0.84.1`. Desktop app-server packages the same Node runtime; Electron's embedded Node is confined to Desktop responsibilities.
 
 ## Product grilling status
 
 The V1 product frontier is closed. Model scope, Browser Workspace, Auto Debug, permissions, workspace behavior, browser identity, and long-running task behavior are accepted. Further work should treat these as architecture and compatibility questions rather than reopening product scope without new evidence.
 
-## Remaining architecture frontier
+## Remaining implementation and verification frontier
 
-### First vertical slice blockers
+Detailed evidence and pass conditions are in [Compatibility Gate 0](../research/compatibility-gate-0.md) and [Platform Gate 0](../research/platform-gate-0.md). The coding order is in the [implementation plan](../architecture/implementation-plan-v1.md).
 
-1. Select and pin the exact Node.js and package-manager versions.
-2. Confirm the exact Pi packages and public entrypoints the narrow adapter imports.
-3. Freeze the DeepSeek domestic API contract for V4 Flash and V4 Pro: approved host, model identifiers, authentication, thinking modes, streaming, and tool calling.
-4. Define the first read-only tool fixture, workspace root, sandbox boundary, and approval expectation.
-5. Define what loading the same session on macOS and Windows means and how both environments will be verified.
-6. Resolve Desktop credential delivery: the app-server needs provider credentials while ordinary tools and child processes must never receive them.
+### First vertical slice Gates and verification work
+
+1. Pi-compatible Gate baseline selected: agent runtime Node.js `22.23.2`, bundled npm `10.9.8`, TypeScript `5.9.3`, complete Pi closure `0.84.1`, and Electron `43.2.0`; clean install, install-tree, two-OS, and signed-package smoke tests remain.
+2. Pi Adapter contract selected: `@earendil-works/pi-coding-agent@0.84.1` documented root SDK export only; real two-OS import/session smoke remains.
+3. DeepSeek static contract is frozen; real Flash/Pro credentials, thinking/tool replay, cancellation, rate-limit, and secret-redaction smoke remain.
+4. The first read-only fixture is a Candy-owned TypeScript workspace under `fixtures/read-only-workspace`. The allowed root is that fixture directory; an in-root read requires no approval, while traversal, symlink/reparse escape, mutation, and Shell are rejected rather than escalated.
+5. Cross-platform session loading means reopening Candy-owned session data after an explicit workspace remap; absolute paths are not portable. Windows and macOS execute the same fixture and compare normalized session events rather than native path strings.
+6. Credential backend selected conditionally as `@napi-rs/keyring@1.3.0`; signed macOS Sequoia 15+/Windows 11 package loading and secret non-propagation remain to be proved.
+7. macOS Sequoia 15+ is the accepted minimum. The narrow Rust Sandbox Runner path and explicit Browser takeover fallback are accepted in ADR-0005 through ADR-0007.
 
 ### Task, workspace, and recovery architecture
 
@@ -86,7 +97,7 @@ The V1 product frontier is closed. Model scope, Browser Workspace, Auto Debug, p
 
 ### Browser compatibility spike
 
-1. Validate Electron's embedded browser plus CDP control path and determine whether an external automation package adds value behind the Browser Module.
+1. Validate the selected Electron `WebContentsView` plus `webContents.debugger` control path in a packaged spike; production does not depend on an external automation package.
 2. Define observation revisions, element references, user takeover, cancellation, site permission, and sensitive-action events.
 3. Define persistent-profile storage, browsing-data controls, visible downloads, and the V1 prohibition on automated uploads.
 4. Connect browser screenshots and rendered evidence to MiniMax M3 without exposing browser credentials.
@@ -109,6 +120,16 @@ Read, in order:
 4. `docs/adr/0001-bounded-parallel-tasks.md`
 5. `docs/adr/0003-deepseek-first-multimodal-model-portfolio.md`
 6. `docs/adr/0004-codex-style-local-control-baseline.md`
-7. this handoff
+7. `docs/adr/0005-allow-narrow-native-sandbox-runner.md`
+8. `docs/adr/0006-use-explicit-browser-takeover-fallback.md`
+9. `docs/adr/0007-require-macos-sequoia-15.md`
+10. `docs/research/compatibility-gate-0.md`
+11. `docs/research/pi-toolchain-baseline.md`
+12. `docs/research/platform-gate-0.md`
+13. `docs/architecture/technical-plan-v1.md`
+14. `docs/architecture/implementation-plan-v1.md`
+15. `docs/product/acceptance-v1.md`
+16. `docs/testing/live-provider-credentials.md`
+17. this handoff
 
-Then begin architecture design from the first vertical slice and narrow adapters. Do not reopen settled product scope unless a compatibility spike reveals a real contradiction.
+Architecture decisions are complete and product coding is authorized. Continue the coding implementation plan while keeping unresolved live/platform capabilities unavailable and recorded as Blocked. Do not reopen settled product scope without a real compatibility contradiction, and do not claim a slice complete without its mapped acceptance evidence.
