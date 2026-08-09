@@ -25,6 +25,7 @@
     "format:check": "prettier --check package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "lint": "eslint apps packages scripts",
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
+    "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
     "smoke:app-server": "npm run build && node scripts/smoke-app-server.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"

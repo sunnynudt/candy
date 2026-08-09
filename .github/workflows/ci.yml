@@ -22,4 +22,5 @@ jobs:
       - run: npm run check:toolchain
       - run: npm run check
       - run: npm run smoke:tui
+      - run: npm run smoke:tui-task
       - run: npm run smoke:app-server

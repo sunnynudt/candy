@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "electron": "43.2.0",
     "@candy/platform": "0.0.0",
     "@candy/protocol": "0.0.0"
   }

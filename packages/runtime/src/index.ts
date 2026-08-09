@@ -310,6 +310,8 @@ export {
   LongRunningTaskRunner,
   ProviderConcurrencyGate,
   SerialMutationLane,
+  WorkspaceHandoff,
+  planGitWorktree,
 } from "./v1.js";
 export type {
   ActionKind,
@@ -321,6 +323,7 @@ export type {
   LongRunningStopReason,
   Validator,
   ValidatorResult,
+  GitWorktreePlan,
 } from "./v1.js";
 
 function throwIfAborted(signal: AbortSignal): void {

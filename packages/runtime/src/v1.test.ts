@@ -14,6 +14,8 @@ import {
   LongRunningTaskRunner,
   ProviderConcurrencyGate,
   SerialMutationLane,
+  WorkspaceHandoff,
+  planGitWorktree,
 } from "./v1.js";
 
 test("approval policy keeps read-only strict and shell unavailable before native G2", () => {
@@ -181,4 +183,28 @@ test("Apply Changes guard fails closed for dirty, changed-base, escaped, and sec
   assert.equal(guard.check({ ...base, actualBase: "b" }), "blocked");
   assert.equal(guard.check({ ...base, paths: ["../secret"] }), "blocked");
   assert.equal(guard.check({ ...base, patchText: "canary", activeSecrets: ["canary"] }), "blocked");
+});
+
+test("Git worktree planning uses argument arrays and handoff blocks unsafe transfer", () => {
+  const plan = planGitWorktree(
+    "C:/repo",
+    "C:/Candy Data/worktrees/task-1",
+    "task-1",
+    "0123456789abcdef",
+  );
+  assert.deepEqual(plan.createArgs, [
+    "worktree",
+    "add",
+    "--detach",
+    "--lock",
+    "--reason",
+    "candy:task-1",
+    "C:/Candy Data/worktrees/task-1",
+    "0123456789abcdef",
+  ]);
+  assert.throws(() => planGitWorktree("repo", "worktree", "task/1", "0123456"), /Task id/u);
+  const handoff = new WorkspaceHandoff();
+  handoff.startWorktree();
+  handoff.beginApply("blocked");
+  assert.equal(handoff.state, "blocked");
 });

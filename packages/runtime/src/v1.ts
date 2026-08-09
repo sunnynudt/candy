@@ -361,6 +361,72 @@ export class ApplyChangesGuard {
   }
 }
 
+export interface GitWorktreePlan {
+  readonly taskId: string;
+  readonly repository: string;
+  readonly worktreePath: string;
+  readonly baseCommit: string;
+  readonly createArgs: readonly string[];
+  readonly inspectArgs: readonly string[];
+  readonly removeArgs: readonly string[];
+}
+
+/** Argument-array-only Git seam; execution and user confirmation remain outside this module. */
+export function planGitWorktree(
+  repository: string,
+  worktreePath: string,
+  taskId: string,
+  baseCommit: string,
+): GitWorktreePlan {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(taskId))
+    throw new Error("Task id is not safe for worktree association.");
+  if (!/^[0-9a-f]{7,64}$/u.test(baseCommit))
+    throw new Error("Worktree base must be a Git commit id.");
+  return {
+    taskId,
+    repository,
+    worktreePath,
+    baseCommit,
+    createArgs: [
+      "worktree",
+      "add",
+      "--detach",
+      "--lock",
+      "--reason",
+      `candy:${taskId}`,
+      worktreePath,
+      baseCommit,
+    ],
+    inspectArgs: ["worktree", "list", "--porcelain", "-z"],
+    removeArgs: ["worktree", "remove", worktreePath],
+  };
+}
+
+export type HandoffState = "local" | "worktree" | "applying" | "blocked";
+
+export class WorkspaceHandoff {
+  #state: HandoffState = "local";
+
+  public get state(): HandoffState {
+    return this.#state;
+  }
+
+  public startWorktree(): void {
+    if (this.#state !== "local") throw new Error("Workspace is not in Local state.");
+    this.#state = "worktree";
+  }
+
+  public beginApply(guard: "allow" | "blocked"): void {
+    if (this.#state !== "worktree") throw new Error("Only a Task Worktree can be applied.");
+    this.#state = guard === "allow" ? "applying" : "blocked";
+  }
+
+  public finishApply(): void {
+    if (this.#state !== "applying") throw new Error("Apply Changes is not in progress.");
+    this.#state = "local";
+  }
+}
+
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
 }

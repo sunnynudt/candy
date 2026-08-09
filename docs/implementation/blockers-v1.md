@@ -30,10 +30,10 @@ Updated: 2026-08-10
 
 ## 2026-08-10 control-plane checkpoint
 
-- Deterministic result: 31 tests pass; format, lint, typecheck, build, protocol stdio, TUI smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, and native Rust `cargo check --locked` pass on Windows.
+- Deterministic result: latest sequential run passes format, lint, typecheck, build, 26 discovered tests, protocol stdio, TUI smoke and read-only task smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, and native Rust `cargo check --locked` on Windows.
 - Protocol: task create/run/pause/resume/cancel/approval command shapes and state events are versioned and secret-rejected; legacy snapshot fixtures remain compatible.
 - Security: renderer contracts expose credential presence and write/delete operations only; provider values are not in renderer projections, protocol messages, app-server stdout, or child allowlisted environments. No provider credential was read or requested.
 - Capability gates: shell remains `unsupported`; MiniMax remains disabled; browser is deterministic-only; actual Electron and OS credential-store implementations are not advertised.
-- Cross-platform: Windows local/native toolchain evidence passes. macOS CI for TypeScript/protocol/app-server smoke is required and will be checked after this checkpoint; real macOS Electron, Keychain, Browser, and native containment evidence remains blocked.
+- Cross-platform: Windows local/native toolchain evidence passes; checkpoint `f6d4335a` Windows and macOS push CI passed. Real macOS Electron, Keychain, Browser, and native containment evidence remains blocked.
 
 Blocked external resources do not stop independent implementation. They do prevent the affected capability or release claim from being marked Pass.
