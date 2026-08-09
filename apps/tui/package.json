@@ -1,0 +1,11 @@
+{
+  "name": "@candy/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@candy/pi-adapter": "0.0.0",
+    "@candy/platform": "0.0.0",
+    "@candy/runtime": "0.0.0"
+  }
+}

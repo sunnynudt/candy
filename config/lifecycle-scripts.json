@@ -1,0 +1,14 @@
+{
+  "allowedPackages": [
+    {
+      "name": "@google/genai",
+      "version": "1.52.0",
+      "review": "preinstall is a no-op; dependency installs continue to use --ignore-scripts"
+    },
+    {
+      "name": "protobufjs",
+      "version": "7.6.5",
+      "review": "postinstall only checks dependency version-prefix compatibility; dependency installs continue to use --ignore-scripts"
+    }
+  ]
+}

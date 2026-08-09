@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/protocol" },
+    { "path": "packages/platform" },
+    { "path": "packages/runtime" },
+    { "path": "packages/pi-adapter" },
+    { "path": "apps/tui" }
+  ]
+}

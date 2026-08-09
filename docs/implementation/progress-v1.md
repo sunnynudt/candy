@@ -5,8 +5,8 @@ Updated: 2026-08-09
 | Phase | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | 0. Compatibility Gate | In progress | Accepted architecture and conditional Gate reports | Live credentials, macOS, native/security verification |
-| 1. Repository foundation | In progress | Node 22.23.2 and npm 10.9.8 selected | Workspace, lockfile, contracts, checks, CI |
-| 2. Runtime proof | Pending | — | Pi Adapter and read-only vertical slice |
+| 1. Repository foundation | In progress | Windows: `npm run check` passes 12 tests; TUI smoke passes; Pi closure is 7 packages at `0.84.1`; lockfile is stable after `npm ci --ignore-scripts`; Windows/macOS 15 ARM CI is configured | First macOS CI execution and recorded result |
+| 2. Runtime proof | Pending | Phase 1 Pi root-import and deterministic Runtime seams exist | Pi-backed engine, provider contract, read-only tool, session reload |
 | 3. Task Runtime and TUI | Pending | — | Task state, ownership, leases, TUI |
 | 4. Models and attachments | Pending | — | DeepSeek Pro, MiniMax M3, image flow |
 | 5. Desktop | Pending | — | Electron shell and app-server |
