@@ -213,16 +213,16 @@ Exit criteria:
 
 Every mutable or external action is tested across these dimensions where applicable:
 
-| Dimension | Required cases |
-| --- | --- |
-| Operating system | macOS Sequoia 15+; Windows 11 |
-| Client | TUI in-process; Desktop app-server |
-| Workspace | Git clean; Git dirty; Task Worktree; non-Git Local |
-| Task state | Running; WaitingApproval; Paused; Interrupted; Cancelled |
-| Provider | DeepSeek; MiniMax; rate limited; cancelled; malformed stream |
-| Control | Read-only; Auto; explicit denial; stale approval |
-| Recovery | client crash; app-server crash; application quit; stale lease |
-| Security | secret canary; path escape; network attempt; browser prompt injection |
+| Dimension        | Required cases                                                        |
+| ---------------- | --------------------------------------------------------------------- |
+| Operating system | macOS Sequoia 15+; Windows 11                                         |
+| Client           | TUI in-process; Desktop app-server                                    |
+| Workspace        | Git clean; Git dirty; Task Worktree; non-Git Local                    |
+| Task state       | Running; WaitingApproval; Paused; Interrupted; Cancelled              |
+| Provider         | DeepSeek; MiniMax; rate limited; cancelled; malformed stream          |
+| Control          | Read-only; Auto; explicit denial; stale approval                      |
+| Recovery         | client crash; app-server crash; application quit; stale lease         |
+| Security         | secret canary; path escape; network attempt; browser prompt injection |
 
 ## First implementation checkpoint
 

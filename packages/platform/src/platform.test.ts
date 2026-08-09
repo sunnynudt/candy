@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -6,6 +8,7 @@ import {
   LeaseConflictError,
   ManualClock,
   InMemoryCredentialStore,
+  SQLiteTaskStore,
   StaleLeaseError,
   cleanChildEnvironment,
   resolveAppPaths,
@@ -63,4 +66,35 @@ test("child environment is allowlisted and removes values containing active secr
   assert.equal(environment.HOME, "home");
   assert.equal(environment.DEEPSEEK_API_KEY, undefined);
   assert.equal(environment.CUSTOM, undefined);
+});
+
+test("sqlite task metadata survives restart and fences stale transitions", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-store-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const first = new SQLiteTaskStore(databasePath);
+    const created = first.create("task-1", "read-only", 4);
+    assert.deepEqual(created, {
+      taskId: "task-1",
+      revision: 0,
+      state: "queued",
+      approvalProfile: "read-only",
+      queueOrder: 4,
+      ownerId: undefined,
+    });
+    const running = first.transition("task-1", 0, "running", "owner-1");
+    assert.equal(running.revision, 1);
+    const second = new SQLiteTaskStore(databasePath);
+    assert.throws(() => second.transition("task-1", 0, "completed"), /stale or missing/);
+    second.close();
+    first.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.deepEqual(reopened.get("task-1"), running);
+    assert.equal(reopened.markActiveInterrupted(), 1);
+    assert.equal(reopened.get("task-1")?.state, "interrupted");
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

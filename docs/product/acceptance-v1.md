@@ -18,12 +18,12 @@ Passing unit tests alone is not product acceptance. Candy V1 is accepted only wh
 
 ## Result classifications
 
-| Result | Meaning |
-| --- | --- |
-| Pass | All stated outcomes and evidence requirements are satisfied. |
+| Result             | Meaning                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pass               | All stated outcomes and evidence requirements are satisfied.                                                                                      |
 | Controlled failure | The dependency failed, but Candy preserved safety and returned the specified actionable state. Used only where the scenario explicitly allows it. |
-| Blocked | Required environment, credential, entitlement, or platform capability is unavailable. A blocked required scenario prevents release. |
-| Fail | An observable outcome differs from the contract. |
+| Blocked            | Required environment, credential, entitlement, or platform capability is unavailable. A blocked required scenario prevents release.               |
+| Fail               | An observable outcome differs from the contract.                                                                                                  |
 
 Defects are release-classified as:
 
@@ -38,10 +38,10 @@ V1 release requires zero open P0 and P1 defects. P2 items require explicit produ
 
 ### Platform matrix
 
-| ID | Environment | Required scope |
-| --- | --- | --- |
-| ENV-MAC | Current supported macOS Sequoia 15 patch on Apple Silicon | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery |
-| ENV-WIN | Current supported Windows 11 patch on x64 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
+| ID      | Environment                                               | Required scope                                                                                   |
+| ------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| ENV-MAC | Current supported macOS Sequoia 15 patch on Apple Silicon | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
+| ENV-WIN | Current supported Windows 11 patch on x64                 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
 
 Older macOS versions, Intel macOS, and Windows versions before Windows 11 are not V1 acceptance targets.
 
@@ -208,32 +208,32 @@ Required outcomes:
 
 Targets are measured over ten runs on each acceptance machine, excluding provider and public-network latency:
 
-| Metric | V1 acceptance target |
-| --- | --- |
-| TUI cold start to usable prompt | p95 at or below 2 seconds |
-| Desktop cold start to task list | p95 at or below 5 seconds |
-| Local Runtime event to visible UI projection | p95 at or below 200 ms |
-| User cancellation to provider stream stop request | at or below 2 seconds |
-| User cancellation to task-owned process tree termination | at or below 5 seconds |
-| Browser Take Control to disabled agent action | at or below 500 ms |
-| Three concurrent tasks | no presentation freeze longer than 1 second; no event loss |
+| Metric                                                   | V1 acceptance target                                       |
+| -------------------------------------------------------- | ---------------------------------------------------------- |
+| TUI cold start to usable prompt                          | p95 at or below 2 seconds                                  |
+| Desktop cold start to task list                          | p95 at or below 5 seconds                                  |
+| Local Runtime event to visible UI projection             | p95 at or below 200 ms                                     |
+| User cancellation to provider stream stop request        | at or below 2 seconds                                      |
+| User cancellation to task-owned process tree termination | at or below 5 seconds                                      |
+| Browser Take Control to disabled agent action            | at or below 500 ms                                         |
+| Three concurrent tasks                                   | no presentation freeze longer than 1 second; no event loss |
 
 Provider first-token and completion times are reported separately and are not attributed to Candy. Candy overhead from dispatch to provider request start is recorded and regressions above 20% require investigation.
 
 ## Slice-to-acceptance traceability
 
-| Implementation slice | Required Acceptance Gates |
-| --- | --- |
-| Compatibility Gate 0 | ACC-01 environment subset, ACC-02 canary path, ACC-04 live contracts |
-| Repository foundation | protocol/security harness supporting ACC-02, ACC-05, ACC-11 |
-| Runtime proof | ACC-02, ACC-03 read-only subset, ACC-04 Flash, ACC-05 session subset |
-| Task Runtime and TUI | ACC-03, ACC-05, ACC-06, ACC-11, ACC-12 TUI |
-| Model portfolio | ACC-04 complete |
-| Desktop shell | ACC-01 Desktop, ACC-02 Desktop, ACC-05 Desktop, ACC-09 renderer subset, ACC-12 Desktop |
-| Local control/workspaces | ACC-07, ACC-08, ACC-11 process/lease subset |
-| Browser Workspace | ACC-09 complete |
-| Long-running/Auto Debug | ACC-10 complete |
-| Release hardening | all ACC-01 through ACC-12 on both platforms |
+| Implementation slice     | Required Acceptance Gates                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| Compatibility Gate 0     | ACC-01 environment subset, ACC-02 canary path, ACC-04 live contracts                   |
+| Repository foundation    | protocol/security harness supporting ACC-02, ACC-05, ACC-11                            |
+| Runtime proof            | ACC-02, ACC-03 read-only subset, ACC-04 Flash, ACC-05 session subset                   |
+| Task Runtime and TUI     | ACC-03, ACC-05, ACC-06, ACC-11, ACC-12 TUI                                             |
+| Model portfolio          | ACC-04 complete                                                                        |
+| Desktop shell            | ACC-01 Desktop, ACC-02 Desktop, ACC-05 Desktop, ACC-09 renderer subset, ACC-12 Desktop |
+| Local control/workspaces | ACC-07, ACC-08, ACC-11 process/lease subset                                            |
+| Browser Workspace        | ACC-09 complete                                                                        |
+| Long-running/Auto Debug  | ACC-10 complete                                                                        |
+| Release hardening        | all ACC-01 through ACC-12 on both platforms                                            |
 
 An implementation slice is not complete until its mapped Acceptance Gates pass. A later slice may not waive an earlier failed Gate.
 

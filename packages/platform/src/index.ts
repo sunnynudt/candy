@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
 export interface Clock {
@@ -29,6 +31,135 @@ export function resolveAppPaths(appDataRoot: string): AppPaths {
     browserProfile: path.join(root, "browser-profile"),
     worktrees: path.join(root, "worktrees"),
   };
+}
+
+export type PersistedTaskState =
+  "queued" | "running" | "waiting_approval" | "paused" | "interrupted" | "completed" | "cancelled";
+
+export interface TaskMetadata {
+  readonly taskId: string;
+  readonly revision: number;
+  readonly state: PersistedTaskState;
+  readonly approvalProfile: "read-only" | "auto";
+  readonly queueOrder: number | undefined;
+  readonly ownerId: string | undefined;
+}
+
+/**
+ * Candy-owned durable task metadata. Session content and credentials are intentionally
+ * not part of this schema; Pi session storage remains behind the adapter boundary.
+ */
+export class SQLiteTaskStore {
+  readonly #database: DatabaseSync;
+
+  public constructor(databasePath: string) {
+    if (databasePath !== ":memory:")
+      mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
+    this.#database = new DatabaseSync(databasePath, {
+      allowExtension: false,
+      enableForeignKeyConstraints: true,
+      timeout: 2_500,
+    });
+    this.#database.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = FULL;
+      PRAGMA foreign_keys = ON;
+    `);
+    const schemaVersion = Number(
+      (this.#database.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    );
+    if (schemaVersion === 0) {
+      this.#database.exec(`
+      CREATE TABLE IF NOT EXISTS task_metadata (
+        task_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        approval_profile TEXT NOT NULL,
+        queue_order INTEGER,
+        owner_id TEXT
+      );
+      PRAGMA user_version = 1;
+      `);
+    } else if (schemaVersion !== 1) {
+      throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
+    }
+  }
+
+  public create(
+    taskId: string,
+    approvalProfile: "read-only" | "auto",
+    queueOrder?: number,
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    this.#database
+      .prepare(
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order) VALUES (?, 0, 'queued', ?, ?)",
+      )
+      .run(taskId, approvalProfile, queueOrder ?? null);
+    return this.require(taskId);
+  }
+
+  public get(taskId: string): TaskMetadata | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata WHERE task_id = ?",
+      )
+      .get(taskId);
+    return row === undefined ? undefined : mapTaskMetadata(row);
+  }
+
+  public transition(
+    taskId: string,
+    expectedRevision: number,
+    state: PersistedTaskState,
+    ownerId?: string,
+  ): TaskMetadata {
+    const result = this.#database
+      .prepare(
+        "UPDATE task_metadata SET revision = revision + 1, state = ?, owner_id = ? WHERE task_id = ? AND revision = ?",
+      )
+      .run(state, ownerId ?? null, taskId, expectedRevision);
+    if (result.changes !== 1) {
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    }
+    return this.require(taskId);
+  }
+
+  public markActiveInterrupted(): number {
+    return Number(
+      this.#database
+        .prepare(
+          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL WHERE state IN ('running', 'waiting_approval')",
+        )
+        .run().changes,
+    );
+  }
+
+  public close(): void {
+    this.#database.close();
+  }
+
+  private require(taskId: string): TaskMetadata {
+    const metadata = this.get(taskId);
+    if (!metadata) throw new Error(`Task ${taskId} metadata is missing.`);
+    return metadata;
+  }
+}
+
+function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
+  return {
+    taskId: String(row.task_id),
+    revision: Number(row.revision),
+    state: String(row.state) as PersistedTaskState,
+    approvalProfile: String(row.approval_profile) as "read-only" | "auto",
+    queueOrder: row.queue_order === null ? undefined : Number(row.queue_order),
+    ownerId: row.owner_id === null ? undefined : String(row.owner_id),
+  };
+}
+
+function assertTaskId(taskId: string): void {
+  if (taskId.length === 0 || /[\r\n]/u.test(taskId)) throw new Error("Task ID is invalid.");
 }
 
 export type CredentialName = "deepseek" | "minimax-cn";
