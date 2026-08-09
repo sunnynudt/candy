@@ -20,3 +20,8 @@ npm run check
 Windows development-machine setup, native prerequisites, and executable audit instructions are in [`docs/development/windows-11-toolchain.md`](docs/development/windows-11-toolchain.md).
 
 Product scope is defined in `docs/product/candy-v1.md`. Implementation order and evidence requirements are defined in `docs/architecture/implementation-plan-v1.md` and `docs/product/acceptance-v1.md`.
+
+Development machine setup:
+
+- Windows 11: `docs/development/windows-11-toolchain.md`
+- macOS Sequoia 15+ / Apple Silicon: `docs/development/macos-sequoia-toolchain.md`
