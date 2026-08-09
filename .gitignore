@@ -12,6 +12,7 @@ coverage/
 .vite/
 .webpack/
 *.tsbuildinfo
+native/sandbox-runner/target/
 
 # Logs
 *.log

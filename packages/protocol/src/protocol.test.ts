@@ -90,6 +90,36 @@ test("duplicate commands and stale revisions fail closed", () => {
   );
 });
 
+test("task lifecycle commands and state events remain versioned and secret-free", () => {
+  const command = {
+    v: 1,
+    kind: "command",
+    commandId: "create-1",
+    taskId: "task-1",
+    expectedRevision: 0,
+    command: { type: "task.create", prompt: "inspect fixture", approvalProfile: "read-only" },
+  } as const;
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-1",
+    sequence: 1,
+    revision: 1,
+    event: { type: "task.state_changed", state: "running", reason: "owner_lost" },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(command)), command);
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...command,
+        command: { type: "task.create", prompt: "Bearer canary", approvalProfile: "read-only" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "secret_forbidden",
+  );
+});
+
 test("event sequencing and snapshot identity fail closed", () => {
   const ledger = new EventLedger();
   ledger.accept(snapshotEventFixture);
@@ -104,7 +134,11 @@ test("event sequencing and snapshot identity fail closed", () => {
         ...snapshotEventFixture,
         event: {
           type: "snapshot",
-          snapshot: { ...snapshotEventFixture.event.snapshot, taskId: "another-task" },
+          snapshot: {
+            taskId: "another-task",
+            revision: snapshotEventFixture.revision,
+            state: "idle",
+          },
         },
       }),
     (error: unknown) =>

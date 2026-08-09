@@ -14,6 +14,12 @@ Updated: 2026-08-10
 | G0-DS-ADAPTER  | Implementation agent                     | Blocked     | Enabling DeepSeek V4 Flash/Pro and ACC-03/04 live evidence | Run the approved Pi-backed live matrix with an approved credential; this unattended run will not inspect or import credentials from another tool.     |
 | G0-MAC-RUNTIME | Product owner                            | Blocked     | Runtime cross-platform claim                               | Run the Runtime proof and session-remap matrix on macOS Sequoia 15+ Apple Silicon.                                                                    |
 
+| G1-ELECTRON | Implementation agent | Blocked | Packaged Desktop acceptance | Add and verify the exact Electron 43.2.0 packaged shell, independent Node 22.23.2 app-server, fuse, restart, and graceful quit matrix on Windows 11 and macOS Sequoia. |
+| G1-KEYRING | Product owner + implementation agent | Blocked | ACC-02 OS credential acceptance | Verify the exact `@napi-rs/keyring@1.3.0` signed package path against Windows Credential Manager and macOS Keychain without exposing or recording complete credentials. |
+| G2-NATIVE | Security reviewer + implementation agent | Blocked | Shell-enabled Auto and shell-based Auto Debug | Review and run the Rust runner protocol and both OS containment backends for escape, no-network, descendants, cancellation, packaging, and process ownership. Current helper intentionally reports `unsupported`. |
+| G4-WORKTREE | Implementation agent | Pending | Reviewed Apply Changes acceptance | Run Git fixture matrix for dirty target, changed base, binary/untracked files, conflicts, cleanup and Windows path behavior. |
+| G5-PERSISTED-AUTO | Implementation agent | Pending | Long-running product acceptance | Integrate validator/evidence state with transactional task persistence and explicit resume/crash interruption. |
+
 ## 2026-08-10 Phase 2 checkpoint
 
 - Q1 Pi public surface: Pass for the deterministic adapter seam. `@earendil-works/pi-coding-agent` root exports and documented `SessionManager` are used; no internal Pi import is used by Candy source.
@@ -21,5 +27,13 @@ Updated: 2026-08-10
 - Q3 Candy-owned session: Pass locally. `CandyPiSessionStore` stores under the injected Candy app-data root, persists through Pi's `SessionManager`, and reloads with a remapped cwd.
 - Q4 forbidden sinks: Pass for deterministic coverage. Protocol/session fixtures reject secret-shaped values; the provider lease is released before response consumption and is not projected into Runtime observations. No credential was read or requested.
 - Q5 two-platform fixture: Blocked for macOS evidence. Windows local deterministic checks pass; macOS Sequoia execution and live provider evidence are unavailable in this unattended environment.
+
+## 2026-08-10 control-plane checkpoint
+
+- Deterministic result: 31 tests pass; format, lint, typecheck, build, protocol stdio, TUI smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, and native Rust `cargo check --locked` pass on Windows.
+- Protocol: task create/run/pause/resume/cancel/approval command shapes and state events are versioned and secret-rejected; legacy snapshot fixtures remain compatible.
+- Security: renderer contracts expose credential presence and write/delete operations only; provider values are not in renderer projections, protocol messages, app-server stdout, or child allowlisted environments. No provider credential was read or requested.
+- Capability gates: shell remains `unsupported`; MiniMax remains disabled; browser is deterministic-only; actual Electron and OS credential-store implementations are not advertised.
+- Cross-platform: Windows local/native toolchain evidence passes. macOS CI for TypeScript/protocol/app-server smoke is required and will be checked after this checkpoint; real macOS Electron, Keychain, Browser, and native containment evidence remains blocked.
 
 Blocked external resources do not stop independent implementation. They do prevent the affected capability or release claim from being marked Pass.

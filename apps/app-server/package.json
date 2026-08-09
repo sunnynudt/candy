@@ -1,0 +1,16 @@
+{
+  "name": "@candy/app-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "import": "./dist/main.js"
+    }
+  },
+  "dependencies": {
+    "@candy/protocol": "0.0.0",
+    "@candy/runtime": "0.0.0"
+  }
+}

@@ -1,3 +1,5 @@
+import path from "node:path";
+
 export interface Clock {
   now(): number;
 }
@@ -6,6 +8,114 @@ export class SystemClock implements Clock {
   public now(): number {
     return Date.now();
   }
+}
+
+export interface AppPaths {
+  readonly root: string;
+  readonly sessions: string;
+  readonly attachments: string;
+  readonly state: string;
+  readonly browserProfile: string;
+  readonly worktrees: string;
+}
+
+export function resolveAppPaths(appDataRoot: string): AppPaths {
+  const root = path.resolve(appDataRoot);
+  return {
+    root,
+    sessions: path.join(root, "sessions"),
+    attachments: path.join(root, "attachments"),
+    state: path.join(root, "state"),
+    browserProfile: path.join(root, "browser-profile"),
+    worktrees: path.join(root, "worktrees"),
+  };
+}
+
+export type CredentialName = "deepseek" | "minimax-cn";
+export type CredentialPresence = "present" | "absent";
+
+export interface SecretLease {
+  readonly value: string;
+  readonly release: () => void;
+}
+
+export interface CredentialStore {
+  set(name: CredentialName, value: string): void;
+  replace(name: CredentialName, value: string): void;
+  delete(name: CredentialName): void;
+  has(name: CredentialName): CredentialPresence;
+  lease(name: CredentialName): SecretLease | undefined;
+}
+
+export class InMemoryCredentialStore implements CredentialStore {
+  readonly #values = new Map<CredentialName, string>();
+
+  public set(name: CredentialName, value: string): void {
+    assertCredentialValue(value);
+    if (this.#values.has(name)) throw new Error(`Credential ${name} already exists.`);
+    this.#values.set(name, value);
+  }
+
+  public replace(name: CredentialName, value: string): void {
+    assertCredentialValue(value);
+    this.#values.set(name, value);
+  }
+
+  public delete(name: CredentialName): void {
+    this.#values.delete(name);
+  }
+
+  public has(name: CredentialName): CredentialPresence {
+    return this.#values.has(name) ? "present" : "absent";
+  }
+
+  public lease(name: CredentialName): SecretLease | undefined {
+    const value = this.#values.get(name);
+    if (!value) return undefined;
+    return {
+      value,
+      release: () => undefined,
+    };
+  }
+
+  public isReleased(name: CredentialName, value: string): boolean {
+    void name;
+    void value;
+    return true;
+  }
+}
+
+export const PROVIDER_ENV_KEYS = ["DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY"] as const;
+
+export function cleanChildEnvironment(
+  source: NodeJS.ProcessEnv,
+  secretValues: readonly string[] = [],
+): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "USERPROFILE",
+    "ComSpec",
+  ]) {
+    const value = source[key];
+    if (value !== undefined) result[key] = value;
+  }
+  for (const value of secretValues) {
+    for (const [key, candidate] of Object.entries(result)) {
+      if (candidate?.includes(value)) delete result[key];
+    }
+  }
+  return result;
+}
+
+function assertCredentialValue(value: string): void {
+  if (value.length === 0 || /[\r\n]/u.test(value)) throw new Error("Credential value is invalid.");
 }
 
 export class ManualClock implements Clock {

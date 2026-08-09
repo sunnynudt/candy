@@ -299,6 +299,30 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
 }
 
+export {
+  ApplyChangesGuard,
+  AttachmentStore,
+  ApprovalPolicy,
+  BrowserControlError,
+  BrowserRevisionError,
+  FixedValidator,
+  InMemoryBrowserWorkspace,
+  LongRunningTaskRunner,
+  ProviderConcurrencyGate,
+  SerialMutationLane,
+} from "./v1.js";
+export type {
+  ActionKind,
+  ActionRequest,
+  AttachmentMetadata,
+  BrowserAction,
+  BrowserTabSnapshot,
+  LongRunningResult,
+  LongRunningStopReason,
+  Validator,
+  ValidatorResult,
+} from "./v1.js";
+
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("Turn aborted.");

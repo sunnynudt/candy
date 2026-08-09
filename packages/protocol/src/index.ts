@@ -1,7 +1,15 @@
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_JSONL_BYTES = 1024 * 1024;
 
-export type TaskState = "idle" | "running" | "waiting_approval" | "paused" | "interrupted";
+export type TaskState =
+  | "idle"
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "paused"
+  | "interrupted"
+  | "completed"
+  | "cancelled";
 
 export interface TaskSnapshot {
   readonly taskId: string;
@@ -13,7 +21,24 @@ export interface SnapshotCommand {
   readonly type: "snapshot";
 }
 
-export type RuntimeCommand = SnapshotCommand;
+export interface CreateTaskCommand {
+  readonly type: "task.create";
+  readonly prompt: string;
+  readonly approvalProfile: "read-only" | "auto";
+}
+
+export interface TaskActionCommand {
+  readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
+}
+
+export interface ApprovalCommand {
+  readonly type: "approval.respond";
+  readonly approvalId: string;
+  readonly decision: "approve" | "deny";
+}
+
+export type RuntimeCommand =
+  SnapshotCommand | CreateTaskCommand | TaskActionCommand | ApprovalCommand;
 
 export interface CommandEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -29,7 +54,18 @@ export interface SnapshotEvent {
   readonly snapshot: TaskSnapshot;
 }
 
-export type RuntimeEvent = SnapshotEvent;
+export interface TaskStateChangedEvent {
+  readonly type: "task.state_changed";
+  readonly state: TaskState;
+  readonly reason?: "user" | "owner_lost" | "approval" | "validator" | "error";
+}
+
+export interface TaskCreatedEvent {
+  readonly type: "task.created";
+  readonly approvalProfile: "read-only" | "auto";
+}
+
+export type RuntimeEvent = SnapshotEvent | TaskStateChangedEvent | TaskCreatedEvent;
 
 export interface EventEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -123,13 +159,70 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   assertNonNegativeInteger(value.revision, "snapshot.revision");
   if (
     value.state !== "idle" &&
+    value.state !== "queued" &&
     value.state !== "running" &&
     value.state !== "waiting_approval" &&
     value.state !== "paused" &&
-    value.state !== "interrupted"
+    value.state !== "interrupted" &&
+    value.state !== "completed" &&
+    value.state !== "cancelled"
   ) {
     throw new ProtocolValidationError("invalid_message", "snapshot.state is unsupported.");
   }
+}
+
+function validateCommand(value: unknown): asserts value is RuntimeCommand {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw new ProtocolValidationError("invalid_message", "Unsupported command payload.");
+  }
+  if (
+    value.type === "snapshot" ||
+    value.type === "task.run" ||
+    value.type === "task.cancel" ||
+    value.type === "task.pause" ||
+    value.type === "task.resume"
+  )
+    return;
+  if (value.type === "task.create") {
+    assertString(value.prompt, "command.prompt");
+    if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto") {
+      throw new ProtocolValidationError(
+        "invalid_message",
+        "command.approvalProfile is unsupported.",
+      );
+    }
+    return;
+  }
+  if (value.type === "approval.respond") {
+    assertString(value.approvalId, "command.approvalId");
+    if (value.decision !== "approve" && value.decision !== "deny") {
+      throw new ProtocolValidationError("invalid_message", "command.decision is unsupported.");
+    }
+    return;
+  }
+  throw new ProtocolValidationError("invalid_message", "Unsupported command payload.");
+}
+
+function validateEvent(value: unknown): asserts value is RuntimeEvent {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
+  }
+  if (value.type === "snapshot") {
+    validateSnapshot(value.snapshot);
+    return;
+  }
+  if (value.type === "task.state_changed") {
+    if (typeof value.state !== "string")
+      throw new ProtocolValidationError("invalid_message", "event.state is invalid.");
+    validateSnapshot({ taskId: "event", revision: 0, state: value.state });
+    return;
+  }
+  if (value.type === "task.created") {
+    if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto")
+      throw new ProtocolValidationError("invalid_message", "event.approvalProfile is invalid.");
+    return;
+  }
+  throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
 }
 
 export function validateProtocolMessage(value: unknown): ProtocolMessage {
@@ -150,22 +243,18 @@ export function validateProtocolMessage(value: unknown): ProtocolMessage {
   if (value.kind === "command") {
     assertString(value.commandId, "commandId");
     assertNonNegativeInteger(value.expectedRevision, "expectedRevision");
-    if (!isRecord(value.command) || value.command.type !== "snapshot") {
-      throw new ProtocolValidationError("invalid_message", "Unsupported command payload.");
-    }
+    validateCommand(value.command);
     return value as unknown as CommandEnvelope;
   }
 
   if (value.kind === "event") {
     assertPositiveInteger(value.sequence, "sequence");
     assertNonNegativeInteger(value.revision, "revision");
-    if (!isRecord(value.event) || value.event.type !== "snapshot") {
-      throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
-    }
-    validateSnapshot(value.event.snapshot);
+    validateEvent(value.event);
     if (
-      value.event.snapshot.taskId !== value.taskId ||
-      value.event.snapshot.revision !== value.revision
+      value.event.type === "snapshot" &&
+      (value.event.snapshot.taskId !== value.taskId ||
+        value.event.snapshot.revision !== value.revision)
     ) {
       throw new ProtocolValidationError(
         "invalid_message",

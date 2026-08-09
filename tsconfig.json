@@ -5,6 +5,8 @@
     { "path": "packages/platform" },
     { "path": "packages/runtime" },
     { "path": "packages/pi-adapter" },
-    { "path": "apps/tui" }
+    { "path": "apps/tui" },
+    { "path": "apps/app-server" },
+    { "path": "apps/desktop" }
   ]
 }
