@@ -120,6 +120,19 @@ test("task lifecycle commands and state events remain versioned and secret-free"
   );
 });
 
+test("assistant thinking deltas remain typed and secret-free", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-thinking",
+    sequence: 1,
+    revision: 1,
+    event: { type: "assistant.thinking.delta", text: "sanitized reasoning fixture" },
+  } as const;
+  validateProtocolMessage(event);
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+});
+
 test("event sequencing and snapshot identity fail closed", () => {
   const ledger = new EventLedger();
   ledger.accept(snapshotEventFixture);

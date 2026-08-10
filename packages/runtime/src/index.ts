@@ -7,6 +7,7 @@ export interface AgentTurnInput {
   readonly prompt: string;
   readonly model?: CandyModelId;
   readonly images?: readonly AgentImageInput[];
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface AgentImageInput {
@@ -16,6 +17,7 @@ export interface AgentImageInput {
 
 export type AgentObservation =
   | { readonly type: "turn.started"; readonly taskId: string; readonly at: number }
+  | { readonly type: "assistant.thinking.delta"; readonly text: string }
   | { readonly type: "assistant.delta"; readonly text: string }
   | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
   | {

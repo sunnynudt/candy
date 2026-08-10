@@ -55,6 +55,16 @@ The MiniMax Token Plan subscription Key and a metered MiniMax API Key are differ
 
 The default test command never runs live provider tests. Live tests require a separate explicit provider-specific command and an opt-in flag so an untrusted test or pull request cannot spend quota or contact a provider.
 
+The repository provides two explicit Gate commands after the pinned build is ready:
+
+```zsh
+npm run build
+npm run gate:live:deepseek
+npm run gate:live:minimax
+```
+
+Run only the provider command whose Candy-owned environment variable was placed in the private trusted process. The runner requires `--confirm-live` internally, removes both Candy provider variables from its process environment before creating the Pi engine, uses a temporary fixture/session directory outside the repository, and writes only sanitized results to `out/acceptance/live/`. Missing credentials produce `Blocked` without a network request. The runner also keeps controlled error fixtures, entitlement-console confirmation, and any unavailable thinking/tool proof as `Blocked`; a successful HTTP turn alone is not a Gate pass.
+
 ## Product workflow after the credential store exists
 
 1. The user enters the credential in Candy Settings or the TUI's trusted credential prompt.

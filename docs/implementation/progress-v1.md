@@ -75,3 +75,10 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - The runner uses Candy's minimal child-environment allowlist, never enables live providers, records only sanitized metadata, and writes ignored reports under `out/acceptance/macos/`.
 - The local run passed all 8 steps on macOS `26.5.2` arm64 with Node `22.23.2`, 53 tests, native checks, packaged JSONL lifecycle, and the packaged Keychain fixture. The latest local report is `out/acceptance/macos/latest.md`.
 - This closes the repeatability seam for local macOS evidence but does not change the status of exact Sequoia, live-provider, signing, Browser, native containment, or final ACC gates.
+
+## 2026-08-10 provider-chain checkpoint
+
+- Added explicit `gate:live:deepseek` and `gate:live:minimax` commands. They require the provider-specific opt-in path, accept only Candy-owned temporary environment credentials, remove both provider variables before creating the Pi engine, use a temporary Candy-owned fixture outside the repository, and write sanitized local results under `out/acceptance/live/`.
+- The no-credential DeepSeek run was exercised and correctly produced `Blocked` without a network request or credential-shaped output.
+- The Pi adapter now accepts an explicit thinking level and forwards public Pi `thinking_delta` events as typed `assistant.thinking.delta` observations through Runtime and app-server protocol layers. The new protocol and adapter fixtures pass; Desktop visual presentation is intentionally deferred.
+- Live DeepSeek/MiniMax credentials, Token Plan console evidence, exact error-condition fixtures, and final provider Gate status remain Blocked.

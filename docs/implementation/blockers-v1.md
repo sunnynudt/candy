@@ -91,3 +91,9 @@ Blocked external resources do not stop independent implementation. They do preve
 - `npm run acceptance:macos` now provides one serial, explicit local macOS arm64 evidence run. It passed `check:toolchain`, `check`, `check:native`, TUI, app-server, Electron, packaged Desktop, and packaged Keychain smoke on the current machine.
 - The runner writes only sanitized, ignored reports under `out/acceptance/macos/` and uses a minimal child environment. It does not read or import credentials and does not execute live provider tests.
 - External blockers are unchanged: exact Sequoia 15+ evidence, live DeepSeek/MiniMax matrices and entitlement, Apple signing/notarization, Browser adversarial evidence, native containment security review, and final product-owner acceptance.
+
+## 2026-08-10 provider-chain checkpoint
+
+- Provider Gate commands now exist but are opt-in and fail closed. The no-credential DeepSeek invocation produced a sanitized `Blocked` report and did not contact the provider.
+- Pi thinking deltas now have a typed adapter/runtime/protocol path. This improves the observable chain but does not itself prove live DeepSeek reasoning replay or MiniMax interleaved thinking.
+- `G0-LIVE-DS`, `G0-LIVE-MM`, and `G0-DS-ADAPTER` remain `Blocked` until approved credentials, live runs, controlled 401/429/timeout/limit evidence, MiniMax Token Plan console confirmation, and required platform evidence are available.

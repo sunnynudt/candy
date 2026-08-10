@@ -81,6 +81,11 @@ export interface AssistantDeltaEvent {
   readonly text: string;
 }
 
+export interface AssistantThinkingDeltaEvent {
+  readonly type: "assistant.thinking.delta";
+  readonly text: string;
+}
+
 export interface ToolStartedEvent {
   readonly type: "tool.started";
   readonly tool: string;
@@ -101,6 +106,7 @@ export type RuntimeEvent =
   | SnapshotEvent
   | TaskStateChangedEvent
   | TaskCreatedEvent
+  | AssistantThinkingDeltaEvent
   | AssistantDeltaEvent
   | ToolStartedEvent
   | ToolCompletedEvent
@@ -288,6 +294,10 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
     return;
   }
   if (value.type === "assistant.delta") {
+    assertString(value.text, "event.text");
+    return;
+  }
+  if (value.type === "assistant.thinking.delta") {
     assertString(value.text, "event.text");
     return;
   }

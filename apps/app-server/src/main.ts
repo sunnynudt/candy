@@ -53,6 +53,7 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       prompt: input.prompt,
       model,
       cwd: process.cwd(),
+      ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
       ...(input.images === undefined ? {} : { images: input.images }),
     };
     const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
@@ -395,6 +396,8 @@ function observationToEvent(
 ): RuntimeEvent | undefined {
   if (observation.type === "assistant.delta")
     return { type: "assistant.delta", text: observation.text };
+  if (observation.type === "assistant.thinking.delta")
+    return { type: "assistant.thinking.delta", text: observation.text };
   if (observation.type === "tool.started") return { type: "tool.started", tool: observation.tool };
   if (observation.type === "tool.completed")
     return { type: "tool.completed", tool: observation.tool, ok: observation.ok };
@@ -461,6 +464,8 @@ function mapPiObservation(observation: PiAgentObservation): AgentObservation {
     return { type: "turn.started", taskId: observation.taskId, at: Date.now() };
   if (observation.type === "assistant.delta")
     return { type: "assistant.delta", text: observation.text };
+  if (observation.type === "assistant.thinking.delta")
+    return { type: "assistant.thinking.delta", text: observation.text };
   if (observation.type === "tool.started")
     return { type: "tool.started", taskId: observation.taskId, tool: observation.tool };
   if (observation.type === "tool.completed")

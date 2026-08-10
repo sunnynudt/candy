@@ -109,7 +109,7 @@ test("Pi agent engine uses the public Pi loop, read-only tools, and Candy-owned 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
-      'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"delta":{"reasoning_content":"thinking","content":"hello"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
       { status: 200, headers: { "content-type": "text/event-stream" } },
     );
   try {
@@ -118,14 +118,20 @@ test("Pi agent engine uses the public Pi loop, read-only tools, and Candy-owned 
       secret: "fixture-secret",
       release: () => undefined,
     })).runTurn(
-      { taskId: "task-1", prompt: "say hello", model: "deepseek-v4-flash", cwd: process.cwd() },
+      {
+        taskId: "task-1",
+        prompt: "say hello",
+        model: "deepseek-v4-flash",
+        cwd: process.cwd(),
+        thinkingLevel: "high",
+      },
       new AbortController().signal,
     )) {
       observations.push(observation);
     }
     assert.deepEqual(
       observations.map((observation) => observation.type),
-      ["turn.started", "assistant.delta", "turn.completed"],
+      ["turn.started", "assistant.delta", "assistant.thinking.delta", "turn.completed"],
     );
     const entries = await readdir(path.join(root, "task-1"));
     const sessionFile = entries.find((entry) => entry.endsWith(".jsonl"));

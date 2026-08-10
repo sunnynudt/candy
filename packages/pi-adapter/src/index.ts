@@ -436,6 +436,7 @@ export interface PiAgentEngineInput {
   readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
   readonly cwd: string;
   readonly images?: readonly PiImageInput[];
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface PiImageInput {
@@ -445,6 +446,7 @@ export interface PiImageInput {
 
 export type PiAgentObservation =
   | { readonly type: "turn.started"; readonly taskId: string }
+  | { readonly type: "assistant.thinking.delta"; readonly taskId: string; readonly text: string }
   | { readonly type: "assistant.delta"; readonly taskId: string; readonly text: string }
   | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
   | {
@@ -572,6 +574,9 @@ export class PiAgentEngine {
         tools: ["read"],
       });
       session = created.session;
+      if (input.thinkingLevel !== undefined) {
+        session.setThinkingLevel(input.thinkingLevel);
+      }
       const events = new AsyncEventQueue<piSdk.AgentSessionEvent>();
       const unsubscribe = session.subscribe((event) => events.push(event));
       const abort = (): void => session?.agent.abort();
@@ -602,6 +607,15 @@ export class PiAgentEngine {
           if (event.value.type === "agent_start" && !started) {
             started = true;
             yield { type: "turn.started", taskId: input.taskId };
+          } else if (
+            event.value.type === "message_update" &&
+            event.value.assistantMessageEvent.type === "thinking_delta"
+          ) {
+            yield {
+              type: "assistant.thinking.delta",
+              taskId: input.taskId,
+              text: event.value.assistantMessageEvent.delta,
+            };
           } else if (
             event.value.type === "message_update" &&
             event.value.assistantMessageEvent.type === "text_delta"
