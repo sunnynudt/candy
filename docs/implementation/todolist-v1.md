@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`f543b9f6ba9b6159156ba2a4d74a8931f3406227`
+当前基线提交：`7043e286bbde645f4af7507504298234dd17011c`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -29,7 +29,7 @@
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
-  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1391 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1459 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除，source revision 为 `16345fad5acdd1fa9fc7c30921baaf46e82a7a73`。
+  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1169 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1406 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除，source revision 为 `7043e286bbde645f4af7507504298234dd17011c`。
   待完成：Runtime event 到 UI、取消、Browser Take Control、三任务并发冻结/丢事件等 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
 
 - ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
@@ -53,12 +53,12 @@
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
   已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；Candy 自有 Windows Credential Manager 适配器的合成 fixture 已完成 `absent -> present -> present -> absent`（set/replace/has/delete），未输出或读取 fixture 值；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`；真实 app-server 子进程重启后 queued metadata 与 active owner crash interruption 快照恢复 smoke 通过。
   已完成：从已验证的 Electron `43.2.0` Windows x64 目录生成 `out/windows/Candy` 未签名开发包，嵌入 Node `v22.23.2`、app-server 和 Windows native runner；`npm run smoke:desktop:packaged:windows` 通过，输出 `packaged unsigned Windows Desktop app-server JSONL smoke ok`；随后使用包内 `resources/node/node.exe` 和 bundled keyring addon 完成 packaged Credential Manager synthetic lifecycle smoke，DeepSeek presence 保持不变。
-  待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、packaged active-owner/tool recovery 和完整响应性矩阵仍未完成；active validator interruption、owner crash interruption、non-owner read-only fencing、attachment restart recovery 和 bounded three-slot concurrency 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
+  待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、packaged cross-client handoff 和完整响应性矩阵仍未完成；active validator interruption、owner crash interruption、non-owner read-only fencing、attachment restart recovery、bounded three-slot concurrency 和 packaged active-owner/tool recovery 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `f543b9f6ba9b6159156ba2a4d74a8931f3406227` 上执行 `npm run acceptance:windows`，16/16 个确定性步骤通过，包含 queued/active crash recovery、attachment restart recovery、active validator interruption、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1206 ms`、Desktop `1388 ms`；并发槽位/FIFO 子集通过，但完整 ACC-12 指标仍未完成。
-  未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、packaged active-owner/工具中断恢复、packaged cross-client recovery、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
+  已完成：在干净提交 `7043e286bbde645f4af7507504298234dd17011c` 上执行 `npm run acceptance:windows`，17/17 个确定性步骤通过，包含 queued/active crash recovery、attachment restart recovery、active validator interruption、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1169 ms`、Desktop `1406 ms`；并发槽位/FIFO 子集通过，但完整 ACC-12 指标仍未完成。
+  未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、packaged cross-client recovery、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 ## 明天执行：macOS `26.5.2` Apple Silicon
 
