@@ -103,6 +103,7 @@ export class InteractiveTui {
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
   readonly #engine: TuiAgentEngine;
+  readonly #ownerId = `tui:${process.pid}`;
   #closing = false;
 
   public constructor(options: InteractiveTuiOptions = {}) {
@@ -138,6 +139,12 @@ export class InteractiveTui {
       }
     } finally {
       this.#closing = true;
+      for (const task of this.#controllers.values()) {
+        const current = task.snapshot();
+        if (current.state === "running" || current.state === "waiting_approval")
+          task.transition("interrupted", current.revision);
+      }
+      this.#store.markOwnerInterrupted(this.#ownerId);
       for (const controller of this.#abortControllers.values()) controller.abort();
       await new Promise<void>((resolve) => setImmediate(resolve));
       this.#store.close();
@@ -164,7 +171,7 @@ export class InteractiveTui {
       if (this.#abortControllers.has(taskId)) continue;
       const task = this.#controllers.get(taskId);
       if (!task || task.snapshot().state !== "queued") continue;
-      const running = task.setOwner(`tui:${process.pid}`, task.snapshot().revision);
+      const running = task.setOwner(this.#ownerId, task.snapshot().revision);
       const abort = new AbortController();
       this.#abortControllers.set(taskId, abort);
       void this.runTask(task, running.revision, abort);
@@ -190,8 +197,11 @@ export class InteractiveTui {
         if (observation.type === "assistant.delta") this.write(observation.text);
         if (observation.type === "tool.completed") this.write(`\n[tool ${observation.tool}]\n`);
       }
-      const completed = task.transition("completed", revision);
-      this.write(`\n${completed.taskId} completed\n`);
+      const current = task.snapshot();
+      if (current.state === "running" && current.revision === revision) {
+        const completed = task.transition("completed", revision);
+        this.write(`\n${completed.taskId} completed\n`);
+      }
     } catch (error) {
       const current = task.snapshot();
       if (current.state === "running") {

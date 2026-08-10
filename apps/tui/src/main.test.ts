@@ -25,7 +25,15 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
   });
   try {
     await new InteractiveTui({
-      input: Readable.from(["inspect fixture\n", ":tasks\n", ":quit\n"]),
+      input: Readable.from(
+        (async function* () {
+          yield "inspect fixture\n";
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          yield ":tasks\n";
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          yield ":quit\n";
+        })(),
+      ),
       output: outputStream,
       appDataRoot: root,
       engine,

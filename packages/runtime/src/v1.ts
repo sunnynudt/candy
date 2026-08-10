@@ -101,6 +101,106 @@ export class ProviderConcurrencyGate {
   }
 }
 
+export interface ProcessRequest {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly activeSecrets?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+
+export interface ProcessResult {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly cancelled: boolean;
+}
+
+export class ProcessSupervisorUnavailableError extends Error {
+  public constructor(message = "Strong process supervision is unavailable on this platform.") {
+    super(message);
+    this.name = "ProcessSupervisorUnavailableError";
+  }
+}
+
+/** Narrow, shell-free process seam. Windows remains unavailable until Job Object G2 passes. */
+export class ProcessSupervisor {
+  public constructor(private readonly platform = process.platform) {}
+
+  public run(request: ProcessRequest): Promise<ProcessResult> {
+    if (this.platform === "win32") throw new ProcessSupervisorUnavailableError();
+    if (path.isAbsolute(request.executable) === false)
+      throw new Error("Supervised executables must use an absolute path.");
+    assertSafeProcessEnvironment(request.environment ?? {});
+    const environment = cleanChildEnvironment(
+      { ...process.env, ...request.environment },
+      request.activeSecrets ?? [],
+    );
+    return new Promise((resolve, reject) => {
+      const child = spawn(request.executable, [...request.args], {
+        cwd: request.cwd,
+        env: environment,
+        detached: true,
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      let cancelled = false;
+      let finished = false;
+      const terminate = (signal: NodeJS.Signals): void => {
+        if (child.pid === undefined) return;
+        try {
+          process.kill(-child.pid, signal);
+        } catch {
+          child.kill(signal);
+        }
+      };
+      const onAbort = (): void => {
+        cancelled = true;
+        terminate("SIGTERM");
+        setTimeout(() => {
+          if (!finished) terminate("SIGKILL");
+        }, 1_000).unref();
+      };
+      request.signal?.addEventListener("abort", onAbort, { once: true });
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on(
+        "data",
+        (chunk: string) => (stdout += chunk.slice(0, 1_048_576 - stdout.length)),
+      );
+      child.stderr?.on(
+        "data",
+        (chunk: string) => (stderr += chunk.slice(0, 1_048_576 - stderr.length)),
+      );
+      child.once("error", (error) => {
+        finished = true;
+        request.signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        finished = true;
+        request.signal?.removeEventListener("abort", onAbort);
+        resolve({ code, signal, stdout, stderr, cancelled });
+      });
+      if (request.signal?.aborted) onAbort();
+    });
+  }
+}
+
+function assertSafeProcessEnvironment(environment: Readonly<Record<string, string>>): void {
+  for (const [key, value] of Object.entries(environment)) {
+    if (/(?:api[_-]?key|authorization|credential|password|secret|token)/iu.test(key))
+      throw new Error("Provider credentials are forbidden in supervised process environments.");
+    if (/(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(value))
+      throw new Error("Secret-shaped content is forbidden in supervised process environments.");
+  }
+}
+
 export interface AttachmentMetadata {
   readonly id: string;
   readonly kind: "image" | "video";
@@ -108,6 +208,12 @@ export interface AttachmentMetadata {
   readonly bytes: number;
   readonly sha256: string;
   readonly createdAt: number;
+}
+
+export interface ImageAttachmentPayload {
+  readonly id: string;
+  readonly mimeType: string;
+  readonly data: string;
 }
 
 export class AttachmentStore {
@@ -152,7 +258,28 @@ export class AttachmentStore {
     const metadata = JSON.parse(
       await readFile(path.join(this.root, `${id}.json`), "utf8"),
     ) as AttachmentMetadata;
-    return { metadata, content: await readFile(path.join(this.root, `${id}.bin`)) };
+    const content = await readFile(path.join(this.root, `${id}.bin`));
+    if (
+      metadata.id !== id ||
+      metadata.kind !== "image" ||
+      !metadata.mimeType.startsWith("image/") ||
+      metadata.bytes !== content.byteLength ||
+      metadata.sha256 !== createHash("sha256").update(content).digest("hex")
+    ) {
+      throw new Error("Attachment integrity check failed.");
+    }
+    return { metadata, content };
+  }
+
+  public async getImagePayload(id: string): Promise<ImageAttachmentPayload> {
+    const attachment = await this.get(id);
+    if (attachment.metadata.kind !== "image")
+      throw new Error("Only image attachments can be sent to a multimodal model.");
+    return {
+      id,
+      mimeType: attachment.metadata.mimeType,
+      data: Buffer.from(attachment.content).toString("base64"),
+    };
   }
 
   public async cleanupBefore(cutoff: number): Promise<number> {

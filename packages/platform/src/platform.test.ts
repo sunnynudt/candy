@@ -108,6 +108,7 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
       approvalProfile: "read-only",
       queueOrder: 4,
       model: "deepseek-v4-flash",
+      attachmentIds: [],
     });
     const running = first.transition("task-1", 0, "running", "owner-1");
     assert.equal(running.revision, 1);
@@ -118,7 +119,7 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
 
     const reopened = new SQLiteTaskStore(databasePath);
     assert.deepEqual(reopened.get("task-1"), running);
-    assert.equal(reopened.markActiveInterrupted(), 1);
+    assert.equal(reopened.markOwnerInterrupted("owner-1"), 1);
     assert.equal(reopened.get("task-1")?.state, "interrupted");
     reopened.close();
   } finally {

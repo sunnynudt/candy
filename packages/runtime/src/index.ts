@@ -6,6 +6,12 @@ export interface AgentTurnInput {
   readonly taskId: string;
   readonly prompt: string;
   readonly model?: CandyModelId;
+  readonly images?: readonly AgentImageInput[];
+}
+
+export interface AgentImageInput {
+  readonly mimeType: string;
+  readonly data: string;
 }
 
 export type AgentObservation =
@@ -384,6 +390,8 @@ export {
   LongRunningTaskRunner,
   LongRunningControlError,
   ProviderConcurrencyGate,
+  ProcessSupervisor,
+  ProcessSupervisorUnavailableError,
   SerialMutationLane,
   WorkspaceHandoff,
   planGitWorktree,
@@ -392,6 +400,7 @@ export type {
   ActionKind,
   ActionRequest,
   AttachmentMetadata,
+  ImageAttachmentPayload,
   BrowserAction,
   BrowserTabSnapshot,
   LongRunningResult,
@@ -401,6 +410,8 @@ export type {
   LongRunningProgressStore,
   Validator,
   ValidatorResult,
+  ProcessRequest,
+  ProcessResult,
   GitWorktreePlan,
   GitChangeManifest,
   GitCommandRunner,

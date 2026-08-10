@@ -30,11 +30,15 @@ export interface CredentialBridge {
 
 export interface DesktopPreloadApi {
   readonly credentials: CredentialBridge;
+  readonly attachments: {
+    pickImage(): Promise<string | undefined>;
+  };
   readonly tasks: {
     create(
       prompt: string,
       approvalProfile: "read-only" | "auto",
       model?: CandyModelId,
+      attachmentIds?: readonly string[],
     ): Promise<RendererTaskProjection>;
     snapshot(taskId: string): Promise<RendererTaskProjection>;
     send(command: {

@@ -8,9 +8,12 @@ const api: DesktopPreloadApi = {
     delete: async () => undefined,
     has: async () => "absent",
   },
+  attachments: {
+    pickImage: () => ipcRenderer.invoke("attachment.pick-image") as Promise<string | undefined>,
+  },
   tasks: {
-    create: (prompt, approvalProfile, model) =>
-      ipcRenderer.invoke("task.create", prompt, approvalProfile, model) as Promise<
+    create: (prompt, approvalProfile, model, attachmentIds) =>
+      ipcRenderer.invoke("task.create", prompt, approvalProfile, model, attachmentIds) as Promise<
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["create"]>>
       >,
     snapshot: (taskId) =>

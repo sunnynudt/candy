@@ -62,6 +62,7 @@ export interface TaskMetadata {
   readonly queueOrder?: number;
   readonly ownerId?: string;
   readonly model: CandyModelId;
+  readonly attachmentIds: readonly string[];
 }
 
 export type PersistedRunStopReason =
@@ -119,7 +120,8 @@ export class SQLiteTaskStore {
         approval_profile TEXT NOT NULL,
         queue_order INTEGER,
         owner_id TEXT,
-        model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash'
+        model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+        attachment_ids TEXT NOT NULL DEFAULT '[]'
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -129,11 +131,12 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 3;
+      PRAGMA user_version = 4;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
+        ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -142,14 +145,20 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 3;
+        PRAGMA user_version = 4;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
-        PRAGMA user_version = 3;
+        ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
+        PRAGMA user_version = 4;
       `);
-    } else if (schemaVersion !== 3) {
+    } else if (schemaVersion === 3) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
+        PRAGMA user_version = 4;
+      `);
+    } else if (schemaVersion !== 4) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -159,20 +168,22 @@ export class SQLiteTaskStore {
     approvalProfile: "read-only" | "auto",
     queueOrder?: number,
     model: CandyModelId = DEFAULT_CANDY_MODEL,
+    attachmentIds: readonly string[] = [],
   ): TaskMetadata {
     assertTaskId(taskId);
+    assertAttachmentIds(attachmentIds);
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id) VALUES (?, 0, 'queued', ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids) VALUES (?, 0, 'queued', ?, ?, ?, ?)",
       )
-      .run(taskId, approvalProfile, queueOrder ?? null, model);
+      .run(taskId, approvalProfile, queueOrder ?? null, model, JSON.stringify(attachmentIds));
     return this.require(taskId);
   }
 
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -181,7 +192,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -190,7 +201,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -220,6 +231,17 @@ export class SQLiteTaskStore {
           "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL WHERE state IN ('running', 'waiting_approval')",
         )
         .run().changes,
+    );
+  }
+
+  public markOwnerInterrupted(ownerId: string): number {
+    if (ownerId.length === 0) throw new Error("Task owner id is invalid.");
+    return Number(
+      this.#database
+        .prepare(
+          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL WHERE owner_id = ? AND state IN ('running', 'waiting_approval')",
+        )
+        .run(ownerId).changes,
     );
   }
 
@@ -294,6 +316,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     state: String(row.state) as PersistedTaskState,
     approvalProfile: String(row.approval_profile) as "read-only" | "auto",
     model: String(row.model_id ?? DEFAULT_CANDY_MODEL) as CandyModelId,
+    attachmentIds: parseAttachmentIds(row.attachment_ids),
   };
   return {
     ...metadata,
@@ -304,6 +327,23 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
 
 function assertTaskId(taskId: string): void {
   if (taskId.length === 0 || /[\r\n]/u.test(taskId)) throw new Error("Task ID is invalid.");
+}
+
+function assertAttachmentIds(ids: readonly string[]): void {
+  if (ids.some((id) => !/^att_[a-f0-9]{64}$/u.test(id)))
+    throw new Error("Attachment id is invalid.");
+}
+
+function parseAttachmentIds(value: unknown): readonly string[] {
+  if (typeof value !== "string") return [];
+  try {
+    const ids = JSON.parse(value) as unknown;
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) return [];
+    assertAttachmentIds(ids);
+    return ids;
+  } catch {
+    return [];
+  }
 }
 
 export type CredentialName = "deepseek" | "minimax-cn";

@@ -25,16 +25,22 @@ import {
 } from "@candy/protocol";
 import {
   DeterministicAgentEngine,
+  AttachmentStore,
   type AgentEngine,
   type AgentObservation,
   type AgentTurnInput,
   type RecoverableAgentEngine,
 } from "@candy/runtime";
 
-class PiAppServerEngine implements RecoverableAgentEngine {
+interface PiTurnEngine {
+  runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
+  recoverPrompt(taskId: string, cwd: string): Promise<string | undefined>;
+}
+
+export class PiAppServerEngine implements RecoverableAgentEngine {
   public constructor(
-    private readonly deepseek: PiAgentEngine,
-    private readonly minimax: PiAgentEngine,
+    private readonly deepseek: PiTurnEngine,
+    private readonly minimax: PiTurnEngine,
   ) {}
 
   public async *runTurn(
@@ -47,6 +53,7 @@ class PiAppServerEngine implements RecoverableAgentEngine {
       prompt: input.prompt,
       model,
       cwd: process.cwd(),
+      ...(input.images === undefined ? {} : { images: input.images }),
     };
     const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
     for await (const observation of engine.runTurn(piInput, signal)) {
@@ -92,6 +99,7 @@ export interface AppServerControllerOptions {
   readonly databasePath?: string;
   readonly engine?: AgentEngine;
   readonly ownerId?: string;
+  readonly attachments?: AttachmentStore;
 }
 
 type Emit = (message: ProtocolMessage) => void;
@@ -100,6 +108,11 @@ interface ActiveTask {
   readonly abort: AbortController;
   done: Promise<void>;
   requestedStop?: "paused" | "cancelled";
+}
+
+interface PendingRun {
+  readonly taskId: string;
+  readonly emit: Emit;
 }
 
 /**
@@ -111,16 +124,21 @@ export class AppServerController {
   readonly #store: SQLiteTaskStore;
   readonly #engine: RecoverableAgentEngine;
   readonly #ownerId: string;
+  readonly #attachments: AttachmentStore | undefined;
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
   readonly #active = new Map<string, ActiveTask>();
+  readonly #pendingRuns: PendingRun[] = [];
+  readonly #requestedRuns = new Set<string>();
   readonly #sequences = new Map<string, number>();
+  #closed = false;
 
   public constructor(options: AppServerControllerOptions = {}) {
     this.#store = new SQLiteTaskStore(options.databasePath ?? ":memory:");
     this.#engine =
       options.engine ?? new DeterministicAgentEngine(new SystemClock(), "Candy fixture response");
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
+    this.#attachments = options.attachments;
   }
 
   public get state(): AppServerState {
@@ -148,6 +166,7 @@ export class AppServerController {
         command.approvalProfile,
         this.nextQueueOrder(),
         command.model ?? DEFAULT_CANDY_MODEL,
+        command.attachmentIds ?? [],
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
@@ -155,6 +174,7 @@ export class AppServerController {
           type: "task.created",
           approvalProfile: command.approvalProfile,
           model: metadata.model,
+          attachmentIds: metadata.attachmentIds,
         }),
         this.snapshot(metadata),
       ];
@@ -184,6 +204,13 @@ export class AppServerController {
       ) {
         throw new Error(`Task ${message.taskId} is not resumable.`);
       }
+      if (this.#active.size >= 3) {
+        if (!this.#requestedRuns.has(message.taskId)) {
+          this.#requestedRuns.add(message.taskId);
+          this.#pendingRuns.push({ taskId: message.taskId, emit });
+        }
+        return [this.snapshot(existing)];
+      }
       const running = this.#store.transition(
         message.taskId,
         message.expectedRevision,
@@ -191,11 +218,14 @@ export class AppServerController {
         this.#ownerId,
       );
       const startEvents = [this.stateChanged(running, "user"), this.snapshot(running)];
-      setImmediate(() => this.startTask(message.taskId, emit));
+      this.startTask(message.taskId, emit);
       return startEvents;
     }
 
     if (command.type === "task.cancel" || command.type === "task.pause") {
+      if (existing.ownerId !== undefined && existing.ownerId !== this.#ownerId) {
+        return [this.snapshot(existing)];
+      }
       const active = this.#active.get(message.taskId);
       if (active) {
         active.requestedStop = command.type === "task.pause" ? "paused" : "cancelled";
@@ -205,6 +235,11 @@ export class AppServerController {
         await active.done;
         const finished = this.#store.get(message.taskId);
         return finished ? [this.snapshot(finished)] : [];
+      }
+      const pendingIndex = this.#pendingRuns.findIndex(({ taskId }) => taskId === message.taskId);
+      if (pendingIndex >= 0) {
+        this.#pendingRuns.splice(pendingIndex, 1);
+        this.#requestedRuns.delete(message.taskId);
       }
       const nextState = command.type === "task.pause" ? "paused" : "cancelled";
       const updated = this.#store.transition(message.taskId, message.expectedRevision, nextState);
@@ -219,6 +254,9 @@ export class AppServerController {
   }
 
   public close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#store.markOwnerInterrupted(this.#ownerId);
     for (const active of this.#active.values()) active.abort.abort(new Error("App-server closed."));
     this.#store.close();
   }
@@ -238,8 +276,18 @@ export class AppServerController {
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       const current = this.#store.get(taskId);
       if (!current) throw new Error("Task metadata is unavailable.");
+      const images =
+        current.attachmentIds.length === 0
+          ? undefined
+          : this.#attachments
+            ? await Promise.all(
+                current.attachmentIds.map((id) => this.#attachments!.getImagePayload(id)),
+              )
+            : (() => {
+                throw new Error("Attachment storage is unavailable after restart.");
+              })();
       for await (const observation of this.#engine.runTurn(
-        { taskId, prompt, model: current.model },
+        { taskId, prompt, model: current.model, ...(images === undefined ? {} : { images }) },
         active.abort.signal,
       )) {
         const metadata = this.#store.get(taskId);
@@ -254,6 +302,7 @@ export class AppServerController {
         emit(this.snapshot(completed));
       }
     } catch (error) {
+      if (this.#closed) return;
       const metadata = this.#store.get(taskId);
       if (metadata?.state === "running") {
         const nextState =
@@ -262,7 +311,8 @@ export class AppServerController {
         emit(
           this.event(taskId, interrupted.revision, {
             type: "task.error",
-            code: nextState === "cancelled" ? "cancelled" : "runtime_error",
+            code:
+              nextState === "cancelled" ? "cancelled" : taskErrorCode(error, active.abort.signal),
           }),
         );
         emit(
@@ -273,7 +323,30 @@ export class AppServerController {
       void error;
     } finally {
       this.#active.delete(taskId);
+      this.#requestedRuns.delete(taskId);
+      if (!this.#closed) this.pumpPendingRuns();
     }
+  }
+
+  private pumpPendingRuns(): void {
+    if (this.#closed || this.#active.size >= 3) return;
+    const next = this.#pendingRuns.shift();
+    if (!next) return;
+    this.#requestedRuns.delete(next.taskId);
+    const metadata = this.#store.get(next.taskId);
+    if (!metadata || !["queued", "paused", "interrupted"].includes(metadata.state)) {
+      this.pumpPendingRuns();
+      return;
+    }
+    const running = this.#store.transition(
+      next.taskId,
+      metadata.revision,
+      "running",
+      this.#ownerId,
+    );
+    next.emit(this.stateChanged(running, "user"));
+    next.emit(this.snapshot(running));
+    this.startTask(next.taskId, next.emit);
   }
 
   private nextQueueOrder(): number {
@@ -291,6 +364,7 @@ export class AppServerController {
           ? {}
           : { approvalProfile: metadata.approvalProfile }),
         ...(metadata.model === undefined ? {} : { model: metadata.model }),
+        ...(metadata.attachmentIds === undefined ? {} : { attachmentIds: metadata.attachmentIds }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
       },
     });
@@ -327,10 +401,25 @@ function observationToEvent(
   return undefined;
 }
 
+function taskErrorCode(
+  error: unknown,
+  signal: AbortSignal,
+): "cancelled" | "needs_credentials" | "provider_error" | "runtime_error" {
+  if (signal.aborted) return "cancelled";
+  if (error instanceof Error) {
+    const code = (error as Error & { readonly code?: unknown }).code;
+    if (code === "needs_credentials") return code;
+    if (code === "unapproved_endpoint" || code === "malformed_stream" || code === "provider_error")
+      return "provider_error";
+  }
+  return "runtime_error";
+}
+
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
+    attachments: new AttachmentStore(paths.attachments),
     engine: new PiAppServerEngine(
       new PiAgentEngine(paths.sessions, async () => {
         const lease = resolveCredential("deepseek");

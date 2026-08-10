@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import { app, BrowserWindow, ipcMain, session, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, WebContentsView } from "electron";
 import {
   cleanChildEnvironment,
   DEFAULT_CANDY_MODEL,
@@ -12,6 +13,7 @@ import {
   type CredentialName,
   type CandyModelId,
 } from "@candy/platform";
+import { AttachmentStore } from "@candy/runtime";
 import {
   decodeJsonLine,
   encodeJsonLine,
@@ -178,6 +180,19 @@ function validatePrompt(prompt: unknown): asserts prompt is string {
 
 function registerIpcHandlers(): void {
   const credentials = new KeyringCredentialStore();
+  const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
+  ipcMain.handle("attachment.pick-image", async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    });
+    const filePath = result.filePaths[0];
+    if (result.canceled || filePath === undefined) return undefined;
+    const extension = filePath.toLowerCase().split(".").at(-1);
+    const mimeType =
+      extension === "jpg" || extension === "jpeg" ? "image/jpeg" : `image/${extension ?? "png"}`;
+    return (await attachments.put("image", mimeType, await readFile(filePath))).id;
+  });
   ipcMain.handle("credential.set", (_event, name: string, value: string) => {
     assertCredentialName(name);
     credentials.set(name as CredentialName, value);
@@ -196,7 +211,7 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle(
     "task.create",
-    async (_event, prompt: unknown, profile: unknown, model: unknown) => {
+    async (_event, prompt: unknown, profile: unknown, model: unknown, attachmentIds: unknown) => {
       validatePrompt(prompt);
       if (profile !== "read-only" && profile !== "auto")
         throw new Error("Invalid approval profile.");
@@ -208,6 +223,13 @@ function registerIpcHandlers(): void {
       )
         throw new Error("Invalid model.");
       const selectedModel = (model ?? DEFAULT_CANDY_MODEL) as CandyModelId;
+      if (
+        attachmentIds !== undefined &&
+        (!Array.isArray(attachmentIds) ||
+          attachmentIds.some((id) => typeof id !== "string" || !/^att_[a-f0-9]{64}$/u.test(id)))
+      )
+        throw new Error("Invalid attachment ids.");
+      const selectedAttachments = (attachmentIds ?? []) as readonly string[];
       const taskId = randomUUID().replaceAll("-", "");
       const projection = emptyProjection(taskId);
       projections.set(taskId, { ...projection, approvalProfile: profile, model: selectedModel });
@@ -218,7 +240,13 @@ function registerIpcHandlers(): void {
         commandId: randomUUID(),
         taskId,
         expectedRevision: 0,
-        command: { type: "task.create", prompt, approvalProfile: profile, model: selectedModel },
+        command: {
+          type: "task.create",
+          prompt,
+          approvalProfile: profile,
+          model: selectedModel,
+          attachmentIds: selectedAttachments,
+        },
       });
       return projections.get(taskId) ?? projection;
     },
@@ -292,6 +320,14 @@ export function createDesktopWindow(): BrowserWindow {
       partition: "persist:candy-browser-v1",
     },
   });
+  const browserHosts: readonly string[] = [];
+  browserView.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  browserView.webContents.on("will-navigate", (event, url) => {
+    if (!isAllowedCandyBrowserUrl(url, browserHosts)) event.preventDefault();
+  });
+  browserView.webContents.on("will-redirect", (event, url) => {
+    if (!isAllowedCandyBrowserUrl(url, browserHosts)) event.preventDefault();
+  });
   window.contentView.addChildView(browserView);
   browserView.setBounds({ x: 360, y: 0, width: 840, height: 800 });
   browserView.setVisible(false);
@@ -312,18 +348,21 @@ function desktopShellHtml(nonce: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
 <style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff}section{padding:20px;overflow:auto}textarea{width:100%;height:140px;box-sizing:border-box}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}</style></head>
-<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
+<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
 <script nonce="${nonce}">
 (() => {
   const prompt = document.getElementById('prompt');
   const profile = document.getElementById('profile');
   const model = document.getElementById('model');
+  const attach = document.getElementById('attach');
+  const attachments = document.getElementById('attachments');
   const create = document.getElementById('create');
   const taskStatus = document.getElementById('taskStatus');
   const taskActions = document.getElementById('taskActions');
   const transcript = document.getElementById('transcript');
   const diff = document.getElementById('diff');
   let current;
+  let attachmentIds = [];
   const render = (projection) => {
     current = projection;
     taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision;
@@ -332,13 +371,26 @@ function desktopShellHtml(nonce: string): string {
   };
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;
-    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value)); prompt.value = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
+    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds)); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
   });
+  attach.addEventListener('click', async () => { const id = await window.candy.attachments.pickImage(); if (id) { attachmentIds.push(id); attachments.textContent = attachmentIds.length + ' image attached'; } });
   const send = (type) => current && window.candy.tasks.send({ taskId: current.taskId, expectedRevision: current.revision, type }).catch((error) => { taskStatus.textContent = error.message; });
   for (const type of ['task.run','task.pause','task.resume','task.cancel']) { const button = document.createElement('button'); button.textContent = type.replace('task.',''); button.addEventListener('click', () => send(type)); taskActions.appendChild(button); }
   window.candy.tasks.onUpdate(render);
 })();
 </script></body></html>`;
+}
+
+export function isAllowedCandyBrowserUrl(
+  url: string,
+  allowedHosts: readonly string[] = [],
+): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && allowedHosts.includes(parsed.host.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 export function configureCandyBrowserSession(): void {
@@ -349,9 +401,11 @@ export function configureCandyBrowserSession(): void {
     callback(false),
   );
   browserSession.setPermissionCheckHandler(() => false);
+  browserSession.on("will-download", (event) => event.preventDefault());
 }
 
 export function startDesktop(): void {
+  app.setName("Candy");
   app.whenReady().then(() => {
     configureCandyBrowserSession();
     appServer = new AppServerClient(handleAppServerEvent);

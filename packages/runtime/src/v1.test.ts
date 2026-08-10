@@ -19,6 +19,8 @@ import {
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
   ProviderConcurrencyGate,
+  ProcessSupervisor,
+  ProcessSupervisorUnavailableError,
   SerialMutationLane,
   WorkspaceHandoff,
   planGitWorktree,
@@ -110,12 +112,49 @@ test("mutation lane serializes writes and provider gates are independent", async
   assert.equal(await second, "second");
 });
 
+test("process supervisor is shell-free, strips provider env, and keeps Windows gated", async () => {
+  assert.throws(
+    () =>
+      new ProcessSupervisor("win32").run({
+        executable: process.execPath,
+        args: [],
+        cwd: process.cwd(),
+      }),
+    ProcessSupervisorUnavailableError,
+  );
+  assert.throws(
+    () =>
+      new ProcessSupervisor("darwin").run({
+        executable: process.execPath,
+        args: [],
+        cwd: process.cwd(),
+        environment: { CANDY_DEEPSEEK_API_KEY: "fixture-secret" },
+      }),
+    /credentials/iu,
+  );
+  const result = await new ProcessSupervisor("darwin").run({
+    executable: process.execPath,
+    args: ["-e", "process.stdout.write(process.env.CUSTOM ? 'present' : 'clean')"],
+    cwd: process.cwd(),
+    environment: { CUSTOM: "fixture-secret" },
+    activeSecrets: ["fixture-secret"],
+  });
+  assert.equal(result.stdout, "clean");
+});
+
 test("attachment store hashes image bytes, keeps binary outside session, and rejects video", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-attachments-"));
   const store = new AttachmentStore(root, () => 100);
   const metadata = await store.put("image", "image/png", new TextEncoder().encode("image-fixture"));
   assert.equal(metadata.id.length, 68);
   assert.equal((await store.get(metadata.id)).metadata.sha256, metadata.sha256);
+  assert.deepEqual(await store.getImagePayload(metadata.id), {
+    id: metadata.id,
+    mimeType: "image/png",
+    data: Buffer.from("image-fixture").toString("base64"),
+  });
+  writeFileSync(path.join(root, `${metadata.id}.bin`), "tampered");
+  await assert.rejects(store.get(metadata.id), /integrity/u);
   await assert.rejects(store.put("video", "video/mp4", new Uint8Array([1])), /unavailable/u);
   assert.equal(await store.cleanupBefore(101), 1);
 });

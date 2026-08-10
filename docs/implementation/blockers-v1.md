@@ -59,3 +59,14 @@ Blocked external resources do not stop independent implementation. They do preve
 - DeepSeek and MiniMax HTTP contract fixtures assert approved hosts, SSE projection, lease release, and no fallback. These are deterministic seams only; G0-LIVE-DS, G0-DS-ADAPTER, G0-LIVE-MM, and entitlement blockers remain unchanged.
 - The Desktop source now has a renderer-safe write-only credential bridge, typed app-server client, task event projection, Candy-owned browser partition, and explicit close-versus-quit path. Packaged runtime, signed artifact, Keychain/Credential Manager, Browser, and macOS evidence remain Blocked.
 - No real provider credential was read, requested, imported, logged, stored, or placed in evidence. Fixture strings are test canaries only.
+
+## 2026-08-10 attachment, process-supervision, and browser-boundary checkpoint
+
+- The local deterministic checkpoint passes format, lint, typecheck, 53 tests, native Rust unit tests, and `npm run check:native`.
+- Attachment storage and the typed app-server-to-Pi image handoff are implemented under Candy-owned app-data paths. This does not clear G0-LIVE-MM, G0-LIVE-DS, or the MiniMax Token Plan entitlement gate.
+- The POSIX `ProcessSupervisor` is fail-closed around provider environment material and uses shell-free argument arrays. Windows Job Object ownership and macOS sandbox containment are still blocked under G2-SANDBOX/G2-NATIVE; Shell and Auto Debug remain `unsupported`.
+- The native helper now rejects oversized or credential-shaped JSONL input, but still returns `unsupported` for every executable request. This is protocol hardening, not containment evidence.
+- Electron Browser Workspace navigation, redirects, popups, permissions, and downloads are now denied by default; only a future explicit HTTPS host allowlist can permit navigation. Packaged Browser input-origin and adversarial fixture evidence remain blocked under G3-BROWSER.
+- The app-server now forwards persisted attachment payloads through the Pi bridge and enforces the default three active-task slots with FIFO promotion. This is deterministic task-runtime evidence only; packaged cross-client ownership and restart handoff remain open.
+- The deterministic app-server matrix also covers actionable provider errors, second-owner read-only behavior, and owned-task interruption on close. It does not clear the packaged TUI/Desktop handoff, native process, or dual-platform recovery gates.
+- No real provider credential was read, requested, imported, logged, stored, or placed in evidence. Live-provider, OS keyring, signed packaging, macOS Sequoia Apple Silicon, Windows 11, security-review, and final ACC-01..12 gates remain open.

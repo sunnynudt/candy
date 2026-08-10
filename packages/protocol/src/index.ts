@@ -20,6 +20,7 @@ export interface TaskSnapshot {
   readonly state: TaskState;
   readonly approvalProfile?: "read-only" | "auto";
   readonly model?: CandyModelId;
+  readonly attachmentIds?: readonly string[];
   readonly ownerId?: string;
 }
 
@@ -32,6 +33,7 @@ export interface CreateTaskCommand {
   readonly prompt: string;
   readonly approvalProfile: "read-only" | "auto";
   readonly model?: CandyModelId;
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface TaskActionCommand {
@@ -71,6 +73,7 @@ export interface TaskCreatedEvent {
   readonly type: "task.created";
   readonly approvalProfile: "read-only" | "auto";
   readonly model?: CandyModelId;
+  readonly attachmentIds?: readonly string[];
 }
 
 export interface AssistantDeltaEvent {
@@ -243,6 +246,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     ) {
       throw new ProtocolValidationError("invalid_message", "command.model is unsupported.");
     }
+    if (value.attachmentIds !== undefined) assertAttachmentIds(value.attachmentIds);
     return;
   }
   if (value.type === "approval.respond") {
@@ -280,6 +284,7 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
     ) {
       throw new ProtocolValidationError("invalid_message", "event.model is unsupported.");
     }
+    if (value.attachmentIds !== undefined) assertAttachmentIds(value.attachmentIds);
     return;
   }
   if (value.type === "assistant.delta") {
@@ -308,6 +313,15 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
     return;
   }
   throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
+}
+
+function assertAttachmentIds(value: unknown): asserts value is readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some((id) => typeof id !== "string" || !/^att_[a-f0-9]{64}$/u.test(id))
+  ) {
+    throw new ProtocolValidationError("invalid_message", "attachmentIds are invalid.");
+  }
 }
 
 export function validateProtocolMessage(value: unknown): ProtocolMessage {
