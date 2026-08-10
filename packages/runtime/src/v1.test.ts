@@ -401,6 +401,41 @@ test("Git worktree planning uses argument arrays and handoff blocks unsafe trans
   assert.equal(handoff.state, "blocked");
 });
 
+test("Git worktree inspection parses NUL porcelain records and requires the matching lock", async () => {
+  const plan = planGitWorktree(
+    "C:\\repo",
+    "C:\\Candy Data\\worktrees\\task-1",
+    "task-1",
+    "0123456789abcdef",
+  );
+  const manager = new GitWorktreeManager("C:\\Candy Data\\worktrees", {
+    run: async () =>
+      [
+        "worktree C:/Candy Data/worktrees/other",
+        "HEAD 0123456789abcdef",
+        "locked candy:other",
+        "",
+        "worktree C:/Candy Data/worktrees/task-1",
+        "HEAD 0123456789abcdef",
+        "detached",
+        "locked candy:task-1",
+        "",
+      ].join("\0"),
+  });
+  await manager.inspect(plan);
+
+  const wrongLock = new GitWorktreeManager("C:\\Candy Data\\worktrees", {
+    run: async () =>
+      [
+        "worktree C:/Candy Data/worktrees/task-1",
+        "HEAD 0123456789abcdef",
+        "locked candy:other",
+        "",
+      ].join("\0"),
+  });
+  await assert.rejects(wrongLock.inspect(plan), /association/u);
+});
+
 test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {
   const root = mkdtempSync(path.join(tmpdir(), "candy-git-fixture-"));
   const repository = path.join(root, "repo");

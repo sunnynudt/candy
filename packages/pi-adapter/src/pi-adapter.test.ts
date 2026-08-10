@@ -270,8 +270,15 @@ test("Candy workspace operations keep Pi edit/write inside the selected director
       /escaped/u,
     );
     await writeFile(path.join(outside, "secret.txt"), "outside\n");
-    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
-    await assert.rejects(operations.readFile(path.join(root, "linked.txt")), /symbolic/iu);
+    await symlink(
+      outside,
+      path.join(root, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await assert.rejects(
+      operations.readFile(path.join(root, "linked", "secret.txt")),
+      /symbolic/iu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });

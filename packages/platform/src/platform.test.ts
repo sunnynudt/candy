@@ -56,7 +56,7 @@ test("default app-data root uses platform-owned locations", () => {
   );
   assert.equal(
     resolveDefaultAppDataRoot("win32", { LOCALAPPDATA: "C:/Local" }, "C:/Users/test"),
-    "C:/Local/Candy",
+    path.win32.join("C:/Local", "Candy"),
   );
   assert.equal(resolveDefaultAppDataRoot("linux", {}, "/home/test"), "/home/test/.candy");
 });

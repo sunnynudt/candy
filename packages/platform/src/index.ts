@@ -43,12 +43,16 @@ export function resolveDefaultAppDataRoot(
   environment: NodeJS.ProcessEnv = process.env,
   homeDirectory = os.homedir(),
 ): string {
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
   if (platform === "win32") {
-    return path.join(environment.LOCALAPPDATA ?? environment.APPDATA ?? homeDirectory, "Candy");
+    return platformPath.join(
+      environment.LOCALAPPDATA ?? environment.APPDATA ?? homeDirectory,
+      "Candy",
+    );
   }
   if (platform === "darwin")
-    return path.join(homeDirectory, "Library", "Application Support", "Candy");
-  return path.join(homeDirectory, ".candy");
+    return platformPath.join(homeDirectory, "Library", "Application Support", "Candy");
+  return platformPath.join(homeDirectory, ".candy");
 }
 
 export type PersistedTaskState =

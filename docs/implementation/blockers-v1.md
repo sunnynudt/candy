@@ -7,7 +7,7 @@ Updated: 2026-08-10
 | G0-LIVE-DS        | Product owner + implementation agent     | Blocked     | Enabling DeepSeek labels and ACC-04 live evidence          | Run LIVE-DS-01 through LIVE-DS-04 with an approved test credential under `docs/testing/live-provider-credentials.md`.                                                                                             |
 | G0-LIVE-MM        | Product owner + implementation agent     | Blocked     | Enabling MiniMax M3 and ACC-04 live evidence               | Confirm Token Plan entitlement and run LIVE-MM-01 through LIVE-MM-05 against `api.minimaxi.com`.                                                                                                                  |
 | G0-MAC            | Product owner                            | In progress | Complete macOS acceptance                                  | Run the required matrix, including ACC-12 ten-run responsiveness measurements, on macOS `26.5.2` Apple Silicon and attach sanitized evidence.                                                                     |
-| G0-WIN            | Product owner + implementation agent     | Pending     | Windows and cross-platform V1 release claims               | Defer until a Windows 11 x64 host is available; then execute the dedicated Windows checklist below and attach sanitized evidence.                                                                                 |
+| G0-WIN            | Product owner + implementation agent     | In progress | Windows and cross-platform V1 release claims               | Continue on the available Windows 11 Pro x64 host: run the dedicated checklist below and attach sanitized evidence.                                                                                              |
 | G1-PERSISTENCE    | Implementation agent                     | In progress | Final persistence acceptance                               | Local Node 22 import, two-connection fencing, WAL/restart recovery, schema migration, task-run metadata, and deterministic app-server command loop pass; run packaged app-server topology and macOS tests.        |
 | G2-SANDBOX        | Implementation agent + security reviewer | In progress | Shell-enabled Auto and Shell Auto Debug                    | Specify the v1 protocol, implement both native backends, and pass escape, no-network, descendant, cancellation, packaging, and security-review tests.                                                             |
 | G3-BROWSER        | Implementation agent                     | Pending     | Automatic Browser takeover claim                           | Test packaged Electron input-origin behavior; use explicit Take Control if origin cannot be distinguished reliably.                                                                                               |
@@ -17,14 +17,14 @@ Updated: 2026-08-10
 | G1-ELECTRON       | Implementation agent                     | In progress | Packaged Desktop acceptance                                | macOS `26.5.2` arm64 local packaged Electron 43.2.0 + Node 22.23.2 child, JSONL round-trip, ad-hoc signature, and quit cleanup pass; verify Apple-signed macOS `26.5.2` and Windows packages.                     |
 | G1-KEYRING        | Product owner + implementation agent     | In progress | ACC-02 OS credential acceptance                            | Adapter and Candy-owned service/account mapping pass a packaged Node 22 macOS Keychain fixture; verify Apple-signed package path, deletion, and Windows Credential Manager without exposing complete credentials. |
 | G2-NATIVE         | Security reviewer + implementation agent | Blocked     | Shell-enabled Auto and shell-based Auto Debug              | Review and run the Rust runner protocol and both OS containment backends for escape, no-network, descendants, cancellation, packaging, and process ownership. macOS now has a no-network validator backend plus a TypeScript workspace guard; stronger Seatbelt containment, Windows Job Objects, packaging, and security review remain open. |
-| G4-WORKTREE       | Implementation agent                     | In progress | Reviewed Apply Changes acceptance                          | Desktop Apply now runs through a real Task Worktree handoff with persisted worktree association, explicit discard, and patch-truncation/manifest-change guards; dirty target, changed base, conflict, untracked-collision, and deterministic Windows-path matrices pass. Windows 11 host worktree/reparse-point evidence and security review remain under G0-WIN/G2. |
+| G4-WORKTREE       | Implementation agent                     | In progress | Reviewed Apply Changes acceptance                          | Desktop Apply runs through a real Task Worktree handoff with persisted association, explicit discard, and patch-truncation/manifest-change guards; dirty target, changed base, conflict, untracked collision, real Windows Git worktree/Apply/restart fixtures, and junction escape rejection pass. Broader Windows reparse-point evidence and security review remain under G0-WIN/G2. |
 | G5-PERSISTED-AUTO | Implementation agent                     | In progress | Long-running product acceptance                            | Auto tasks now alternate bounded normal turns and the same validator, persist run progress/stop reasons, expose Desktop progress, and mark restart uncertainty as `crash_interrupted`; complete user steering/approval integration, final evidence summary, native shell validator, and packaged/platform evidence. |
 
-## Deferred Windows 11 work
+## Windows 11 active work
 
-Windows work is intentionally deferred while active development runs on the current M2 Pro macOS `26.5.2` machine. It is a tracked V1 TODO, not a completed or waived requirement: GitHub-hosted CI and deterministic fixtures do not substitute for a Windows 11 x64 acceptance host.
+Windows work now continues on the current Windows 11 Pro x64 host. The passing deterministic worktree and junction checks are an implementation checkpoint, not acceptance evidence: GitHub-hosted CI and local fixtures do not substitute for the complete Windows 11 x64 matrix.
 
-When a Windows 11 x64 host is available, complete and attach sanitized evidence for:
+Complete and attach sanitized evidence for:
 
 - TUI and signed Desktop installation, launch, packaged Node app-server lifecycle, and the ACC-12 ten-run responsiveness measurements.
 - Credential Manager presence/set/replace/delete behavior without renderer credential readback.
@@ -33,6 +33,13 @@ When a Windows 11 x64 host is available, complete and attach sanitized evidence 
 - Worktree and Apply Changes path, reparse-point, conflict, binary, untracked-file, and recovery matrices.
 - Task/session/attachment recovery, cross-client ownership, restart, and cancellation behavior.
 - The Windows portions of ACC-01 through ACC-12, including Windows signing evidence.
+
+## 2026-08-10 Windows 11 deterministic worktree checkpoint
+
+- A clean `npm ci --ignore-scripts` followed by `npm run check` passes on the Windows 11 Pro x64 host: format, lint, typecheck, 88 tests, protocol/boundary checks, exact Pi closure, and lifecycle policy. `smoke:tui-task` and `smoke:app-server` also pass under Node `22.23.2`.
+- Worktree association now uses structured NUL porcelain parsing with canonical path and exact lock-reason comparison. The real Git Task Worktree create, Apply, discard, and restart-handoff fixtures pass on Windows.
+- The workspace escape fixture now uses a Windows directory junction and proves the Pi workspace boundary rejects it without requiring file-symlink privileges.
+- G0-WIN and G4 remain In progress. This does not provide Windows Job Object, native containment, packaged Desktop/Keyring, signing, Browser, live-provider, recovery, or responsiveness acceptance evidence.
 
 ## 2026-08-10 Phase 2 checkpoint
 

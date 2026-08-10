@@ -955,8 +955,13 @@ export class GitWorktreeManager {
 
   public async inspect(plan: GitWorktreePlan): Promise<string> {
     const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
-    if (!listing.includes(plan.worktreePath) || !listing.includes(`candy:${plan.taskId}`))
-      throw new Error("Git worktree association could not be verified.");
+    const expectedPath = canonicalGitWorktreePath(plan.worktreePath);
+    const associated = parseGitWorktreePorcelain(listing).some(
+      (entry) =>
+        canonicalGitWorktreePath(entry.path) === expectedPath &&
+        entry.lockReason === `candy:${plan.taskId}`,
+    );
+    if (!associated) throw new Error("Git worktree association could not be verified.");
     return listing;
   }
 
@@ -1217,6 +1222,51 @@ function emptyWorkspaceChanges(): WorkspaceChangeSnapshot {
 
 function normalizeGitPath(value: string): string {
   return value.replaceAll("\\", "/");
+}
+
+interface GitWorktreePorcelainEntry {
+  readonly path: string;
+  readonly lockReason?: string;
+}
+
+/**
+ * Git's porcelain output is NUL-delimited. Parse it instead of matching arbitrary
+ * substrings so an unrelated worktree or lock reason cannot satisfy an association check.
+ */
+function parseGitWorktreePorcelain(listing: string): readonly GitWorktreePorcelainEntry[] {
+  const entries: GitWorktreePorcelainEntry[] = [];
+  let worktreePath: string | undefined;
+  let lockReason: string | undefined;
+  const finishEntry = () => {
+    if (worktreePath !== undefined) {
+      entries.push(
+        lockReason === undefined ? { path: worktreePath } : { path: worktreePath, lockReason },
+      );
+    }
+    worktreePath = undefined;
+    lockReason = undefined;
+  };
+
+  for (const field of listing.split("\0")) {
+    if (field.length === 0) {
+      finishEntry();
+      continue;
+    }
+    if (field.startsWith("worktree ")) {
+      worktreePath = field.slice("worktree ".length);
+    } else if (field === "locked") {
+      lockReason = "";
+    } else if (field.startsWith("locked ")) {
+      lockReason = field.slice("locked ".length);
+    }
+  }
+  finishEntry();
+  return entries;
+}
+
+function canonicalGitWorktreePath(value: string): string {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
 }
 
 function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): string {
