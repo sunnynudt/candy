@@ -2,7 +2,7 @@
 
 更新日期：2026-08-10
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`e6bd25d988539c3869a50183e2b38bde8de0033f`
+当前基线提交：`514b3b779e600e826b2dc1f42125a1972876ea70`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -22,7 +22,7 @@
 
 - ◐ 建立 Windows reparse-point 测试前置条件并验证防逃逸。
   已完成：普通 Windows 用户会话下的目录 junction 覆盖，确认 Pi 工作区边界拒绝经 junction 访问的外部文件。
-  待完成：具备创建文件/目录 symlink 的测试条件（例如 Developer Mode 或等效授权）；补齐 symlink、其他 reparse point、路径逃逸和清理流程的真实 Windows 矩阵。
+  当前阻塞：2026-08-10 的真实 symlink 探针返回“Administrator privilege required”；探针目录已从 `%TEMP%` 清理。需要启用 Developer Mode 或取得等效授权后，补齐 symlink、其他 reparse point、路径逃逸和清理流程的真实 Windows 矩阵。
 
 - ☑️ 在干净依赖目录重跑完整门禁、TUI/App Server smoke 与原生检查。
   证据：`npm ci --ignore-scripts` 后 `npm run check`（92 个测试）以及 TUI/App Server smoke 通过；Windows `npm run check:native` 于 2026-08-10 以退出码 0 通过。Rust 编译器仍报告未使用代码警告，不影响检查结果；Windows G2 的实际 Job Object 与安全验收仍单列为未完成项。
@@ -41,7 +41,9 @@
 
 - ⬜ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。OpenCode 配置不作为自动凭据来源；结果只形成 Windows 脱敏本地证据。
 
-- ⬜ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
+- ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
+  已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试。
+  待完成：真实 Credential Manager set/replace/has/delete、Windows Desktop 二进制下载/启动、打包、签名、恢复和响应性矩阵。2026-08-10 的首次 Desktop smoke 在下载 Electron 二进制时长时间无进度，已中止且未记为通过。
 
 - ⬜ 重新生成当前提交的 Windows 验收证据；旧证据仍指向 `0710d00`，且不可替代本机 Windows 结果。
 
@@ -67,3 +69,6 @@
 
 - ☑️ 持久化排队任务重排：SQLite 在立即事务内保存重排后的连续队列位置；协议和 App Server 支持受限的 `task.reorder`；TUI 提供 `:prioritize <task-id>` 并显示队列位置。
   证据：92 个确定性测试、TUI/App Server smoke 通过；提交 `a556df122c2759049b9803e2e9df46bc8b6896d8`。跨进程恢复和 Desktop 队列面板仍是后续工作，未在此项宣称完成。
+
+- ☑️ Windows 凭据界面平台标识：Windows Desktop 不再错误提示 `macOS Keychain`，而是显示 `Windows Credential Manager`；非 Windows 平台保留准确的系统存储标签。
+  证据：Windows `npm run check` 93/93、`smoke:tui-task` 和 `smoke:app-server` 于 2026-08-10 通过。该 UI 修正不替代真实 OS 凭据存储或 Desktop 启动验收。

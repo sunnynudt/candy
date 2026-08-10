@@ -38,6 +38,13 @@ export interface CredentialBridge {
   has(name: CredentialName): Promise<CredentialPresence>;
 }
 
+/** User-facing label only; credential values never leave the trusted bridge. */
+export function credentialStoreLabel(platform: string): string {
+  if (platform === "win32") return "Windows Credential Manager";
+  if (platform === "darwin") return "macOS Keychain";
+  return "the operating system credential store";
+}
+
 export interface WorkspaceSelection {
   readonly path: string;
 }

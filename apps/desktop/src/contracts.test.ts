@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  credentialStoreLabel,
   assertApplyPaths,
   assertWorkspacePath,
   assertValidatorSpec,
@@ -8,6 +9,12 @@ import {
   isAbsoluteWorkspacePath,
   redactRendererText,
 } from "./contracts.js";
+
+test("credential store labels follow the active operating system", () => {
+  assert.equal(credentialStoreLabel("win32"), "Windows Credential Manager");
+  assert.equal(credentialStoreLabel("darwin"), "macOS Keychain");
+  assert.equal(credentialStoreLabel("linux"), "the operating system credential store");
+});
 
 test("desktop close behavior distinguishes tray close from explicit quit", () => {
   assert.equal(classifyWindowClose(false), "hide-to-tray");
