@@ -2,13 +2,17 @@
 
 更新日期：2026-08-10
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`a556df122c2759049b9803e2e9df46bc8b6896d8`
+当前基线提交：`025131b32a57e1868b8a25eae766083525734451`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-## Windows 确定性修复
+当前执行范围：今晚仅在 Windows 11 Pro x64 主机执行和验证 Windows 项。macOS 项仅作为明天 MacBook Pro 会话的待办；跨平台项在两侧证据完成前不得标记为完成。
+
+## 今晚执行：Windows 11 x64
+
+执行顺序：先恢复本机确定性/原生检查和路径防逃逸，再完成 Windows 本地可用链路；需要凭据、Developer Mode、签名身份或外部服务时记录阻塞，继续推进其他 Windows 项。
 
 - ☑️ 修复平台路径适配：应用数据根路径根据传入的目标平台选择 `path.win32` 或 `path.posix` 语义，并覆盖跨宿主的 macOS/Windows 模拟测试。
   证据：Windows 11 确定性检查通过；提交 `d4d38e489c5ded8d29a866f7034a06afce54a525`。
@@ -28,21 +32,37 @@
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
   待完成：优先完成并附证据的 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 Windows 矩阵，以及 ACC-12 十轮响应性测量。
 
-## 后续 V1 工作
+- ⬜ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
 
-- ⬜ 完成 G2：Windows Job Object、完整后代进程取消、命令无网络/工作区隔离、reparse 防逃逸与安全评审。在验收前，Shell Auto 和 Shell Auto Debug 必须保持禁用。
+- ⬜ 验收 Windows Browser Workspace：打包 Electron 中的 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。
 
-- ⬜ 实装并验收 Browser Workspace：可见 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。当前仅有默认拒绝边界和内存状态机。
-
-- ◐ 补齐长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及原生 validator 集成。
+- ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。
   已完成：有界 Auto 执行、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖。
-  待完成：上述交互、证据和原生验证器集成，以及打包/平台证据。
+  待完成：上述 Windows 交互、证据和原生验证器集成，以及 Windows 打包证据。
 
-- ⬜ 在获得明确授权的测试凭据后完成 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
+- ⬜ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。OpenCode 配置不作为自动凭据来源；结果只形成 Windows 脱敏本地证据。
 
-- ⬜ 完成 Windows 签名、macOS 签名/公证、Keychain/Credential Manager、桌面打包、恢复和响应性矩阵。
+- ⬜ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
 
-- ⬜ 重新生成当前提交的验收证据；旧证据仍指向 `0710d00`，且 macOS 基线表述已过时。
+- ⬜ 重新生成当前提交的 Windows 验收证据；旧证据仍指向 `0710d00`，且不可替代本机 Windows 结果。
+
+## 明天执行：macOS `26.5.2` Apple Silicon
+
+- ⬜ 执行 macOS 工具链、TUI、Desktop App Server、Runtime/session-remap、Worktree/Apply 和 ACC-12 响应性矩阵，并生成新的 macOS 脱敏证据。
+
+- ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
+
+- ⬜ 验收 macOS Keychain presence/set/replace/delete、Apple 签名/公证、打包 Desktop、恢复和响应性矩阵。
+
+- ⬜ 验收 macOS Browser Workspace 的打包、输入归属、Take Control、权限、重定向、下载和对抗性页面矩阵。
+
+- ⬜ 在同一套 Candy 自有凭据路径下重跑 macOS 的 DeepSeek/MiniMax Live Provider Gate；不得以 Windows 结果替代 macOS 证据。
+
+## 跨平台收尾：Windows 与 macOS 均完成后
+
+- ⬜ 对照 ACC-01 至 ACC-12 汇总两个平台的精确构建、版本、脱敏证据和未决项；任何一侧 `Blocked`、`Fail`、P0 或 P1 均阻止 Candy V1 Release 声明。
+
+- ⬜ 重新生成当前提交的全量验收证据，替换仍指向 `0710d00` 的旧报告，并更新 macOS 基线表述。
 
 ## 已追加的实现检查点
 
