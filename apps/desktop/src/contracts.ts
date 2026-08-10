@@ -1,5 +1,5 @@
 import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
-import type { ValidatorSpec } from "@candy/protocol";
+import type { TaskProgress, ValidatorSpec } from "@candy/protocol";
 
 export interface RendererTaskProjection {
   readonly taskId: string;
@@ -19,6 +19,7 @@ export interface RendererTaskProjection {
   readonly workspaceBaseline?: string;
   readonly workspaceState: "local" | "worktree";
   readonly worktreePath?: string;
+  readonly progress?: TaskProgress;
   readonly changedFiles: readonly string[];
   readonly trackedFiles: readonly string[];
   readonly untrackedFiles: readonly string[];

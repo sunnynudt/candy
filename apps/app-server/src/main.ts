@@ -23,6 +23,7 @@ import {
   type EventEnvelope,
   type ProtocolMessage,
   type RuntimeEvent,
+  type TaskProgress,
   type TaskSnapshot,
 } from "@candy/protocol";
 import {
@@ -32,15 +33,17 @@ import {
   AttachmentStore,
   GitWorktreeManager,
   GitWorkspaceChangeTracker,
+  LongRunningControlError,
+  LongRunningTaskRunner,
   MacSandboxRunner,
   MacSandboxValidator,
   WorkspaceHandoff,
-  type AgentEngine,
   type AgentObservation,
   type AgentTurnInput,
   type ApplyChangesInput,
   type GitWorktreePlan,
   type RecoverableAgentEngine,
+  type ValidatorResult,
   type MacSandboxValidatorCommand,
   type WorkspaceChangeTracker,
   planGitWorktree,
@@ -113,7 +116,7 @@ export function handleAppServerMessage(
 
 export interface AppServerControllerOptions {
   readonly databasePath?: string;
-  readonly engine?: AgentEngine;
+  readonly engine?: RecoverableAgentEngine;
   readonly ownerId?: string;
   readonly attachments?: AttachmentStore;
   readonly validatorRunner?: AppServerValidator;
@@ -129,7 +132,14 @@ interface AppServerValidator {
     command: MacSandboxValidatorCommand,
     workspace: string,
     signal: AbortSignal,
-  ): Promise<{ readonly ok: boolean }>;
+  ): Promise<AppServerValidatorResult>;
+}
+
+interface AppServerValidatorResult {
+  readonly ok: boolean;
+  readonly fingerprint?: string;
+  readonly evidence?: string;
+  readonly durationMs?: number;
 }
 
 interface ApplyChangesRunner {
@@ -179,6 +189,7 @@ export class AppServerController {
   readonly #requestedRuns = new Set<string>();
   readonly #sequences = new Map<string, number>();
   #closed = false;
+  #storeClosed = false;
 
   public constructor(options: AppServerControllerOptions = {}) {
     this.#store = new SQLiteTaskStore(options.databasePath ?? ":memory:");
@@ -192,6 +203,7 @@ export class AppServerController {
     this.#applyChanges = options.applyChanges;
     this.#worktreeRoot = options.worktreeRoot;
     this.#worktreeManager = options.worktreeManager;
+    this.recoverActiveTasks();
   }
 
   public get state(): AppServerState {
@@ -310,7 +322,7 @@ export class AppServerController {
       if (active) {
         active.requestedStop = command.type === "task.pause" ? "paused" : "cancelled";
         active.abort.abort(
-          new Error(command.type === "task.pause" ? "Task paused." : "Task cancelled."),
+          new LongRunningControlError(command.type === "task.pause" ? "user_stop" : "cancelled"),
         );
         await active.done;
         const finished = this.#store.get(message.taskId);
@@ -398,9 +410,20 @@ export class AppServerController {
   public close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    for (const metadata of this.#store.list()) {
+      if (
+        metadata.ownerId !== this.#ownerId ||
+        (metadata.state !== "running" && metadata.state !== "waiting_approval")
+      )
+        continue;
+      this.recordCrashProgress(metadata.taskId);
+    }
     this.#store.markOwnerInterrupted(this.#ownerId);
-    for (const active of this.#active.values()) active.abort.abort(new Error("App-server closed."));
-    this.#store.close();
+    for (const active of this.#active.values())
+      active.abort.abort(new LongRunningControlError("crash_interrupted"));
+    const activeRuns = [...this.#active.values()].map((active) => active.done);
+    if (activeRuns.length === 0) this.closeStore();
+    else void Promise.allSettled(activeRuns).then(() => this.closeStore());
   }
 
   private startTask(taskId: string, emit: Emit): void {
@@ -431,40 +454,79 @@ export class AppServerController {
             : (() => {
                 throw new Error("Attachment storage is unavailable after restart.");
               })();
-      for await (const observation of this.#engine.runTurn(
-        {
-          taskId,
-          prompt,
-          model: current.model,
-          cwd: executionPath,
-          approvalProfile: current.approvalProfile,
-          ...(images === undefined ? {} : { images }),
-        },
-        active.abort.signal,
-      )) {
+      const runTurn = (): Promise<void> =>
+        this.runAgentTurn(taskId, current, prompt, images, active.abort.signal, emit);
+
+      if (current.approvalProfile === "auto" && current.validator !== undefined) {
+        const longRunning = new LongRunningTaskRunner(3, 2);
+        const result = await longRunning.run(
+          async (_round, signal) => {
+            try {
+              await runTurn();
+            } catch (error) {
+              if (error instanceof LongRunningControlError) throw error;
+              const code = taskErrorCode(error, signal);
+              if (code === "needs_credentials" || code === "provider_error")
+                throw new LongRunningControlError("provider_failure");
+              throw error;
+            }
+            if (signal.aborted)
+              throw signal.reason instanceof Error
+                ? signal.reason
+                : new LongRunningControlError("cancelled");
+            const afterTurn = this.#store.get(taskId);
+            if (afterTurn?.state === "running") emit(await this.workspaceChanges(afterTurn));
+          },
+          {
+            run: (signal) => {
+              const metadata = this.#store.get(taskId);
+              if (!metadata) throw new Error("Task metadata is unavailable.");
+              return this.runValidator(taskId, metadata, executionPath, signal, emit);
+            },
+          },
+          active.abort.signal,
+          {
+            store: {
+              record: (progress) => {
+                this.#store.recordRun({ taskId, ...progress });
+                const metadata = this.#store.get(taskId);
+                if (metadata !== undefined && !this.#closed) emit(this.snapshot(metadata));
+              },
+            },
+          },
+        );
         const metadata = this.#store.get(taskId);
-        if (!metadata || metadata.state !== "running") break;
-        const event = observationToEvent(taskId, metadata.revision, observation);
-        if (event) emit(this.event(taskId, metadata.revision, event));
+        if (metadata?.state !== "running") return;
+        if (result.completed) {
+          const completed = this.#store.transition(taskId, metadata.revision, "completed");
+          emit(this.stateChanged(completed, "validator"));
+          emit(this.snapshot(completed));
+        } else {
+          const stopped = this.#store.transition(
+            taskId,
+            metadata.revision,
+            longRunningState(result.stopReason),
+          );
+          const errorCode = longRunningErrorCode(result.stopReason);
+          if (errorCode !== undefined)
+            emit(this.event(taskId, stopped.revision, { type: "task.error", code: errorCode }));
+          emit(this.stateChanged(stopped, longRunningStateReason(result.stopReason)));
+          emit(this.snapshot(stopped));
+        }
+        return;
       }
+
+      await runTurn();
       const metadata = this.#store.get(taskId);
       if (metadata?.state === "running") {
         emit(await this.workspaceChanges(metadata));
         if (metadata.validator !== undefined) {
-          if (this.#validatorRunner === undefined)
-            throw new Error("Validator execution is unavailable on this installation.");
-          emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
-          const result = await this.#validatorRunner.run(
-            metadata.validator,
+          const result = await this.runValidator(
+            taskId,
+            metadata,
             executionPath,
             active.abort.signal,
-          );
-          emit(
-            this.event(taskId, metadata.revision, {
-              type: "tool.completed",
-              tool: "validator",
-              ok: result.ok,
-            }),
+            emit,
           );
           if (!result.ok) throw new Error("Validator did not pass.");
         }
@@ -497,6 +559,92 @@ export class AppServerController {
       this.#requestedRuns.delete(taskId);
       if (!this.#closed) this.pumpPendingRuns();
     }
+  }
+
+  private async runAgentTurn(
+    taskId: string,
+    metadata: TaskMetadata,
+    prompt: string,
+    images: Awaited<ReturnType<AttachmentStore["getImagePayload"]>>[] | undefined,
+    signal: AbortSignal,
+    emit: Emit,
+  ): Promise<void> {
+    const executionPath = metadata.worktreePath ?? metadata.workspacePath;
+    for await (const observation of this.#engine.runTurn(
+      {
+        taskId,
+        prompt,
+        model: metadata.model,
+        cwd: executionPath,
+        approvalProfile: metadata.approvalProfile,
+        ...(images === undefined ? {} : { images }),
+      },
+      signal,
+    )) {
+      const current = this.#store.get(taskId);
+      if (!current || current.state !== "running") break;
+      const event = observationToEvent(taskId, current.revision, observation);
+      if (event) emit(this.event(taskId, current.revision, event));
+    }
+  }
+
+  private async runValidator(
+    taskId: string,
+    metadata: TaskMetadata,
+    executionPath: string,
+    signal: AbortSignal,
+    emit: Emit,
+  ): Promise<ValidatorResult> {
+    if (signal.aborted)
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new LongRunningControlError("cancelled");
+    if (metadata.validator === undefined) throw new Error("Task validator is unavailable.");
+    if (this.#validatorRunner === undefined)
+      throw new Error("Validator execution is unavailable on this installation.");
+    emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
+    const result = await this.#validatorRunner.run(metadata.validator, executionPath, signal);
+    emit(
+      this.event(taskId, metadata.revision, {
+        type: "tool.completed",
+        tool: "validator",
+        ok: result.ok,
+      }),
+    );
+    return {
+      ok: result.ok,
+      fingerprint: result.fingerprint ?? `${result.ok ? "ok" : "error"}:${result.evidence ?? ""}`,
+      evidence: result.evidence ?? (result.ok ? "validator passed" : "validator failed"),
+      durationMs: result.durationMs ?? 0,
+    };
+  }
+
+  private recoverActiveTasks(): void {
+    const active = this.#store
+      .list()
+      .filter((metadata) => metadata.state === "running" || metadata.state === "waiting_approval");
+    for (const metadata of active) this.recordCrashProgress(metadata.taskId);
+    if (active.length > 0) this.#store.markActiveInterrupted();
+  }
+
+  private recordCrashProgress(taskId: string): void {
+    const previous = this.#store.getRun(taskId);
+    this.#store.recordRun({
+      taskId,
+      rounds: previous?.rounds ?? 0,
+      evidenceCount: previous?.evidenceCount ?? 0,
+      completed: false,
+      stopReason: "crash_interrupted",
+      ...(previous?.lastFingerprintHash === undefined
+        ? {}
+        : { lastFingerprintHash: previous.lastFingerprintHash }),
+    });
+  }
+
+  private closeStore(): void {
+    if (this.#storeClosed) return;
+    this.#storeClosed = true;
+    this.#store.close();
   }
 
   private pumpPendingRuns(): void {
@@ -581,6 +729,7 @@ export class AppServerController {
 
   private snapshot(metadata: TaskMetadata | TaskSnapshot): EventEnvelope {
     const worktreePath = "worktreePath" in metadata ? metadata.worktreePath : undefined;
+    const progress = "taskId" in metadata ? this.#store.getRun(metadata.taskId) : undefined;
     return this.event(metadata.taskId, metadata.revision, {
       type: "snapshot",
       snapshot: {
@@ -599,6 +748,7 @@ export class AppServerController {
         workspaceState: worktreePath === undefined ? "local" : "worktree",
         ...(worktreePath === undefined ? {} : { worktreePath }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
+        ...(progress === undefined ? {} : { progress: toTaskProgress(progress) }),
       },
     });
   }
@@ -619,6 +769,62 @@ export class AppServerController {
     this.#sequences.set(taskId, sequence);
     return { v: 1, kind: "event", taskId, sequence, revision, event };
   }
+}
+
+function toTaskProgress(progress: {
+  readonly rounds: number;
+  readonly evidenceCount: number;
+  readonly completed: boolean;
+  readonly stopReason: TaskProgress["stopReason"];
+  readonly lastFingerprintHash?: string;
+}): TaskProgress {
+  return {
+    rounds: progress.rounds,
+    evidenceCount: progress.evidenceCount,
+    completed: progress.completed,
+    stopReason: progress.stopReason,
+    ...(progress.lastFingerprintHash === undefined
+      ? {}
+      : { lastFingerprintHash: progress.lastFingerprintHash }),
+  };
+}
+
+function longRunningState(
+  stopReason: TaskProgress["stopReason"],
+): "paused" | "waiting_approval" | "interrupted" | "cancelled" {
+  if (stopReason === "cancelled") return "cancelled";
+  if (stopReason === "approval_required") return "waiting_approval";
+  if (
+    stopReason === "user_stop" ||
+    stopReason === "budget_exhausted" ||
+    stopReason === "stall_detected"
+  )
+    return "paused";
+  return "interrupted";
+}
+
+function longRunningStateReason(
+  stopReason: TaskProgress["stopReason"],
+): "user" | "owner_lost" | "approval" | "validator" | "error" {
+  if (stopReason === "cancelled" || stopReason === "user_stop") return "user";
+  if (stopReason === "approval_required") return "approval";
+  if (stopReason === "budget_exhausted" || stopReason === "stall_detected") return "validator";
+  if (stopReason === "ownership_lost") return "owner_lost";
+  return "error";
+}
+
+function longRunningErrorCode(
+  stopReason: TaskProgress["stopReason"],
+): "cancelled" | "needs_credentials" | "provider_error" | "runtime_error" | undefined {
+  if (stopReason === "cancelled") return "cancelled";
+  if (stopReason === "provider_failure") return "provider_error";
+  if (
+    stopReason === "error" ||
+    stopReason === "crash_interrupted" ||
+    stopReason === "ownership_lost"
+  )
+    return "runtime_error";
+  return undefined;
 }
 
 function observationToEvent(

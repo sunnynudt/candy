@@ -7,11 +7,13 @@ import path from "node:path";
 import test from "node:test";
 import type { PiAgentEngineInput } from "@candy/pi-adapter";
 import { type CommandEnvelope, type ProtocolMessage } from "@candy/protocol";
+import { DEFAULT_CANDY_MODEL, SQLiteTaskStore } from "@candy/platform";
 import {
   AttachmentStore,
   type AgentEngine,
   type AgentTurnInput,
   type ApplyChangesInput,
+  type RecoverableAgentEngine,
 } from "@candy/runtime";
 import { AppServerController, PiAppServerEngine } from "./main.js";
 
@@ -256,6 +258,297 @@ test("app-server runs an explicit validator before marking edited work complete"
   } finally {
     controller.close();
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("app-server runs auto validator tasks through normal turns and persists bounded progress", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-long-running-workspace-"));
+  let turns = 0;
+  let validatorCalls = 0;
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        turns += 1;
+        yield { type: "assistant.delta" as const, text: `round-${turns}` };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+    validatorRunner: {
+      async run() {
+        validatorCalls += 1;
+        return {
+          ok: validatorCalls === 2,
+          fingerprint: `validator-${validatorCalls}`,
+          evidence: `attempt-${validatorCalls}`,
+          durationMs: 1,
+        };
+      },
+    },
+  });
+  try {
+    await controller.dispatch(
+      command("task-long-running", "create-long-running", 0, {
+        type: "task.create",
+        prompt: "repair until validator passes",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        validator: { executable: process.execPath, args: ["-e", "process.exit(1)"] },
+      }),
+    );
+    await controller.dispatch(
+      command("task-long-running", "run-long-running", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    await waitForCompletion(background, "task-long-running");
+
+    const completed = background.findLast(
+      (message) =>
+        message.kind === "event" &&
+        message.event.type === "snapshot" &&
+        message.event.snapshot.state === "completed",
+    );
+    assert.ok(completed?.kind === "event" && completed.event.type === "snapshot");
+    if (completed?.kind === "event" && completed.event.type === "snapshot") {
+      const progress = completed.event.snapshot.progress;
+      assert.ok(progress);
+      assert.match(progress.lastFingerprintHash ?? "", /^[a-f0-9]{64}$/u);
+      assert.deepEqual(progress, {
+        rounds: 2,
+        evidenceCount: 2,
+        completed: true,
+        stopReason: "validator_succeeded",
+        lastFingerprintHash: progress.lastFingerprintHash,
+      });
+    }
+    assert.equal(turns, 2);
+    assert.equal(validatorCalls, 2);
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("app-server persists a paused long-running task and resumes it explicitly after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-long-running-restart-"));
+  const workspace = path.join(root, "workspace");
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  mkdirSync(workspace);
+  let firstTurnStarted: (() => void) | undefined;
+  let firstTurnStopped: (() => void) | undefined;
+  let resumed = false;
+  const first = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput, signal: AbortSignal) {
+        firstTurnStarted?.();
+        await new Promise<void>((resolve) => {
+          firstTurnStopped = resolve;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        if (signal.aborted) throw signal.reason;
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+      async recoverPrompt() {
+        return "recovered long-running prompt";
+      },
+    } satisfies RecoverableAgentEngine,
+    databasePath,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+    validatorRunner: {
+      async run() {
+        return { ok: true, fingerprint: "recovered-pass", evidence: "ok", durationMs: 1 };
+      },
+    },
+  });
+  const firstEvents: ProtocolMessage[] = [];
+  const started = new Promise<void>((resolve) => {
+    firstTurnStarted = resolve;
+  });
+  try {
+    await first.dispatch(
+      command("task-long-restart", "create-long-restart", 0, {
+        type: "task.create",
+        prompt: "pause and resume",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        validator: { executable: process.execPath, args: ["-e", "process.exit(0)"] },
+      }),
+    );
+    await first.dispatch(
+      command("task-long-restart", "run-long-restart", 0, { type: "task.run" }),
+      (message) => firstEvents.push(message),
+    );
+    await started;
+    const paused = await first.dispatch(
+      command("task-long-restart", "pause-long-restart", 1, { type: "task.pause" }),
+    );
+    firstTurnStopped?.();
+    const pausedSnapshot = paused.at(-1);
+    assert.ok(pausedSnapshot?.kind === "event" && pausedSnapshot.event.type === "snapshot");
+    if (pausedSnapshot?.kind === "event" && pausedSnapshot.event.type === "snapshot") {
+      assert.equal(pausedSnapshot.event.snapshot.state, "paused");
+      assert.equal(pausedSnapshot.event.snapshot.progress?.stopReason, "user_stop");
+    }
+  } finally {
+    first.close();
+  }
+
+  const secondEvents: ProtocolMessage[] = [];
+  const second = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        resumed = true;
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+      async recoverPrompt() {
+        return "recovered long-running prompt";
+      },
+    } satisfies RecoverableAgentEngine,
+    databasePath,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+    validatorRunner: {
+      async run() {
+        return { ok: true, fingerprint: "recovered-pass", evidence: "ok", durationMs: 1 };
+      },
+    },
+  });
+  try {
+    const beforeResume = await second.dispatch(
+      command("task-long-restart", "snapshot-long-restart", 2, { type: "snapshot" }),
+    );
+    const beforeSnapshot = beforeResume.at(-1);
+    assert.ok(beforeSnapshot?.kind === "event" && beforeSnapshot.event.type === "snapshot");
+    if (beforeSnapshot?.kind === "event" && beforeSnapshot.event.type === "snapshot") {
+      assert.equal(beforeSnapshot.event.snapshot.state, "paused");
+      assert.equal(beforeSnapshot.event.snapshot.progress?.stopReason, "user_stop");
+    }
+    await second.dispatch(
+      command("task-long-restart", "resume-long-restart", 2, { type: "task.resume" }),
+      (message) => secondEvents.push(message),
+    );
+    await waitForCompletion(secondEvents, "task-long-restart");
+    assert.equal(resumed, true);
+  } finally {
+    second.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server marks an uncertain active run as crash-interrupted before explicit resume", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-crash-recovery-"));
+  const workspace = path.join(root, "workspace");
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  mkdirSync(workspace);
+  const seed = new SQLiteTaskStore(databasePath);
+  seed.create("task-crash-recovery", "auto", 1, DEFAULT_CANDY_MODEL, [], workspace, {
+    executable: process.execPath,
+    args: ["-e", "process.exit(0)"],
+  });
+  seed.transition("task-crash-recovery", 0, "running", "old-app-server");
+  seed.recordRun({
+    taskId: "task-crash-recovery",
+    rounds: 1,
+    evidenceCount: 1,
+    completed: false,
+    stopReason: "running",
+  });
+  seed.close();
+
+  let resumed = false;
+  const controller = new AppServerController({
+    databasePath,
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        resumed = true;
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+      async recoverPrompt() {
+        return "resume after crash";
+      },
+    } satisfies RecoverableAgentEngine,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+    validatorRunner: {
+      async run() {
+        return { ok: true, fingerprint: "crash-recovered", evidence: "ok", durationMs: 1 };
+      },
+    },
+  });
+  const background: ProtocolMessage[] = [];
+  try {
+    const interrupted = await controller.dispatch(
+      command("task-crash-recovery", "snapshot-crash-recovery", 2, { type: "snapshot" }),
+    );
+    const interruptedSnapshot = interrupted.at(-1);
+    assert.ok(
+      interruptedSnapshot?.kind === "event" && interruptedSnapshot.event.type === "snapshot",
+    );
+    if (interruptedSnapshot?.kind === "event" && interruptedSnapshot.event.type === "snapshot") {
+      assert.equal(interruptedSnapshot.event.snapshot.state, "interrupted");
+      assert.equal(interruptedSnapshot.event.snapshot.progress?.stopReason, "crash_interrupted");
+      assert.equal(interruptedSnapshot.event.snapshot.progress?.rounds, 1);
+    }
+    await controller.dispatch(
+      command("task-crash-recovery", "resume-crash-recovery", 2, { type: "task.resume" }),
+      (message) => background.push(message),
+    );
+    await waitForCompletion(background, "task-crash-recovery");
+    assert.equal(resumed, true);
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

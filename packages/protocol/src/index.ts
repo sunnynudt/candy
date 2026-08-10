@@ -14,6 +14,27 @@ export type TaskState =
   | "completed"
   | "cancelled";
 
+export type TaskRunStopReason =
+  | "running"
+  | "validator_succeeded"
+  | "budget_exhausted"
+  | "stall_detected"
+  | "cancelled"
+  | "approval_required"
+  | "ownership_lost"
+  | "provider_failure"
+  | "user_stop"
+  | "crash_interrupted"
+  | "error";
+
+export interface TaskProgress {
+  readonly rounds: number;
+  readonly evidenceCount: number;
+  readonly completed: boolean;
+  readonly stopReason: TaskRunStopReason;
+  readonly lastFingerprintHash?: string;
+}
+
 export interface TaskSnapshot {
   readonly taskId: string;
   readonly revision: number;
@@ -26,6 +47,7 @@ export interface TaskSnapshot {
   readonly workspaceState?: "local" | "worktree";
   readonly worktreePath?: string;
   readonly ownerId?: string;
+  readonly progress?: TaskProgress;
 }
 
 export interface SnapshotCommand {
@@ -270,6 +292,44 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   }
   if (value.worktreePath !== undefined)
     assertWorkspacePath(value.worktreePath, "snapshot.worktreePath");
+  if (value.progress !== undefined) validateTaskProgress(value.progress);
+}
+
+function validateTaskProgress(value: unknown): asserts value is TaskProgress {
+  if (!isRecord(value))
+    throw new ProtocolValidationError("invalid_message", "snapshot.progress is invalid.");
+  assertNonNegativeInteger(value.rounds, "snapshot.progress.rounds");
+  assertNonNegativeInteger(value.evidenceCount, "snapshot.progress.evidenceCount");
+  if (typeof value.completed !== "boolean")
+    throw new ProtocolValidationError("invalid_message", "snapshot.progress.completed is invalid.");
+  const stopReasons: readonly TaskRunStopReason[] = [
+    "running",
+    "validator_succeeded",
+    "budget_exhausted",
+    "stall_detected",
+    "cancelled",
+    "approval_required",
+    "ownership_lost",
+    "provider_failure",
+    "user_stop",
+    "crash_interrupted",
+    "error",
+  ];
+  if (!stopReasons.includes(value.stopReason as TaskRunStopReason))
+    throw new ProtocolValidationError(
+      "invalid_message",
+      "snapshot.progress.stopReason is invalid.",
+    );
+  if (
+    value.lastFingerprintHash !== undefined &&
+    (typeof value.lastFingerprintHash !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(value.lastFingerprintHash))
+  ) {
+    throw new ProtocolValidationError(
+      "invalid_message",
+      "snapshot.progress.lastFingerprintHash is invalid.",
+    );
+  }
 }
 
 function validateCommand(value: unknown): asserts value is RuntimeCommand {

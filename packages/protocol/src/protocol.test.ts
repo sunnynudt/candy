@@ -292,6 +292,48 @@ test("snapshots carry an optional validated workspace baseline", () => {
   );
 });
 
+test("snapshots carry bounded long-running progress without evidence text", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-progress",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "snapshot",
+      snapshot: {
+        taskId: "task-progress",
+        revision: 2,
+        state: "paused",
+        progress: {
+          rounds: 2,
+          evidenceCount: 2,
+          completed: false,
+          stopReason: "stall_detected",
+          lastFingerprintHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
+      },
+    },
+  } as const;
+  validateProtocolMessage(event);
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: {
+            ...event.event.snapshot,
+            progress: { ...event.event.snapshot.progress, lastFingerprintHash: "evidence text" },
+          },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
 test("event sequencing and snapshot identity fail closed", () => {
   const ledger = new EventLedger();
   ledger.accept(snapshotEventFixture);
