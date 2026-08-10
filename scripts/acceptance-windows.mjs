@@ -32,6 +32,7 @@ const steps = [
   "smoke:tui-task",
   "smoke:app-server",
   "smoke:recovery:windows",
+  "smoke:cross-client:windows",
   "smoke:desktop",
   "smoke:desktop:packaged:windows",
   "smoke:browser:windows",

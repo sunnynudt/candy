@@ -62,6 +62,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - Extended the real Windows app-server child-process smoke to create a queued task and an active Auto task with a Windows Job Object validator, interrupt the validator while it is running, verify its delayed marker is never written, stop the owner process, restart it, and verify queued metadata survives while the active task becomes `interrupted` with revision `+1` and bounded `crash_interrupted` progress.
 - `npm run smoke:recovery:windows` passed without provider credentials. This proves Windows active validator interruption plus deterministic app-server owner-crash recovery; attachments, cross-client handoff, and packaged signed recovery remain open.
 
+## 2026-08-11 Windows cross-client ownership checkpoint
+
+- Added `npm run smoke:cross-client:windows`, which runs two real `AppServerController` owners over a shared Candy SQLite database on the Windows host. While owner-1 holds a running task, owner-2's cancel and run commands return the running snapshot with owner-1 intact; the owner-1 task then completes normally.
+- This proves non-owner read-only fencing in the Windows control-plane fixture. Attachment recovery, cross-process packaged handoff, and complete Desktop recovery remain open.
+
 ## 2026-08-11 Windows packaged Browser Workspace checkpoint
 
 - Added the narrow Desktop Browser bridge and visible `WebContentsView` path. Sites require an explicit host allow step; only HTTPS and loopback HTTP fixture URLs are accepted, the browser uses `persist:candy-browser-v1`, and the renderer receives only typed tab snapshots through preload IPC.
