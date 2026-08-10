@@ -41,6 +41,12 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - `npm run smoke:credential-manager:windows` exercised Candy's own `KeyringCredentialStore` through Windows Credential Manager using only synthetic fixture values. The empty `minimax-cn` account passed `absent -> present -> present -> absent` for set, replace, presence, and delete; the already-present DeepSeek account was observed by presence only and left untouched.
 - No credential value, lease, provider request, renderer readback, or external-tool configuration was used. This is adapter/lifecycle evidence only; it does not close ACC-02 because the existing DeepSeek account was not mutated, the packaged Desktop path and canary write/commit/push guard remain unverified, and no real provider Gate was run.
 
+## 2026-08-11 Windows responsiveness subset checkpoint
+
+- Added a sanitized Windows measurement runner with ten repetitions for the deterministic TUI cold-start smoke and Electron development Desktop cold-start-to-task-list smoke. The current local report records TUI p95 `1286 ms` against the `2000 ms` target and Desktop p95 `1709 ms` against the `5000 ms` target.
+- The report is ignored under `out/acceptance/windows/` and records source revision, lockfile digest, Windows x64, Node `22.23.2`, and verified Electron `43.2.0` without provider or browser data.
+- This is only an ACC-12 subset. Runtime-to-UI projection, cancellation, Browser Take Control, and three-concurrent-task responsiveness remain unmeasured; it does not close ACC-12 or any final acceptance claim.
+
 ## 2026-08-10 Windows 11 live DeepSeek checkpoint
 
 - The user-authorized local DeepSeek credential was written to Candy's own Windows Credential Manager path without printing or recording its value. The source configuration was not copied into the repository.

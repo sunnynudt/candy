@@ -26,7 +26,7 @@ Windows work now continues on the current Windows 11 Pro x64 host. The passing d
 
 Complete and attach sanitized evidence for:
 
-- TUI and signed Desktop installation, launch, packaged Node app-server lifecycle, and the ACC-12 ten-run responsiveness measurements.
+- TUI and signed Desktop installation, launch, packaged Node app-server lifecycle, and the remaining ACC-12 ten-run responsiveness measurements. A deterministic Windows subset now has TUI p95 `1286 ms` and Desktop p95 `1709 ms`; projection, cancellation, Browser Take Control, concurrency, and signed/packaged evidence remain open.
 - Credential Manager presence/set/replace/delete behavior without renderer credential readback. The 2026-08-11 Windows synthetic fixture covers the empty MiniMax account; the existing DeepSeek account was presence-only and untouched.
 - Sandbox Runner Job Object ownership, descendant cancellation, OS-level no-network containment, and security review. The 2026-08-11 smoke proves only protocol-level network rejection, not OS network isolation.
 - Browser Workspace packaged input-origin, Take Control, permission, redirect, download, and adversarial tests.
@@ -39,7 +39,7 @@ Complete and attach sanitized evidence for:
 - A clean `npm ci --ignore-scripts` followed by `npm run check` passes on the Windows 11 Pro x64 host: format, lint, typecheck, 88 tests, protocol/boundary checks, exact Pi closure, and lifecycle policy. `smoke:tui-task` and `smoke:app-server` also pass under Node `22.23.2`.
 - Worktree association now uses structured NUL porcelain parsing with canonical path and exact lock-reason comparison. The real Git Task Worktree create, Apply, discard, and restart-handoff fixtures pass on Windows.
 - The workspace escape fixture now uses a Windows directory junction and proves the Pi workspace boundary rejects it without requiring file-symlink privileges.
-- G0-WIN and G4 remain In progress. This does not provide OS-level Windows native containment, packaged Desktop/Keyring, signing, Browser, live-provider, recovery, or responsiveness acceptance evidence.
+- G0-WIN and G4 remain In progress. The Windows cold-start responsiveness subset is evidence only for two ACC-12 metrics; this does not provide OS-level Windows native containment, packaged Desktop/Keyring, signing, Browser, live-provider, recovery, or the complete responsiveness matrix.
 
 ## 2026-08-10 durable queued-task reorder checkpoint
 

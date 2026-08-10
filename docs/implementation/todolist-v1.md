@@ -29,7 +29,8 @@
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
-  待完成：优先完成并附证据的 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 Windows 矩阵，以及 ACC-12 十轮响应性测量。
+  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1286 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1709 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除。
+  待完成：Runtime event 到 UI、取消、Browser Take Control、三任务并发冻结/丢事件等 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
 
 - ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
   已完成：Rust runner 以 suspended process 创建后先加入 Job Object，设置 `KILL_ON_JOB_CLOSE` 后恢复；Windows native smoke 通过正常完成、`network:true` fail-closed、workspace 逃逸、junction reparse 拒绝和 runner 取消后的后代清理；app-server 已接入 Windows `.exe` runner/validator 路径。
