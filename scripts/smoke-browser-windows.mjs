@@ -22,7 +22,7 @@ const server = createServer((request, response) => {
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   response.end(
-    "<!doctype html><title>Candy browser fixture</title><main>Candy browser fixture</main>",
+    '<!doctype html><title>Candy browser fixture</title><main>Candy browser fixture</main><button id="fixture-click" type="button">Click fixture</button><form id="fixture-form"><input id="fixture-input"><button type="submit">Submit fixture</button></form><p id="fixture-status"></p><script>const input=document.querySelector("#fixture-input"),status=document.querySelector("#fixture-status");document.querySelector("#fixture-click").addEventListener("click",()=>status.textContent="clicked");input.addEventListener("input",()=>status.textContent=input.value);document.querySelector("#fixture-form").addEventListener("submit",event=>{event.preventDefault();status.textContent=input.value+" submitted";});</script>',
   );
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

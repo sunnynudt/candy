@@ -32,9 +32,17 @@ const api: DesktopPreloadApi = {
       ipcRenderer.invoke("browser.navigate", url, expectedRevision) as Promise<
         Awaited<ReturnType<DesktopPreloadApi["browser"]["navigate"]>>
       >,
+    act: (action) =>
+      ipcRenderer.invoke("browser.act", action) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["act"]>>
+      >,
     observe: () =>
       ipcRenderer.invoke("browser.observe") as Promise<
         Awaited<ReturnType<DesktopPreloadApi["browser"]["observe"]>>
+      >,
+    screenshot: () =>
+      ipcRenderer.invoke("browser.screenshot") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["screenshot"]>>
       >,
     takeControl: () =>
       ipcRenderer.invoke("browser.take-control") as Promise<

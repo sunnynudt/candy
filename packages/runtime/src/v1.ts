@@ -563,6 +563,7 @@ export interface BrowserTabSnapshot {
   readonly text: string;
   readonly control: "user" | "agent";
   readonly siteAllowed: boolean;
+  readonly screenshotAttachmentId?: string;
 }
 
 export type BrowserAction =

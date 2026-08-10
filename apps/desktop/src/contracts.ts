@@ -1,6 +1,6 @@
 import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
 import type { TaskProgress, ValidatorSpec } from "@candy/protocol";
-import type { BrowserTabSnapshot } from "@candy/runtime";
+import type { BrowserAction, BrowserTabSnapshot } from "@candy/runtime";
 
 export interface RendererTaskProjection {
   readonly taskId: string;
@@ -59,7 +59,9 @@ export interface BrowserBridge {
   allowSite(host: string): Promise<void>;
   open(url: string): Promise<BrowserTabSnapshot>;
   navigate(url: string, expectedRevision: number): Promise<BrowserTabSnapshot>;
+  act(action: BrowserAction): Promise<BrowserTabSnapshot>;
   observe(): Promise<BrowserTabSnapshot>;
+  screenshot(): Promise<BrowserTabSnapshot>;
   takeControl(): Promise<BrowserTabSnapshot>;
   returnControlToAgent(): Promise<BrowserTabSnapshot>;
   onUpdate(listener: (snapshot: BrowserTabSnapshot) => void): () => void;

@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`37d60ed9f22d1426449faa6cb75c2b69655913de`
+当前基线提交：`517f30e9bd90b63c4792deb67a6c39cf3805003b`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -38,7 +38,8 @@
 
 - ◐ 验收 Windows Browser Workspace：打包 Electron 中的 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。
   已完成：packaged Windows fixture 通过 allowlist 后加载本机页面，阻止不允许的 redirect、popup、permission 和 download，并验证显式 Take Control/return-to-agent revision；Browser profile 使用 Candy-owned persistent partition，页面没有 Candy preload 或 provider credential。
-  待完成：完整 click/type/submit agent action、真实 renderer stale-action matrix、截图转 attachment、输入来源识别与物理输入转移、更多对抗性页面和完整 ACC-09/ACC-12 Browser 指标。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
+  已完成：packaged fixture 通过窄桥接执行 selector-scoped click/type/confirmed-submit，拒绝未确认 submit、stale revision 和 Take Control 后的 user-owned action；截图写入 Candy AttachmentStore，snapshot 只返回不透明 `att_...` id。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
+  待完成：可靠的物理输入来源识别与更多对抗性页面；完整 ACC-09/ACC-12 Browser 指标仍未完成。
 
 - ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。
   已完成：有界 Auto 执行、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖；Windows Job Object validator 已接入 app-server，原生 smoke 通过。
@@ -55,7 +56,7 @@
   待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、active-owner/工具中断恢复和完整响应性矩阵仍未完成。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ◐ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `37d60ed9f22d1426449faa6cb75c2b69655913de` 上执行 `npm run acceptance:windows`，13/13 个确定性步骤通过，包含 queued/active crash recovery、未签名 packaged Desktop、Browser fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  已完成：在干净提交 `517f30e9bd90b63c4792deb67a6c39cf3805003b` 上执行 `npm run acceptance:windows`，13/13 个确定性步骤通过，包含 queued/active crash recovery、未签名 packaged Desktop、Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、active-owner/工具中断恢复、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 ## 明天执行：macOS `26.5.2` Apple Silicon

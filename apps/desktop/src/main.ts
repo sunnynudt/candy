@@ -21,7 +21,7 @@ import {
   type CredentialName,
   type CandyModelId,
 } from "@candy/platform";
-import { AttachmentStore, type BrowserTabSnapshot } from "@candy/runtime";
+import { AttachmentStore, type BrowserAction, type BrowserTabSnapshot } from "@candy/runtime";
 import {
   decodeJsonLine,
   encodeJsonLine,
@@ -128,6 +128,7 @@ let browserNavigationDenied = false;
 let browserPopupDenied = false;
 let browserPermissionDenied = false;
 let browserDownloadPrevented = false;
+let browserAttachments: AttachmentStore | undefined;
 let explicitQuit = false;
 let selectedWorkspacePath: string | undefined;
 
@@ -170,7 +171,7 @@ function browserSnapshotWithRevision(
   return {
     tabId: current?.tabId ?? "browser-tab-1",
     revision: (current?.revision ?? 0) + 1,
-    control: current?.control ?? "user",
+    control: current?.control ?? "agent",
     ...updates,
   };
 }
@@ -192,6 +193,111 @@ async function readBrowserPage(): Promise<BrowserTabSnapshot> {
   };
   mainWindow?.webContents.send("browser.update", browserTab);
   return { ...browserTab };
+}
+
+function assertBrowserAction(value: unknown): asserts value is BrowserAction {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error("Browser action is invalid.");
+  const action = value as {
+    readonly type?: unknown;
+    readonly target?: unknown;
+    readonly text?: unknown;
+    readonly expectedRevision?: unknown;
+    readonly confirmed?: unknown;
+    readonly url?: unknown;
+  };
+  if (
+    (action.type !== "navigate" &&
+      action.type !== "click" &&
+      action.type !== "type" &&
+      action.type !== "submit") ||
+    !Number.isSafeInteger(action.expectedRevision) ||
+    (action.type === "navigate" && typeof action.url !== "string") ||
+    (action.type !== "navigate" &&
+      (typeof action.target !== "string" ||
+        action.target.length === 0 ||
+        action.target.length > 512)) ||
+    (action.type === "type" &&
+      (typeof action.text !== "string" ||
+        action.text.length > 10_000 ||
+        action.text.includes("\0"))) ||
+    (action.type === "submit" && typeof action.confirmed !== "boolean")
+  )
+    throw new Error("Browser action is invalid.");
+}
+
+async function captureBrowserScreenshot(): Promise<BrowserTabSnapshot> {
+  if (!browserView || !browserTab || !browserAttachments)
+    throw new Error("Browser Workspace has no open tab.");
+  const image = await browserView.webContents.capturePage();
+  const metadata = await browserAttachments.put("image", "image/png", image.toPNG());
+  browserTab = {
+    ...browserTab,
+    revision: browserTab.revision + 1,
+    screenshotAttachmentId: metadata.id,
+  };
+  mainWindow?.webContents.send("browser.update", browserTab);
+  return { ...browserTab };
+}
+
+async function actInBrowser(action: BrowserAction): Promise<BrowserTabSnapshot> {
+  if (!browserView || !browserTab) throw new Error("Browser Workspace has no open tab.");
+  if (browserTab.control !== "agent") throw new Error("User owns this browser tab.");
+  if (action.expectedRevision !== browserTab.revision)
+    throw new Error("Browser observation is stale.");
+  if (!browserTab.siteAllowed) throw new Error("Browser site permission is required.");
+  if (action.type === "navigate") {
+    const parsed = parseCandyBrowserUrl(action.url);
+    if (!browserHosts.has(parsed.host.toLowerCase()))
+      throw new Error("Browser site permission is required.");
+    await browserView.webContents.loadURL(parsed.toString());
+    return readBrowserPage();
+  }
+  if (action.type === "submit" && !action.confirmed)
+    throw new Error("Sensitive browser action requires confirmation.");
+  const actionType = action.type;
+  const target = action.target;
+  const text = action.type === "type" ? action.text : "";
+  const confirmed = action.type === "submit" && action.confirmed;
+  const result = (await browserView.webContents.executeJavaScript(
+    `(() => {
+      const target = document.querySelector(${JSON.stringify(target)});
+      if (!target) return { ok: false, reason: 'target-not-found' };
+      if (${JSON.stringify(actionType)} === 'click') {
+        if (!(target instanceof HTMLElement)) return { ok: false, reason: 'target-not-element' };
+        target.click();
+        return { ok: true };
+      }
+      if (${JSON.stringify(actionType)} === 'type') {
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement))
+          return { ok: false, reason: 'target-not-field' };
+        target.focus();
+        const prototype = Object.getPrototypeOf(target);
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        descriptor?.set?.call(target, ${JSON.stringify(text)});
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true };
+      }
+      if (${JSON.stringify(confirmed)} !== true)
+        return { ok: false, reason: 'confirmation-required' };
+      if (!(target instanceof HTMLButtonElement || target instanceof HTMLInputElement || target instanceof HTMLFormElement))
+        return { ok: false, reason: 'target-not-submit-control' };
+      if (target instanceof HTMLFormElement) target.requestSubmit();
+      else target.click();
+      return { ok: true };
+    })()`,
+    true,
+  )) as { readonly ok?: unknown; readonly reason?: unknown };
+  if (result.ok !== true)
+    throw new Error(
+      typeof result.reason === "string"
+        ? `Browser action rejected: ${result.reason}.`
+        : "Browser action rejected.",
+    );
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 25));
+  browserTab = { ...browserTab, revision: browserTab.revision + 1 };
+  return readBrowserPage();
 }
 
 async function openBrowserUrl(urlValue: unknown): Promise<BrowserTabSnapshot> {
@@ -352,6 +458,7 @@ async function saveWorkspaceSelection(workspacePath: string): Promise<void> {
 function registerIpcHandlers(): void {
   const credentials = new KeyringCredentialStore();
   const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
+  browserAttachments = attachments;
   ipcMain.handle("browser.allow-site", (event, host: unknown) => {
     assertTrustedRenderer(event);
     assertBrowserHost(host);
@@ -372,9 +479,18 @@ function registerIpcHandlers(): void {
     await browserView.webContents.loadURL(parsed.toString());
     return readBrowserPage();
   });
+  ipcMain.handle("browser.act", async (event, action: unknown) => {
+    assertTrustedRenderer(event);
+    assertBrowserAction(action);
+    return actInBrowser(action);
+  });
   ipcMain.handle("browser.observe", (event) => {
     assertTrustedRenderer(event);
     return readBrowserPage();
+  });
+  ipcMain.handle("browser.screenshot", async (event) => {
+    assertTrustedRenderer(event);
+    return captureBrowserScreenshot();
   });
   ipcMain.handle("browser.take-control", (event) => {
     assertTrustedRenderer(event);
@@ -694,12 +810,14 @@ function desktopShellHtml(nonce: string): string {
   const diff = document.getElementById('diff');
   const browserCard = document.createElement('div');
   browserCard.className = 'card';
-  browserCard.innerHTML = '<strong>Browser Workspace</strong><label for="browserHost">Allowed site host</label><input id="browserHost" placeholder="localhost:3000"><button id="allowBrowserSite">Allow site</button><label for="browserUrl">Visible page URL</label><input id="browserUrl" placeholder="https://example.com"><button id="openBrowser">Open</button><button id="navigateBrowser">Agent navigate</button><button id="takeBrowserControl">Take Control</button><button id="returnBrowserControl">Return to agent</button><div id="browserStatus" class="status muted">No browser tab.</div><pre id="browserText">No browser page.</pre>';
+  browserCard.innerHTML = '<strong>Browser Workspace</strong><label for="browserHost">Allowed site host</label><input id="browserHost" placeholder="localhost:3000"><button id="allowBrowserSite">Allow site</button><label for="browserUrl">Visible page URL</label><input id="browserUrl" placeholder="https://example.com"><button id="openBrowser">Open</button><button id="navigateBrowser">Agent navigate</button><label for="browserTarget">Agent selector</label><input id="browserTarget" placeholder="#search"><label for="browserTextInput">Agent text</label><input id="browserTextInput"><button id="browserClick">Agent click</button><button id="browserType">Agent type</button><button id="browserSubmit">Agent submit (confirm)</button><button id="browserScreenshot">Capture screenshot</button><button id="takeBrowserControl">Take Control</button><button id="returnBrowserControl">Return to agent</button><div id="browserStatus" class="status muted">No browser tab.</div><pre id="browserText">No browser page.</pre>';
   document.querySelector('aside').append(browserCard);
   const browserHost = browserCard.querySelector('#browserHost');
   const browserUrl = browserCard.querySelector('#browserUrl');
   const browserStatus = browserCard.querySelector('#browserStatus');
   const browserText = browserCard.querySelector('#browserText');
+  const browserTarget = browserCard.querySelector('#browserTarget');
+  const browserTextInput = browserCard.querySelector('#browserTextInput');
   let currentBrowser;
   let current;
   let attachmentIds = [];
@@ -712,6 +830,11 @@ function desktopShellHtml(nonce: string): string {
   browserCard.querySelector('#allowBrowserSite').addEventListener('click', async () => { try { await window.candy.browser.allowSite(browserHost.value.trim()); browserStatus.textContent = 'Site allowed. Open it explicitly.'; } catch (error) { browserStatus.textContent = 'Browser site failed: ' + error.message; } });
   browserCard.querySelector('#openBrowser').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.open(browserUrl.value.trim())); } catch (error) { browserStatus.textContent = 'Browser open failed: ' + error.message; } });
   browserCard.querySelector('#navigateBrowser').addEventListener('click', async () => { if (!currentBrowser) return; try { showBrowser(await window.candy.browser.navigate(browserUrl.value.trim(), currentBrowser.revision)); } catch (error) { browserStatus.textContent = 'Browser navigate failed: ' + error.message; } });
+  const browserAction = async (type) => { if (!currentBrowser) return; try { showBrowser(await window.candy.browser.act({ type, target: browserTarget.value.trim(), text: browserTextInput.value, confirmed: type === 'submit', expectedRevision: currentBrowser.revision })); } catch (error) { browserStatus.textContent = 'Browser action failed: ' + error.message; } };
+  browserCard.querySelector('#browserClick').addEventListener('click', () => browserAction('click'));
+  browserCard.querySelector('#browserType').addEventListener('click', () => browserAction('type'));
+  browserCard.querySelector('#browserSubmit').addEventListener('click', () => browserAction('submit'));
+  browserCard.querySelector('#browserScreenshot').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.screenshot()); } catch (error) { browserStatus.textContent = 'Screenshot failed: ' + error.message; } });
   browserCard.querySelector('#takeBrowserControl').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.takeControl()); } catch (error) { browserStatus.textContent = 'Take Control failed: ' + error.message; } });
   browserCard.querySelector('#returnBrowserControl').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.returnControlToAgent()); } catch (error) { browserStatus.textContent = 'Return control failed: ' + error.message; } });
   window.candy.browser.onUpdate(showBrowser);
@@ -834,6 +957,55 @@ async function runBrowserSmoke(): Promise<void> {
   const opened = await openBrowserUrl(fixtureUrl);
   if (!opened.text.includes("Candy browser fixture"))
     throw new Error("Browser fixture text was not observed.");
+  const clicked = await actInBrowser({
+    type: "click",
+    target: "#fixture-click",
+    expectedRevision: opened.revision,
+  });
+  if (!clicked.text.includes("clicked")) throw new Error("Browser click action was not observed.");
+  const typed = await actInBrowser({
+    type: "type",
+    target: "#fixture-input",
+    text: "typed-fixture",
+    expectedRevision: clicked.revision,
+  });
+  if (!typed.text.includes("typed-fixture"))
+    throw new Error("Browser type action was not observed.");
+  let confirmationRejected = false;
+  try {
+    await actInBrowser({
+      type: "submit",
+      target: "#fixture-form",
+      confirmed: false,
+      expectedRevision: typed.revision,
+    });
+  } catch {
+    confirmationRejected = true;
+  }
+  if (!confirmationRejected)
+    throw new Error("Browser sensitive action was not confirmation-gated.");
+  const submitted = await actInBrowser({
+    type: "submit",
+    target: "#fixture-form",
+    confirmed: true,
+    expectedRevision: typed.revision,
+  });
+  if (!submitted.text.includes("submitted"))
+    throw new Error("Browser submit action was not observed.");
+  let staleRejected = false;
+  try {
+    await actInBrowser({
+      type: "click",
+      target: "#fixture-click",
+      expectedRevision: opened.revision,
+    });
+  } catch {
+    staleRejected = true;
+  }
+  if (!staleRejected) throw new Error("Browser stale action was not rejected.");
+  const screenshot = await captureBrowserScreenshot();
+  if (!screenshot.screenshotAttachmentId?.startsWith("att_"))
+    throw new Error("Browser screenshot was not stored as an attachment.");
   await browserView.webContents.executeJavaScript(
     "window.open('https://example.com/'); navigator.geolocation?.getCurrentPosition(() => {}, () => {}); true",
     true,
@@ -848,12 +1020,23 @@ async function runBrowserSmoke(): Promise<void> {
   }
   await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
   const user = updateBrowserControl("user");
+  let userOwnedRejected = false;
+  try {
+    await actInBrowser({
+      type: "click",
+      target: "#fixture-click",
+      expectedRevision: user.revision,
+    });
+  } catch {
+    userOwnedRejected = true;
+  }
   const agent = updateBrowserControl("agent");
   if (
     !browserPopupDenied ||
     !browserNavigationDenied ||
     !browserDownloadPrevented ||
     !browserPermissionDenied ||
+    !userOwnedRejected ||
     user.control !== "user" ||
     agent.control !== "agent" ||
     agent.revision <= user.revision
