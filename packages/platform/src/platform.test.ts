@@ -12,6 +12,7 @@ import {
   SQLiteTaskStore,
   StaleLeaseError,
   cleanChildEnvironment,
+  parseOpenCodeDeepSeekCredential,
   resolveAppPaths,
   resolveDefaultAppDataRoot,
 } from "./index.js";
@@ -93,6 +94,32 @@ test("credential resolution uses only Candy-owned temporary variables before the
   assert.equal(temporary?.value, "temporary-secret");
   temporary?.release();
   assert.equal(resolveCredential("deepseek", {}, store)?.value, "os-secret");
+});
+
+test("OpenCode importer accepts only the explicit DeepSeek API entry", () => {
+  assert.equal(
+    parseOpenCodeDeepSeekCredential({
+      deepseek: { type: "api", key: "fixture-opencode-secret" },
+      anthropic: { type: "api", key: "other-fixture-secret" },
+    }),
+    "fixture-opencode-secret",
+  );
+});
+
+test("OpenCode importer rejects missing, non-API, and invalid DeepSeek entries", () => {
+  assert.throws(() => parseOpenCodeDeepSeekCredential({}), /unavailable/iu);
+  assert.throws(
+    () => parseOpenCodeDeepSeekCredential({ deepseek: { type: "oauth", key: "fixture" } }),
+    /unavailable/iu,
+  );
+  assert.throws(
+    () => parseOpenCodeDeepSeekCredential({ deepseek: { type: "api", key: "" } }),
+    /invalid/iu,
+  );
+  assert.throws(
+    () => parseOpenCodeDeepSeekCredential({ deepseek: { type: "api", key: "line\nbreak" } }),
+    /invalid/iu,
+  );
 });
 
 test("sqlite task metadata survives restart and fences stale transitions", () => {

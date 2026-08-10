@@ -54,6 +54,11 @@ When a Windows 11 x64 host is available, complete and attach sanitized evidence 
 
 Blocked external resources do not stop independent implementation. They do prevent the affected capability or release claim from being marked Pass.
 
+## 2026-08-10 explicit local credential-import and live DeepSeek checkpoint
+
+- The development-only OpenCode importer is opt-in, accepts only a user-specified `auth.json` inside an OpenCode directory, selects only the `deepseek` API entry, and writes directly to Candy's `candy-v1/deepseek` Keychain account. It does not enable automatic runtime synchronization.
+- The real Pi-backed DeepSeek run reported 6 passed and 1 blocked. The cancellation, secret-free session, and secret lease checks passed; the controlled 401/429/timeout error-contract scenario remains blocked. `G0-LIVE-DS` and `G0-DS-ADAPTER` therefore remain Blocked.
+
 ## 2026-08-10 interactive TUI checkpoint
 
 - The interactive TUI now has a durable local task loop with platform-specific Candy app-data paths, FIFO dispatch, one active owner per task, active-task interruption on restart, streamed Pi observations, task listing, queued/active cancellation, and explicit quit cancellation.

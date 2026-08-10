@@ -24,6 +24,7 @@
     "acceptance:macos": "npm run build && node scripts/acceptance-macos.mjs",
     "gate:live:deepseek": "node scripts/live-provider-gate.mjs --provider deepseek --confirm-live",
     "gate:live:minimax": "node scripts/live-provider-gate.mjs --provider minimax-cn --confirm-live",
+    "dev:import:opencode:deepseek": "npm run build && node scripts/import-opencode-deepseek.mjs",
     "format": "prettier --write package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "format:check": "prettier --check package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "lint": "eslint apps packages scripts",

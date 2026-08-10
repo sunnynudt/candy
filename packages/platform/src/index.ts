@@ -514,6 +514,28 @@ export const CANDY_CREDENTIAL_ENV_KEYS = {
   "minimax-cn": "CANDY_MINIMAX_TOKEN_PLAN_KEY",
 } as const satisfies Record<CredentialName, string>;
 
+/**
+ * Parse only the explicitly selected OpenCode DeepSeek API entry for the
+ * local development importer. The caller owns the returned secret and must
+ * write it directly to Candy's credential store without logging or projecting
+ * it through another boundary.
+ */
+export function parseOpenCodeDeepSeekCredential(value: unknown): string {
+  if (!isRecord(value)) throw new Error("OpenCode auth data must be an object.");
+  const entry = value.deepseek;
+  if (!isRecord(entry) || entry.type !== "api") {
+    throw new Error("OpenCode DeepSeek API credential is unavailable.");
+  }
+  const key = entry.key;
+  if (typeof key !== "string") throw new Error("OpenCode DeepSeek API key is unavailable.");
+  assertCredentialValue(key);
+  return key;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 const KEYRING_SERVICE = "candy-v1";
 const KEYRING_ACCOUNTS = {
   deepseek: "deepseek",

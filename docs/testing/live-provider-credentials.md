@@ -75,6 +75,29 @@ Run only the provider command after that provider is present in Candy's own Keyc
 
 There is no automatic import from Claude Code or OpenCode in V1. A future migration feature would require a separate ADR, a one-time local consent flow, source-specific security review, and proof that no credential reaches logs or general tool processes.
 
+## Explicit local OpenCode development import
+
+For a user-authorized local development run, the repository provides a separate one-time importer for the OpenCode DeepSeek API entry. This is not Candy product credential synchronization and is never invoked by the Desktop, TUI, app-server, or provider runtime.
+
+The importer requires an explicit confirmation flag and reads only an absolute `auth.json` path inside an OpenCode directory. It selects only the top-level `deepseek` entry with `type: "api"` and a string `key`; it does not inspect or migrate the other provider entries. The source must be outside the Candy repository. The selected value is written directly to Candy's OS credential store account `candy-v1/deepseek`.
+
+```zsh
+npm run dev:import:opencode:deepseek -- \
+  --source /Users/sunny/.local/share/opencode/auth.json \
+  --confirm-opencode-import
+```
+
+If Candy already has a DeepSeek credential, replacement requires a second explicit flag:
+
+```zsh
+npm run dev:import:opencode:deepseek -- \
+  --source /Users/sunny/.local/share/opencode/auth.json \
+  --confirm-opencode-import \
+  --replace
+```
+
+The command prints only a sanitized status, never the credential value, source contents, key length, fingerprint, or error payload. It does not put the value in stdout protocol messages, sessions, logs, tool subprocess environments, or repository files. After import, run `npm run gate:live:deepseek`; the Gate reads only Candy's own Keychain account.
+
 ## Mandatory live matrix
 
 The following tests from [Compatibility Gate 0](../research/compatibility-gate-0.md) must pass:

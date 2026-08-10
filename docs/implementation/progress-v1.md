@@ -19,6 +19,18 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 
 Windows 11 x64 implementation and acceptance are scheduled for a later work packet when a suitable host is available. For ACC-12, the current work packet measures ten runs on macOS `26.5.2` Apple Silicon first; the equivalent Windows ten-run matrix remains pending under `G0-WIN`. Both remain required for the final cross-platform V1 release claim; see `G0-WIN` in `docs/implementation/blockers-v1.md` for the deferred checklist.
 
+## 2026-08-10 explicit local credential-import checkpoint
+
+- Added a development-only, opt-in OpenCode DeepSeek importer. It accepts only an explicitly provided absolute `auth.json` path inside an OpenCode directory, selects only the `deepseek` API entry, rejects sources inside the Candy repository, and writes directly to Candy's `candy-v1/deepseek` OS credential-store account.
+- The importer requires `--confirm-opencode-import`; replacing an existing Candy credential additionally requires `--replace`. It emits only sanitized status and never projects the credential into sessions, JSONL, logs, tool subprocess environments, or repository files.
+- This does not add runtime credential synchronization to Candy V1 and does not change the live-provider Gate status. `LIVE-DS-01..04` and the required platform/entitlement evidence remain separate acceptance work.
+
+## 2026-08-10 live DeepSeek development checkpoint
+
+- The explicit local importer wrote the user-authorized OpenCode `deepseek` API entry directly to Candy's `candy-v1/deepseek` Keychain account. The command emitted only sanitized status and the credential was not placed in the repository or acceptance report.
+- The real Pi-backed `npm run gate:live:deepseek` run at source revision `ac78b9eb9b1f545e708f31cae470249faa24baf3` reported 6 passed and 1 blocked: `LIVE-DS-01`, `LIVE-DS-02`, `LIVE-DS-03`, cancellation, secret-free session scan, and secret lease release passed; `LIVE-DS-04-error-contracts` remains blocked because controlled 401/429/timeout fixtures are not yet available.
+- `G0-LIVE-DS` and `G0-DS-ADAPTER` remain blocked until the controlled provider-error evidence and the remaining required platform/acceptance evidence are complete.
+
 ## 2026-08-10 persistence and workspace checkpoint
 
 - Latest deterministic run: format, lint, typecheck, build, 37 tests, protocol stdio, TUI smoke and read-only task smoke, app-server JSONL smoke, Pi boundary, lifecycle policy, durable queued FIFO restoration, real Git worktree fixture, and native Rust `cargo check --locked` pass on Windows.
