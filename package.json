@@ -27,6 +27,7 @@
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
     "smoke:app-server": "npm run build && node scripts/smoke-app-server.mjs",
+    "smoke:desktop": "npm run build && node scripts/smoke-desktop.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"
   },

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -307,7 +307,14 @@ function registerIpcHandlers(): void {
 }
 
 function resolveAppServerLaunch(): AppServerLaunchSpec | undefined {
-  if (!app.isPackaged) return undefined;
+  if (!app.isPackaged) {
+    const runtimeExecutable = process.env.CANDY_DEV_APP_SERVER_NODE;
+    const entrypoint = process.env.CANDY_DEV_APP_SERVER_ENTRY;
+    if (runtimeExecutable === undefined || entrypoint === undefined) return undefined;
+    if (!isAbsolute(runtimeExecutable) || !isAbsolute(entrypoint))
+      throw new Error("Development app-server paths must be absolute.");
+    return { runtimeExecutable, entrypoint };
+  }
   const resourceRoot = process.resourcesPath;
   return {
     runtimeExecutable: join(
@@ -435,6 +442,7 @@ export function startDesktop(): void {
     registerIpcHandlers();
     mainWindow = createDesktopWindow();
     mainWindow.show();
+    if (process.env.CANDY_DESKTOP_SMOKE === "1") void runDesktopSmoke();
   });
   app.on("before-quit", () => {
     explicitQuit = true;
@@ -442,4 +450,17 @@ export function startDesktop(): void {
   });
 }
 
-if (process.env.CANDY_DESKTOP_RUN === "1") startDesktop();
+async function runDesktopSmoke(): Promise<void> {
+  if (!appServer) throw new Error("Desktop smoke requires an app-server child.");
+  await appServer.send({
+    v: 1,
+    kind: "command",
+    commandId: "desktop-smoke-1",
+    taskId: "desktop-smoke",
+    expectedRevision: 0,
+    command: { type: "snapshot" },
+  });
+  app.quit();
+}
+
+if (app.isPackaged || process.env.CANDY_DESKTOP_RUN === "1") startDesktop();
