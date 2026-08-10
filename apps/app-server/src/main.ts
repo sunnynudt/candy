@@ -37,6 +37,8 @@ import {
   LongRunningTaskRunner,
   MacSandboxRunner,
   MacSandboxValidator,
+  WindowsJobObjectRunner,
+  WindowsJobObjectValidator,
   WorkspaceHandoff,
   type AgentObservation,
   type AgentTurnInput,
@@ -917,10 +919,19 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       ? {}
       : {
           validatorRunner: {
-            run: (command, workspace, signal) =>
-              new MacSandboxValidator(new MacSandboxRunner(sandboxRunner), workspace, command).run(
-                signal,
-              ),
+            run: (command, workspace, signal) => {
+              if (process.platform === "win32")
+                return new WindowsJobObjectValidator(
+                  new WindowsJobObjectRunner(sandboxRunner),
+                  workspace,
+                  command,
+                ).run(signal);
+              return new MacSandboxValidator(
+                new MacSandboxRunner(sandboxRunner),
+                workspace,
+                command,
+              ).run(signal);
+            },
           },
         }),
   });
@@ -956,11 +967,13 @@ function resolveActiveProviderSecrets(): readonly string[] {
 }
 
 function resolveSandboxRunner(): string | undefined {
+  const nativeName =
+    process.platform === "win32" ? "candy-sandbox-runner.exe" : "candy-sandbox-runner";
   const candidates = [
     process.env.CANDY_SANDBOX_RUNNER,
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../native/candy-sandbox-runner"),
-    path.resolve(process.cwd(), "native/sandbox-runner/target/debug/candy-sandbox-runner"),
-    path.resolve(process.cwd(), "../../native/sandbox-runner/target/debug/candy-sandbox-runner"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), `../native/${nativeName}`),
+    path.resolve(process.cwd(), `native/sandbox-runner/target/debug/${nativeName}`),
+    path.resolve(process.cwd(), `../../native/sandbox-runner/target/debug/${nativeName}`),
   ];
   return candidates.find(
     (candidate): candidate is string =>

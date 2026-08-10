@@ -1,8 +1,8 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-10
+更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`e25ef550f5a6c2c1ecf6a9bd7a0cd848a4dbd129`
+当前基线提交：`419d2948e8d163298d00e9a8e4d2e456f3abb339`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -21,8 +21,8 @@
   证据：Windows Git 工作树创建、Apply、丢弃和重启交接 fixtures 通过；提交 `d4d38e489c5ded8d29a866f7034a06afce54a525`。
 
 - ◐ 建立 Windows reparse-point 测试前置条件并验证防逃逸。
-  已完成：普通 Windows 用户会话下的目录 junction 覆盖，确认 Pi 工作区边界拒绝经 junction 访问的外部文件。
-  当前阻塞：2026-08-10 的真实 symlink 探针返回“Administrator privilege required”；探针目录已从 `%TEMP%` 清理。需要启用 Developer Mode 或取得等效授权后，补齐 symlink、其他 reparse point、路径逃逸和清理流程的真实 Windows 矩阵。
+  已完成：普通 Windows 用户会话下的目录 junction 覆盖，确认 Pi 工作区边界拒绝经 junction 访问的外部文件；原生 runner 预检拒绝 workspace/cwd reparse component，并在本机 smoke 中拒绝真实 junction、完成 fixture 清理。
+  当前未完成/阻塞：2026-08-10 的真实 symlink 探针返回“Administrator privilege required”；探针目录已从 `%TEMP%` 清理。需要启用 Developer Mode 或取得等效授权后，补齐 symlink、其他 reparse point、运行期 race/path escape 和清理流程的真实 Windows 矩阵。
 
 - ☑️ 在干净依赖目录重跑完整门禁、TUI/App Server smoke 与原生检查。
   证据：`npm ci --ignore-scripts` 后 `npm run check`（92 个测试）以及 TUI/App Server smoke 通过；Windows `npm run check:native` 于 2026-08-10 以退出码 0 通过。Rust 编译器仍报告未使用代码警告，不影响检查结果；Windows G2 的实际 Job Object 与安全验收仍单列为未完成项。
@@ -31,13 +31,15 @@
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
   待完成：优先完成并附证据的 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 Windows 矩阵，以及 ACC-12 十轮响应性测量。
 
-- ⬜ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
+- ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
+  已完成：Rust runner 以 suspended process 创建后先加入 Job Object，设置 `KILL_ON_JOB_CLOSE` 后恢复；Windows native smoke 通过正常完成、`network:true` fail-closed、workspace 逃逸、junction reparse 拒绝和 runner 取消后的后代清理；app-server 已接入 Windows `.exe` runner/validator 路径。
+  未完成条件：`network:true` 拒绝只是协议/策略边界，不等于命令的 OS 级无网络；尚未完成任意命令的 OS 级 workspace ACL/AppContainer containment、运行期间 reparse/race 防逃逸、签名/打包路径和独立安全评审。Shell Auto 与 Shell Auto Debug 继续禁用。
 
 - ⬜ 验收 Windows Browser Workspace：打包 Electron 中的 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。
 
 - ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。
-  已完成：有界 Auto 执行、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖。
-  待完成：上述 Windows 交互、证据和原生验证器集成，以及 Windows 打包证据。
+  已完成：有界 Auto 执行、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖；Windows Job Object validator 已接入 app-server，原生 smoke 通过。
+  待完成：用户 steering/审批交互、最终证据摘要、OS 级命令 containment、安全评审以及 Windows 打包证据。
 
 - ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
   已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。

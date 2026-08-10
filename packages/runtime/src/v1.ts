@@ -254,6 +254,99 @@ export class MacSandboxRunner {
   }
 }
 
+/**
+ * Windows-only native validator seam. The Rust helper assigns the complete
+ * process tree to a Job Object and kills the tree when the owner exits.
+ * Workspace and secret policy remain in the TypeScript boundary.
+ */
+export class WindowsJobObjectRunner {
+  public constructor(
+    private readonly runnerExecutable: string,
+    private readonly platform = process.platform,
+  ) {}
+
+  public run(request: SandboxRunRequest): Promise<ProcessResult> {
+    if (this.platform !== "win32")
+      throw new ProcessSupervisorUnavailableError(
+        "The Windows Job Object runner is unavailable on this platform.",
+      );
+    if (!path.isAbsolute(this.runnerExecutable))
+      throw new Error("Sandbox Runner executable must be absolute.");
+    if (!path.isAbsolute(request.executable) || !path.isAbsolute(request.cwd))
+      throw new Error("Sandbox commands require absolute executable and cwd paths.");
+    if (!path.isAbsolute(request.workspace))
+      throw new Error("Sandbox commands require an absolute workspace path.");
+    if (request.environment) assertSafeProcessEnvironment(request.environment);
+    const requestId = `sandbox-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const environment = cleanChildEnvironment(
+      { ...process.env, ...request.environment },
+      request.activeSecrets ?? [],
+    );
+    const payload = JSON.stringify({
+      v: 1,
+      kind: "run",
+      requestId,
+      executable: request.executable,
+      args: request.args,
+      cwd: request.cwd,
+      workspace: request.workspace,
+      network: false,
+      environment,
+    });
+    if (containsSandboxSecretMaterial(payload))
+      throw new Error("Provider credentials are forbidden in Sandbox Runner requests.");
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.runnerExecutable, [], {
+        cwd: request.cwd,
+        env: cleanChildEnvironment(process.env),
+        shell: false,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      let cancelled = false;
+      const terminate = (): void => {
+        if (child.pid !== undefined) child.kill();
+      };
+      const onAbort = (): void => {
+        cancelled = true;
+        terminate();
+      };
+      request.signal?.addEventListener("abort", onAbort, { once: true });
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => (stdout += chunk));
+      child.stderr.on("data", (chunk: string) => (stderr += chunk));
+      child.once("error", (error) => {
+        request.signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        request.signal?.removeEventListener("abort", onAbort);
+        if (cancelled) {
+          resolve({ code, signal, stdout: "", stderr: "", cancelled: true });
+          return;
+        }
+        try {
+          const response = parseSandboxResponse(stdout, requestId);
+          resolve({
+            code: response.code,
+            signal,
+            stdout: response.stdout,
+            stderr: response.stderr,
+            cancelled: response.cancelled,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+      if (request.signal?.aborted) onAbort();
+      child.stdin.end(`${payload}\n`);
+    });
+  }
+}
+
 function parseSandboxResponse(value: string, expectedRequestId: string): SandboxCompletedResponse {
   const line = value.split(/\r?\n/u).find((candidate) => candidate.length > 0);
   if (line === undefined) throw new Error("Sandbox Runner returned no response.");
@@ -579,6 +672,36 @@ export interface MacSandboxValidatorCommand {
 export class MacSandboxValidator implements Validator {
   public constructor(
     private readonly runner: MacSandboxRunner,
+    private readonly workspace: string,
+    private readonly command: MacSandboxValidatorCommand,
+    private readonly environment: Readonly<Record<string, string>> = {},
+    private readonly activeSecrets: readonly string[] = [],
+  ) {}
+
+  public async run(signal: AbortSignal): Promise<ValidatorResult> {
+    const startedAt = Date.now();
+    const result = await this.runner.run({
+      executable: this.command.executable,
+      args: this.command.args,
+      cwd: this.workspace,
+      workspace: this.workspace,
+      environment: this.environment,
+      activeSecrets: this.activeSecrets,
+      signal,
+    });
+    const evidence = redactValidatorOutput(`${result.stdout}${result.stderr}`, this.activeSecrets);
+    return {
+      ok: result.code === 0 && !result.cancelled,
+      fingerprint: `${result.code ?? "signal"}:${evidence}`,
+      evidence,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+}
+
+export class WindowsJobObjectValidator implements Validator {
+  public constructor(
+    private readonly runner: WindowsJobObjectRunner,
     private readonly workspace: string,
     private readonly command: MacSandboxValidatorCommand,
     private readonly environment: Readonly<Record<string, string>> = {},

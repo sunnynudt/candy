@@ -422,6 +422,8 @@ export {
   ProcessSupervisor,
   ProcessSupervisorUnavailableError,
   SerialMutationLane,
+  WindowsJobObjectRunner,
+  WindowsJobObjectValidator,
   WorkspaceHandoff,
   planGitWorktree,
 } from "./v1.js";
