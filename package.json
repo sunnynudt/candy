@@ -21,6 +21,7 @@
     "check:toolchain": "node scripts/assert-toolchain.mjs",
     "check:windows-toolchain": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-toolchain.ps1",
     "check:native": "node scripts/check-native.mjs",
+    "acceptance:macos": "npm run build && node scripts/acceptance-macos.mjs",
     "format": "prettier --write package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "format:check": "prettier --check package.json tsconfig.json tsconfig.base.json eslint.config.js .prettierrc.json .github scripts apps packages fixtures",
     "lint": "eslint apps packages scripts",

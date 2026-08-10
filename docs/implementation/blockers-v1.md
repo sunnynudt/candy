@@ -85,3 +85,9 @@ Blocked external resources do not stop independent implementation. They do preve
 - The macOS Keychain fixture passes `absent -> present -> absent` for Candy's two credential accounts. This is not signed-package ACC-02 evidence and no provider credential was used.
 - The packaged Node 22 runtime loads the bundled Keychain native addon and repeats the same two-account fixture through `npm run smoke:desktop:packaged`.
 - The package is ad-hoc signed for local execution only. Apple Developer signing/notarization, Sequoia exact-machine evidence, live providers, Browser adversarial tests, and native containment remain open. Shell and Auto Debug remain `unsupported`.
+
+## 2026-08-10 macOS acceptance runner checkpoint
+
+- `npm run acceptance:macos` now provides one serial, explicit local macOS arm64 evidence run. It passed `check:toolchain`, `check`, `check:native`, TUI, app-server, Electron, packaged Desktop, and packaged Keychain smoke on the current machine.
+- The runner writes only sanitized, ignored reports under `out/acceptance/macos/` and uses a minimal child environment. It does not read or import credentials and does not execute live provider tests.
+- External blockers are unchanged: exact Sequoia 15+ evidence, live DeepSeek/MiniMax matrices and entitlement, Apple signing/notarization, Browser adversarial evidence, native containment security review, and final product-owner acceptance.

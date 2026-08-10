@@ -118,9 +118,12 @@ git diff --exit-code -- package-lock.json
 npm run check:toolchain
 npm run check
 npm run smoke:tui
+npm run acceptance:macos
 ```
 
 Record the macOS version, architecture, Node/npm versions, Rust toolchain, lockfile result, test result, and smoke result as the local evidence for this machine.
+
+`npm run acceptance:macos` is the repeatable local entry point. It runs the deterministic, native, TUI, app-server, Electron, packaged Desktop, and packaged Keychain checks in serial order with a minimal child environment, then writes a sanitized report under `out/acceptance/macos/`. It never runs live providers or imports credentials from another tool. The report is local evidence only; it does not establish the exact Sequoia acceptance machine, Apple signing, native containment, Browser, or final ACC gates.
 
 ### 7. Native smoke when native work begins
 

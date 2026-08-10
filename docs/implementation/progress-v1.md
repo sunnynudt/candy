@@ -68,3 +68,10 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - The Desktop credential bridge now calls the real Main-process Keychain handlers, and every Desktop IPC handler rejects non-trusted renderers. The packaged Node 22 runtime also loads the bundled Keychain native addon and passes the two-account fixture.
 - Electron `43.2.0` launches an independent Node `22.23.2` app-server in development and packaged local smoke. The packaged `out/macos/Candy.app` has an ad-hoc signature and passes `codesign --verify --deep --strict`, typed JSONL snapshot round-trip, and quit cleanup.
 - `npm run check`, `npm run check:native`, and `npm run smoke:desktop:packaged` pass with 53 tests. This does not close Apple Developer signing/notarization, exact Sequoia, live provider, Browser, native containment, or final ACC-01..12 gates.
+
+## 2026-08-10 macOS acceptance runner checkpoint
+
+- Added `npm run acceptance:macos`, a repeatable local entry point that runs the pinned toolchain check, full deterministic check, native check, TUI, app-server, Electron, packaged Desktop, and packaged Keychain smoke commands in serial order.
+- The runner uses Candy's minimal child-environment allowlist, never enables live providers, records only sanitized metadata, and writes ignored reports under `out/acceptance/macos/`.
+- The local run passed all 8 steps on macOS `26.5.2` arm64 with Node `22.23.2`, 53 tests, native checks, packaged JSONL lifecycle, and the packaged Keychain fixture. The latest local report is `out/acceptance/macos/latest.md`.
+- This closes the repeatability seam for local macOS evidence but does not change the status of exact Sequoia, live-provider, signing, Browser, native containment, or final ACC gates.

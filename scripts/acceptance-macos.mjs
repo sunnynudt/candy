@@ -1,0 +1,120 @@
+import { createHash } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanChildEnvironment } from "@candy/platform";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const acceptanceRoot = path.join(root, "out", "acceptance", "macos");
+const npmScript = process.env.npm_execpath;
+
+if (process.platform !== "darwin" || process.arch !== "arm64") {
+  throw new Error("macOS acceptance requires macOS arm64.");
+}
+if (!npmScript) {
+  throw new Error("Run macOS acceptance through npm so the pinned npm executable is explicit.");
+}
+
+const startedAt = new Date();
+const revision = runCapture("git", ["rev-parse", "HEAD"]);
+const lockfileDigest = createHash("sha256")
+  .update(await readFile(path.join(root, "package-lock.json")))
+  .digest("hex");
+const macosVersion = runCapture("/usr/bin/sw_vers", ["-productVersion"]);
+const architecture = runCapture("/usr/bin/uname", ["-m"]);
+const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
+const steps = [
+  "check:toolchain",
+  "check",
+  "check:native",
+  "smoke:tui",
+  "smoke:tui-task",
+  "smoke:app-server",
+  "smoke:desktop",
+  "smoke:desktop:packaged",
+];
+const results = [];
+
+for (const script of steps) {
+  const result = await runNpmScript(script);
+  results.push(result);
+}
+
+const passed = results.filter((result) => result.status === "pass").length;
+const failed = results.filter((result) => result.status === "fail").length;
+const finishedAt = new Date();
+const report = [
+  "# Candy macOS Apple Silicon Acceptance Run",
+  "",
+  `- Started: ${startedAt.toISOString()}`,
+  `- Finished: ${finishedAt.toISOString()}`,
+  `- Source revision: \`${revision}\``,
+  `- Lockfile SHA-256: \`${lockfileDigest}\``,
+  `- macOS product version: \`${macosVersion}\``,
+  `- Architecture: \`${architecture}\``,
+  `- Node: \`${process.version}\``,
+  `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
+  "",
+  "This is a local deterministic and packaged smoke run. It does not run live providers, inspect other tool credentials, or claim Sequoia, signing, sandbox, Browser, or final ACC acceptance.",
+  "",
+  `Summary: ${passed} passed, ${failed} failed.`,
+  "",
+  "| Step | Status | Duration |",
+  "| --- | --- | ---: |",
+  ...results.map(
+    (result) =>
+      `| \`npm run ${result.script}\` | ${result.status === "pass" ? "Pass" : "Fail"} | ${result.durationMs} ms |`,
+  ),
+  "",
+  "## External gates still not established",
+  "",
+  "- Exact macOS Sequoia 15+ Apple Silicon acceptance-machine evidence.",
+  "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
+  "- macOS native containment security review; Shell and Auto Debug remain gated.",
+  "- Apple signing/notarization and packaged Browser adversarial evidence.",
+  "",
+].join("\n");
+
+await mkdir(acceptanceRoot, { recursive: true });
+const reportPath = path.join(acceptanceRoot, "latest.md");
+await writeFile(reportPath, report, "utf8");
+console.log(`macOS acceptance report: ${path.relative(root, reportPath)}`);
+
+if (failed > 0) process.exitCode = 1;
+
+async function runNpmScript(script) {
+  const started = Date.now();
+  const result = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [npmScript, "run", script], {
+      cwd: root,
+      env: cleanChildEnvironment(process.env),
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    child.once("error", (error) =>
+      resolve({ script, status: "fail", durationMs: Date.now() - started, error }),
+    );
+    child.once("exit", (code, signal) =>
+      resolve({
+        script,
+        status: code === 0 ? "pass" : "fail",
+        durationMs: Date.now() - started,
+        ...(code === 0 ? {} : { error: `${code ?? "null"}/${signal ?? "no signal"}` }),
+      }),
+    );
+  });
+  if (result.status === "fail")
+    console.error(
+      `acceptance step failed: npm run ${script} (${result.error?.message ?? result.error})`,
+    );
+  return result;
+}
+
+function runCapture(command, args) {
+  return execFileSync(command, args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
