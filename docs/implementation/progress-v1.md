@@ -47,6 +47,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The report is ignored under `out/acceptance/windows/` and records source revision, lockfile digest, Windows x64, Node `22.23.2`, and verified Electron `43.2.0` without provider or browser data.
 - This is only an ACC-12 subset. Runtime-to-UI projection, cancellation, Browser Take Control, and three-concurrent-task responsiveness remain unmeasured; it does not close ACC-12 or any final acceptance claim.
 
+## 2026-08-11 Windows deterministic acceptance runner checkpoint
+
+- `npm run acceptance:windows` ran on clean source revision `cb005b04ea94bd52850563dfd1b568a99c1d8fbf` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 9 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, Desktop smoke, and the ten-run responsiveness subset.
+- The sanitized report is `out/acceptance/windows/latest.md` and remains ignored. It explicitly lists signed/packaged Desktop, Browser, complete G2 OS containment/security review, recovery, live provider/entitlement, remaining ACC-01..12, and product-owner acceptance as open; this is not a release or complete acceptance report.
+
 ## 2026-08-10 Windows 11 live DeepSeek checkpoint
 
 - The user-authorized local DeepSeek credential was written to Candy's own Windows Credential Manager path without printing or recording its value. The source configuration was not copied into the repository.
