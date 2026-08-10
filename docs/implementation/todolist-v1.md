@@ -2,7 +2,7 @@
 
 更新日期：2026-08-10
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`025131b32a57e1868b8a25eae766083525734451`
+当前基线提交：`e6bd25d988539c3869a50183e2b38bde8de0033f`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -24,9 +24,8 @@
   已完成：普通 Windows 用户会话下的目录 junction 覆盖，确认 Pi 工作区边界拒绝经 junction 访问的外部文件。
   待完成：具备创建文件/目录 symlink 的测试条件（例如 Developer Mode 或等效授权）；补齐 symlink、其他 reparse point、路径逃逸和清理流程的真实 Windows 矩阵。
 
-- ◐ 在干净依赖目录重跑完整门禁、TUI/App Server smoke 与原生检查。
-  已完成：`npm ci --ignore-scripts` 后 `npm run check`（92 个测试）以及 TUI/App Server smoke 通过。
-  待完成：在可用 Cargo registry/cache 环境中运行并记录 `npm run check:native`；此前 crates.io 索引访问长时间阻塞，未将其视为已通过。
+- ☑️ 在干净依赖目录重跑完整门禁、TUI/App Server smoke 与原生检查。
+  证据：`npm ci --ignore-scripts` 后 `npm run check`（92 个测试）以及 TUI/App Server smoke 通过；Windows `npm run check:native` 于 2026-08-10 以退出码 0 通过。Rust 编译器仍报告未使用代码警告，不影响检查结果；Windows G2 的实际 Job Object 与安全验收仍单列为未完成项。
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
