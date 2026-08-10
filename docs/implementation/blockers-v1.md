@@ -39,6 +39,12 @@ Updated: 2026-08-10
 
 Blocked external resources do not stop independent implementation. They do prevent the affected capability or release claim from being marked Pass.
 
+## 2026-08-10 interactive TUI checkpoint
+
+- The interactive TUI now has a durable local task loop with platform-specific Candy app-data paths, FIFO dispatch, one active owner per task, active-task interruption on restart, streamed Pi observations, task listing, queued/active cancellation, and explicit quit cancellation.
+- The injected deterministic TUI test and the 44-test local suite pass under Node `22.23.2`; no live credential was read or requested.
+- The full interactive TUI remains short of ACC-03/05/06 acceptance until packaged restart, cross-client ownership/handoff, and real-provider evidence run on both target platforms.
+
 ## 2026-08-10 app-server, Pi AgentSession, and credential adapter checkpoint
 
 - Deterministic checkpoint passed: format, lint, typecheck, 42 tests, protocol stdio, TUI smoke, task smoke, app-server JSONL smoke, boundary checks, exact Pi graph check, lifecycle policy, and native Rust protocol compile.

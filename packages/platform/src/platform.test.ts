@@ -13,6 +13,7 @@ import {
   StaleLeaseError,
   cleanChildEnvironment,
   resolveAppPaths,
+  resolveDefaultAppDataRoot,
 } from "./index.js";
 
 test("manual clock advances deterministically", () => {
@@ -45,6 +46,18 @@ test("app-data paths are Candy-owned and platform-neutral", () => {
     browserProfile: path.join(path.resolve("Candy Data"), "browser-profile"),
     worktrees: path.join(path.resolve("Candy Data"), "worktrees"),
   });
+});
+
+test("default app-data root uses platform-owned locations", () => {
+  assert.equal(
+    resolveDefaultAppDataRoot("darwin", {}, "/Users/test"),
+    "/Users/test/Library/Application Support/Candy",
+  );
+  assert.equal(
+    resolveDefaultAppDataRoot("win32", { LOCALAPPDATA: "C:/Local" }, "C:/Users/test"),
+    "C:/Local/Candy",
+  );
+  assert.equal(resolveDefaultAppDataRoot("linux", {}, "/home/test"), "/home/test/.candy");
 });
 
 test("credential store exposes presence and short-lived leases without renderer readback", () => {

@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import os from "node:os";
 import path from "node:path";
 import { Entry } from "@napi-rs/keyring";
 
@@ -32,6 +33,19 @@ export function resolveAppPaths(appDataRoot: string): AppPaths {
     browserProfile: path.join(root, "browser-profile"),
     worktrees: path.join(root, "worktrees"),
   };
+}
+
+export function resolveDefaultAppDataRoot(
+  platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  homeDirectory = os.homedir(),
+): string {
+  if (platform === "win32") {
+    return path.join(environment.LOCALAPPDATA ?? environment.APPDATA ?? homeDirectory, "Candy");
+  }
+  if (platform === "darwin")
+    return path.join(homeDirectory, "Library", "Application Support", "Candy");
+  return path.join(homeDirectory, ".candy");
 }
 
 export type PersistedTaskState =
@@ -146,6 +160,15 @@ export class SQLiteTaskStore {
     return this.#database
       .prepare(
         "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+      )
+      .all()
+      .map((row) => mapTaskMetadata(row));
+  }
+
+  public list(): readonly TaskMetadata[] {
+    return this.#database
+      .prepare(
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
