@@ -43,7 +43,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 ## 2026-08-11 Windows responsiveness subset checkpoint
 
-- Added a sanitized Windows measurement runner with ten repetitions for the deterministic TUI cold-start smoke and Electron development Desktop cold-start-to-task-list smoke. The current local report records TUI p95 `1286 ms` against the `2000 ms` target and Desktop p95 `1709 ms` against the `5000 ms` target.
+- Added a sanitized Windows measurement runner with ten repetitions for the deterministic TUI cold-start smoke and Electron development Desktop cold-start-to-task-list smoke. The current local report for source revision `8b7567f5eb88d714e045387544f55e9fa7c9c360` records TUI p95 `1287 ms` against the `2000 ms` target and Desktop p95 `1648 ms` against the `5000 ms` target.
 - The report is ignored under `out/acceptance/windows/` and records source revision, lockfile digest, Windows x64, Node `22.23.2`, and verified Electron `43.2.0` without provider or browser data.
 - This is only an ACC-12 subset. Runtime-to-UI projection, cancellation, Browser Take Control, and three-concurrent-task responsiveness remain unmeasured; it does not close ACC-12 or any final acceptance claim.
 

@@ -26,7 +26,7 @@ Windows work now continues on the current Windows 11 Pro x64 host. The passing d
 
 Complete and attach sanitized evidence for:
 
-- TUI and signed Desktop installation, launch, packaged Node app-server lifecycle, and the remaining ACC-12 ten-run responsiveness measurements. A deterministic Windows subset now has TUI p95 `1286 ms` and Desktop p95 `1709 ms`; projection, cancellation, Browser Take Control, concurrency, and signed/packaged evidence remain open.
+- TUI and signed Desktop installation, launch, packaged Node app-server lifecycle, and the remaining ACC-12 ten-run responsiveness measurements. A deterministic Windows subset now has TUI p95 `1287 ms` and Desktop p95 `1648 ms`; projection, cancellation, Browser Take Control, concurrency, and signed/packaged evidence remain open.
 - Credential Manager presence/set/replace/delete behavior without renderer credential readback. The 2026-08-11 Windows synthetic fixture covers the empty MiniMax account; the existing DeepSeek account was presence-only and untouched.
 - Sandbox Runner Job Object ownership, descendant cancellation, OS-level no-network containment, and security review. The 2026-08-11 smoke proves only protocol-level network rejection, not OS network isolation.
 - Browser Workspace packaged input-origin, Take Control, permission, redirect, download, and adversarial tests.
