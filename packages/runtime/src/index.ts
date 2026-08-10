@@ -1,26 +1,32 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Clock } from "@candy/platform";
+import { DEFAULT_CANDY_MODEL, type CandyModelId, type Clock } from "@candy/platform";
 
 export interface AgentTurnInput {
   readonly taskId: string;
   readonly prompt: string;
+  readonly model?: CandyModelId;
 }
 
 export type AgentObservation =
   | { readonly type: "turn.started"; readonly taskId: string; readonly at: number }
   | { readonly type: "assistant.delta"; readonly text: string }
+  | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
   | {
       readonly type: "tool.completed";
       readonly taskId: string;
-      readonly tool: "read";
-      readonly path: string;
-      readonly bytes: number;
+      readonly tool: string;
+      readonly ok: boolean;
     }
   | { readonly type: "turn.completed"; readonly taskId: string; readonly at: number };
 
 export interface AgentEngine {
   runTurn(input: AgentTurnInput, signal: AbortSignal): AsyncIterable<AgentObservation>;
+}
+
+/** Optional recovery seam for engines whose session store owns the prompt. */
+export interface RecoverableAgentEngine extends AgentEngine {
+  recoverPrompt?(taskId: string, cwd: string): Promise<string | undefined>;
 }
 
 export class DeterministicAgentEngine implements AgentEngine {
@@ -190,6 +196,7 @@ export interface RuntimeTaskSnapshot {
   readonly revision: number;
   readonly state: TaskState;
   readonly approvalProfile: ApprovalProfile;
+  readonly model: CandyModelId;
   readonly ownerId?: string;
 }
 
@@ -199,6 +206,7 @@ export interface TaskMetadataStore {
     taskId: string,
     approvalProfile: ApprovalProfile,
     queueOrder?: number,
+    model?: CandyModelId,
   ): RuntimeTaskSnapshot;
   get(taskId: string): RuntimeTaskSnapshot | undefined;
   transition(
@@ -225,6 +233,7 @@ export class TaskController {
         revision: 0,
         state: "queued",
         approvalProfile,
+        model: DEFAULT_CANDY_MODEL,
       };
   }
 
@@ -363,13 +372,17 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
 
 export {
   ApplyChangesGuard,
+  ApplyChangesBlockedError,
+  ApplyChangesService,
   AttachmentStore,
   ApprovalPolicy,
   BrowserControlError,
   BrowserRevisionError,
   FixedValidator,
+  GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
+  LongRunningControlError,
   ProviderConcurrencyGate,
   SerialMutationLane,
   WorkspaceHandoff,
@@ -389,6 +402,8 @@ export type {
   Validator,
   ValidatorResult,
   GitWorktreePlan,
+  GitChangeManifest,
+  GitCommandRunner,
 } from "./v1.js";
 
 function throwIfAborted(signal: AbortSignal): void {

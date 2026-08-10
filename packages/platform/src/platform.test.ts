@@ -107,6 +107,7 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
       state: "queued",
       approvalProfile: "read-only",
       queueOrder: 4,
+      model: "deepseek-v4-flash",
     });
     const running = first.transition("task-1", 0, "running", "owner-1");
     assert.equal(running.revision, 1);

@@ -6,9 +6,11 @@ import { createInterface } from "node:readline";
 import { app, BrowserWindow, ipcMain, session, WebContentsView } from "electron";
 import {
   cleanChildEnvironment,
+  DEFAULT_CANDY_MODEL,
   KeyringCredentialStore,
   resolveAppPaths,
   type CredentialName,
+  type CandyModelId,
 } from "@candy/platform";
 import {
   decodeJsonLine,
@@ -112,6 +114,7 @@ function emptyProjection(taskId: string): RendererTaskProjection {
     state: "idle",
     revision: 0,
     approvalProfile: "read-only",
+    model: DEFAULT_CANDY_MODEL,
     changedFiles: [],
     transcript: [],
   };
@@ -127,10 +130,15 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...(event.event.snapshot.approvalProfile === undefined
         ? {}
         : { approvalProfile: event.event.snapshot.approvalProfile }),
+      ...(event.event.snapshot.model === undefined ? {} : { model: event.event.snapshot.model }),
     };
   }
   if (event.event.type === "task.created")
-    return { ...current, approvalProfile: event.event.approvalProfile };
+    return {
+      ...current,
+      approvalProfile: event.event.approvalProfile,
+      ...(event.event.model === undefined ? {} : { model: event.event.model }),
+    };
   if (event.event.type === "task.state_changed")
     return { ...current, state: event.event.state, revision: event.revision };
   if (event.event.type === "assistant.delta") {
@@ -186,23 +194,35 @@ function registerIpcHandlers(): void {
     assertCredentialName(name);
     return credentials.has(name as CredentialName);
   });
-  ipcMain.handle("task.create", async (_event, prompt: unknown, profile: unknown) => {
-    validatePrompt(prompt);
-    if (profile !== "read-only" && profile !== "auto") throw new Error("Invalid approval profile.");
-    const taskId = randomUUID().replaceAll("-", "");
-    const projection = emptyProjection(taskId);
-    projections.set(taskId, { ...projection, approvalProfile: profile });
-    if (!appServer) throw new AppServerUnavailableError();
-    await appServer.send({
-      v: 1,
-      kind: "command",
-      commandId: randomUUID(),
-      taskId,
-      expectedRevision: 0,
-      command: { type: "task.create", prompt, approvalProfile: profile },
-    });
-    return projections.get(taskId) ?? projection;
-  });
+  ipcMain.handle(
+    "task.create",
+    async (_event, prompt: unknown, profile: unknown, model: unknown) => {
+      validatePrompt(prompt);
+      if (profile !== "read-only" && profile !== "auto")
+        throw new Error("Invalid approval profile.");
+      if (
+        model !== undefined &&
+        model !== "deepseek-v4-flash" &&
+        model !== "deepseek-v4-pro" &&
+        model !== "MiniMax-M3"
+      )
+        throw new Error("Invalid model.");
+      const selectedModel = (model ?? DEFAULT_CANDY_MODEL) as CandyModelId;
+      const taskId = randomUUID().replaceAll("-", "");
+      const projection = emptyProjection(taskId);
+      projections.set(taskId, { ...projection, approvalProfile: profile, model: selectedModel });
+      if (!appServer) throw new AppServerUnavailableError();
+      await appServer.send({
+        v: 1,
+        kind: "command",
+        commandId: randomUUID(),
+        taskId,
+        expectedRevision: 0,
+        command: { type: "task.create", prompt, approvalProfile: profile, model: selectedModel },
+      });
+      return projections.get(taskId) ?? projection;
+    },
+  );
   ipcMain.handle("task.snapshot", async (_event, taskId: string) => {
     assertTaskId(taskId);
     if (!appServer) return projections.get(taskId) ?? emptyProjection(taskId);
@@ -260,7 +280,6 @@ export function createDesktopWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      partition: "persist:candy-browser-v1",
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.js"),
     },
   });
@@ -270,15 +289,15 @@ export function createDesktopWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      partition: "persist:candy-browser-v1",
     },
   });
   window.contentView.addChildView(browserView);
   browserView.setBounds({ x: 360, y: 0, width: 840, height: 800 });
+  browserView.setVisible(false);
+  const nonce = randomUUID().replaceAll("-", "");
   void window.loadURL(
-    "data:text/html;charset=utf-8," +
-      encodeURIComponent(
-        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'self'\"><body><h1>Candy</h1><p>Local-first task client</p></body>",
-      ),
+    "data:text/html;charset=utf-8," + encodeURIComponent(desktopShellHtml(nonce)),
   );
   window.on("close", (event) => {
     if (!explicitQuit && classifyWindowClose(false) === "hide-to-tray") {
@@ -287,6 +306,39 @@ export function createDesktopWindow(): BrowserWindow {
     }
   });
   return window;
+}
+
+function desktopShellHtml(nonce: string): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
+<style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff}section{padding:20px;overflow:auto}textarea{width:100%;height:140px;box-sizing:border-box}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}</style></head>
+<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
+<script nonce="${nonce}">
+(() => {
+  const prompt = document.getElementById('prompt');
+  const profile = document.getElementById('profile');
+  const model = document.getElementById('model');
+  const create = document.getElementById('create');
+  const taskStatus = document.getElementById('taskStatus');
+  const taskActions = document.getElementById('taskActions');
+  const transcript = document.getElementById('transcript');
+  const diff = document.getElementById('diff');
+  let current;
+  const render = (projection) => {
+    current = projection;
+    taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision;
+    transcript.textContent = projection.transcript.map((entry) => entry.role.toUpperCase() + ': ' + entry.text).join('\\n') || 'No transcript yet.';
+    diff.textContent = projection.changedFiles.join('\\n') || 'No diff yet.';
+  };
+  create.addEventListener('click', async () => {
+    if (!prompt.value.trim()) return;
+    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value)); prompt.value = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
+  });
+  const send = (type) => current && window.candy.tasks.send({ taskId: current.taskId, expectedRevision: current.revision, type }).catch((error) => { taskStatus.textContent = error.message; });
+  for (const type of ['task.run','task.pause','task.resume','task.cancel']) { const button = document.createElement('button'); button.textContent = type.replace('task.',''); button.addEventListener('click', () => send(type)); taskActions.appendChild(button); }
+  window.candy.tasks.onUpdate(render);
+})();
+</script></body></html>`;
 }
 
 export function configureCandyBrowserSession(): void {

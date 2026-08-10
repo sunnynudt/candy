@@ -23,6 +23,9 @@ export interface AppPaths {
   readonly worktrees: string;
 }
 
+export type CandyModelId = "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
+export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
+
 export function resolveAppPaths(appDataRoot: string): AppPaths {
   const root = path.resolve(appDataRoot);
   return {
@@ -58,10 +61,21 @@ export interface TaskMetadata {
   readonly approvalProfile: "read-only" | "auto";
   readonly queueOrder?: number;
   readonly ownerId?: string;
+  readonly model: CandyModelId;
 }
 
 export type PersistedRunStopReason =
-  "running" | "validator_succeeded" | "budget_exhausted" | "stall_detected" | "cancelled" | "error";
+  | "running"
+  | "validator_succeeded"
+  | "budget_exhausted"
+  | "stall_detected"
+  | "cancelled"
+  | "approval_required"
+  | "ownership_lost"
+  | "provider_failure"
+  | "user_stop"
+  | "crash_interrupted"
+  | "error";
 
 export interface TaskRunMetadata {
   readonly taskId: string;
@@ -104,7 +118,8 @@ export class SQLiteTaskStore {
         state TEXT NOT NULL,
         approval_profile TEXT NOT NULL,
         queue_order INTEGER,
-        owner_id TEXT
+        owner_id TEXT,
+        model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash'
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -114,10 +129,11 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 2;
+      PRAGMA user_version = 3;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -126,9 +142,14 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 3;
       `);
-    } else if (schemaVersion !== 2) {
+    } else if (schemaVersion === 2) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
+        PRAGMA user_version = 3;
+      `);
+    } else if (schemaVersion !== 3) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -137,20 +158,21 @@ export class SQLiteTaskStore {
     taskId: string,
     approvalProfile: "read-only" | "auto",
     queueOrder?: number,
+    model: CandyModelId = DEFAULT_CANDY_MODEL,
   ): TaskMetadata {
     assertTaskId(taskId);
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order) VALUES (?, 0, 'queued', ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id) VALUES (?, 0, 'queued', ?, ?, ?)",
       )
-      .run(taskId, approvalProfile, queueOrder ?? null);
+      .run(taskId, approvalProfile, queueOrder ?? null, model);
     return this.require(taskId);
   }
 
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -159,7 +181,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -168,7 +190,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -271,6 +293,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     revision: Number(row.revision),
     state: String(row.state) as PersistedTaskState,
     approvalProfile: String(row.approval_profile) as "read-only" | "auto",
+    model: String(row.model_id ?? DEFAULT_CANDY_MODEL) as CandyModelId,
   };
   return {
     ...metadata,

@@ -1,6 +1,9 @@
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_JSONL_BYTES = 1024 * 1024;
 
+export type CandyModelId = "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
+export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
+
 export type TaskState =
   | "idle"
   | "queued"
@@ -16,6 +19,7 @@ export interface TaskSnapshot {
   readonly revision: number;
   readonly state: TaskState;
   readonly approvalProfile?: "read-only" | "auto";
+  readonly model?: CandyModelId;
   readonly ownerId?: string;
 }
 
@@ -27,6 +31,7 @@ export interface CreateTaskCommand {
   readonly type: "task.create";
   readonly prompt: string;
   readonly approvalProfile: "read-only" | "auto";
+  readonly model?: CandyModelId;
 }
 
 export interface TaskActionCommand {
@@ -65,6 +70,7 @@ export interface TaskStateChangedEvent {
 export interface TaskCreatedEvent {
   readonly type: "task.created";
   readonly approvalProfile: "read-only" | "auto";
+  readonly model?: CandyModelId;
 }
 
 export interface AssistantDeltaEvent {
@@ -199,6 +205,14 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   ) {
     throw new ProtocolValidationError("invalid_message", "snapshot.state is unsupported.");
   }
+  if (
+    value.model !== undefined &&
+    value.model !== "deepseek-v4-flash" &&
+    value.model !== "deepseek-v4-pro" &&
+    value.model !== "MiniMax-M3"
+  ) {
+    throw new ProtocolValidationError("invalid_message", "model is unsupported.");
+  }
 }
 
 function validateCommand(value: unknown): asserts value is RuntimeCommand {
@@ -220,6 +234,14 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
         "invalid_message",
         "command.approvalProfile is unsupported.",
       );
+    }
+    if (
+      value.model !== undefined &&
+      value.model !== "deepseek-v4-flash" &&
+      value.model !== "deepseek-v4-pro" &&
+      value.model !== "MiniMax-M3"
+    ) {
+      throw new ProtocolValidationError("invalid_message", "command.model is unsupported.");
     }
     return;
   }
@@ -250,6 +272,14 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
   if (value.type === "task.created") {
     if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto")
       throw new ProtocolValidationError("invalid_message", "event.approvalProfile is invalid.");
+    if (
+      value.model !== undefined &&
+      value.model !== "deepseek-v4-flash" &&
+      value.model !== "deepseek-v4-pro" &&
+      value.model !== "MiniMax-M3"
+    ) {
+      throw new ProtocolValidationError("invalid_message", "event.model is unsupported.");
+    }
     return;
   }
   if (value.type === "assistant.delta") {

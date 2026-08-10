@@ -45,6 +45,13 @@ Blocked external resources do not stop independent implementation. They do preve
 - The injected deterministic TUI test and the 44-test local suite pass under Node `22.23.2`; no live credential was read or requested.
 - The full interactive TUI remains short of ACC-03/05/06 acceptance until packaged restart, cross-client ownership/handoff, and real-provider evidence run on both target platforms.
 
+## 2026-08-10 models, workspace transfer, and Desktop shell checkpoint
+
+- Deterministic model gate: schema 3 and protocol carry an explicit model id; DeepSeek Flash remains the default, DeepSeek Pro remains a distinct selection, and MiniMax M3 is explicit. The Pi M3 fixture proved domestic URL construction and typed image content; no live MiniMax entitlement or credential was used.
+- Workspace gate: argument-array Git execution, worktree association, dirty removal refusal, target base/clean/secret/path/symlink checks, tracked binary patching, untracked byte transfer, and index-preserving Apply Changes pass the Candy-owned fixture. Windows path/reparse-point and conflict matrix evidence remain open.
+- Desktop gate: secure nonce-CSP task shell, model/profile selection, transcript, task controls, and changed-file projection are source-complete for the deterministic protocol. Packaged child Node 22, signed artifacts, app restart, and macOS/Windows UI evidence remain blocked.
+- Long-running gate: distinct control stop reasons are now represented in the runner and persistence seam. Full task-engine validator integration, resume/crash fixtures, and native shell validator remain open.
+
 ## 2026-08-10 app-server, Pi AgentSession, and credential adapter checkpoint
 
 - Deterministic checkpoint passed: format, lint, typecheck, 42 tests, protocol stdio, TUI smoke, task smoke, app-server JSONL smoke, boundary checks, exact Pi graph check, lifecycle policy, and native Rust protocol compile.

@@ -325,6 +325,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function containsCredentialMaterial(value: string): boolean {
+  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
+    value,
+  );
+}
+
 export interface PiSessionHandle {
   readonly sessionFile: string;
   readonly sessionId: string;
@@ -427,8 +433,14 @@ export class PiProofEngine {
 export interface PiAgentEngineInput {
   readonly taskId: string;
   readonly prompt: string;
-  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
   readonly cwd: string;
+  readonly images?: readonly PiImageInput[];
+}
+
+export interface PiImageInput {
+  readonly mimeType: string;
+  readonly data: string;
 }
 
 export type PiAgentObservation =
@@ -451,7 +463,45 @@ export class PiAgentEngine {
   public constructor(
     private readonly sessionRoot: string,
     private readonly acquireSecret: SecretLeaseProvider,
+    private readonly provider: CandyProvider = "deepseek",
   ) {}
+
+  public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
+    const sessionDirectory = path.join(this.sessionRoot, taskId);
+    const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
+      (left, right) => right.modified.getTime() - left.modified.getTime(),
+    )[0];
+    if (!existing) return undefined;
+    const content = await readFile(existing.path, "utf8");
+    void piSdk.SessionManager.open(existing.path, sessionDirectory, cwd);
+    const entries = content
+      .split(/\r?\n/u)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as unknown;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(isRecord);
+    for (const entry of entries.reverse()) {
+      if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user")
+        continue;
+      const messageContent = entry.message.content;
+      const prompt =
+        typeof messageContent === "string"
+          ? messageContent
+          : Array.isArray(messageContent)
+            ? messageContent
+                .filter(isRecord)
+                .filter((part) => part.type === "text" && typeof part.text === "string")
+                .map((part) => String(part.text))
+                .join("")
+            : "";
+      if (prompt.length > 0) return prompt;
+    }
+    return undefined;
+  }
 
   public async *runTurn(
     input: PiAgentEngineInput,
@@ -460,9 +510,34 @@ export class PiAgentEngine {
     const lease = await this.acquireSecret();
     if (!lease)
       throw new ProviderContractError("DeepSeek credentials are unavailable.", "needs_credentials");
+    if (containsCredentialMaterial(input.prompt) || input.prompt.includes(lease.secret)) {
+      lease.release();
+      throw new ProviderContractError(
+        "Credential-shaped prompt content is forbidden.",
+        "provider_error",
+      );
+    }
+    if (this.provider === "deepseek" && input.images?.length) {
+      lease.release();
+      throw new ProviderContractError(
+        "DeepSeek does not accept image attachments; switch to MiniMax M3.",
+        "provider_error",
+      );
+    }
+    if (this.provider === "minimax-cn" && input.model !== "MiniMax-M3") {
+      lease.release();
+      throw new ProviderContractError("MiniMax requires the exact M3 model.", "provider_error");
+    }
+    if (this.provider === "deepseek" && input.model === "MiniMax-M3") {
+      lease.release();
+      throw new ProviderContractError(
+        "MiniMax M3 requires the MiniMax provider.",
+        "provider_error",
+      );
+    }
     const sessionDirectory = path.join(this.sessionRoot, input.taskId);
     await mkdir(sessionDirectory, { recursive: true });
-    const credentialStore = new PiCredentialStore(lease.secret);
+    const credentialStore = new PiCredentialStore(lease.secret, this.provider);
     let session: piSdk.AgentSession | undefined;
     try {
       const modelRuntime = await piSdk.ModelRuntime.create({
@@ -470,9 +545,18 @@ export class PiAgentEngine {
         modelsPath: null,
         refreshOnCreate: false,
       });
-      const model = modelRuntime.getModel("deepseek", input.model);
+      const model = modelRuntime.getModel(this.provider, input.model);
       if (!model)
-        throw new ProviderContractError("DeepSeek model is not available.", "provider_error");
+        throw new ProviderContractError("Requested model is not available.", "provider_error");
+      if (
+        this.provider === "minimax-cn" &&
+        model.baseUrl !== "https://api.minimaxi.com/anthropic"
+      ) {
+        throw new ProviderContractError(
+          "MiniMax domestic endpoint is not available.",
+          "provider_error",
+        );
+      }
       const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
         (left, right) => right.modified.getTime() - left.modified.getTime(),
       )[0];
@@ -493,10 +577,23 @@ export class PiAgentEngine {
       const abort = (): void => session?.agent.abort();
       signal.addEventListener("abort", abort, { once: true });
       let promptError: unknown;
-      const promptPromise = session.prompt(input.prompt).catch((error: unknown) => {
-        promptError = error;
-        events.fail(new Error("Pi agent turn failed."));
-      });
+      const promptPromise = session
+        .prompt(
+          input.prompt,
+          input.images?.length
+            ? {
+                images: input.images.map((image) => ({
+                  type: "image" as const,
+                  data: image.data,
+                  mimeType: image.mimeType,
+                })),
+              }
+            : undefined,
+        )
+        .catch((error: unknown) => {
+          promptError = error;
+          events.fail(new Error("Pi agent turn failed."));
+        });
       let started = false;
       try {
         for (;;) {
@@ -543,6 +640,13 @@ export class PiAgentEngine {
   }
 }
 
+/** Pi-backed MiniMax M3 path. It is explicit so image turns cannot silently use DeepSeek. */
+export class MiniMaxPiAgentEngine extends PiAgentEngine {
+  public constructor(sessionRoot: string, acquireSecret: SecretLeaseProvider) {
+    super(sessionRoot, acquireSecret, "minimax-cn");
+  }
+}
+
 type PiCredentialStoreContract = NonNullable<
   NonNullable<Parameters<typeof piSdk.ModelRuntime.create>[0]>["credentials"]
 >;
@@ -553,29 +657,33 @@ type PiCredentialModifier = Parameters<PiCredentialStoreContract["modify"]>[1];
 class PiCredentialStore implements PiCredentialStoreContract {
   #secret: string | undefined;
 
-  public constructor(secret: string) {
+  public constructor(
+    secret: string,
+    private readonly provider: CandyProvider,
+  ) {
     this.#secret = secret;
   }
 
   public async read(providerId: string): Promise<PiCredential> {
-    return providerId === "deepseek" && this.#secret !== undefined
+    return providerId === this.provider && this.#secret !== undefined
       ? { type: "api_key", key: this.#secret }
       : undefined;
   }
 
   public async list(): Promise<readonly PiCredentialInfo[]> {
-    return this.#secret === undefined ? [] : [{ providerId: "deepseek", type: "api_key" }];
+    return this.#secret === undefined ? [] : [{ providerId: this.provider, type: "api_key" }];
   }
 
   public async modify(providerId: string, fn: PiCredentialModifier): Promise<PiCredential> {
     const current = await this.read(providerId);
     const next = await fn(current);
-    if (providerId === "deepseek") this.#secret = next?.type === "api_key" ? next.key : undefined;
+    if (providerId === this.provider)
+      this.#secret = next?.type === "api_key" ? next.key : undefined;
     return next;
   }
 
   public async delete(providerId: string): Promise<void> {
-    if (providerId === "deepseek") this.#secret = undefined;
+    if (providerId === this.provider) this.#secret = undefined;
   }
 
   public clear(): void {

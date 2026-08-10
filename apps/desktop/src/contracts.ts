@@ -1,4 +1,4 @@
-import type { CredentialName, CredentialPresence } from "@candy/platform";
+import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
 
 export interface RendererTaskProjection {
   readonly taskId: string;
@@ -13,6 +13,7 @@ export interface RendererTaskProjection {
     | "cancelled";
   readonly revision: number;
   readonly approvalProfile: "read-only" | "auto";
+  readonly model: CandyModelId;
   readonly changedFiles: readonly string[];
   readonly transcript: readonly {
     readonly role: "user" | "assistant" | "tool";
@@ -30,7 +31,11 @@ export interface CredentialBridge {
 export interface DesktopPreloadApi {
   readonly credentials: CredentialBridge;
   readonly tasks: {
-    create(prompt: string, approvalProfile: "read-only" | "auto"): Promise<RendererTaskProjection>;
+    create(
+      prompt: string,
+      approvalProfile: "read-only" | "auto",
+      model?: CandyModelId,
+    ): Promise<RendererTaskProjection>;
     snapshot(taskId: string): Promise<RendererTaskProjection>;
     send(command: {
       readonly taskId: string;

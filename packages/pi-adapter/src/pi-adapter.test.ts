@@ -7,6 +7,7 @@ import {
   CandyPiSessionStore,
   DeepSeekClient,
   MiniMaxClient,
+  MiniMaxPiAgentEngine,
   MODEL_CATALOG,
   PI_COMPATIBILITY_VERSION,
   listPiPublicExports,
@@ -131,6 +132,41 @@ test("Pi agent engine uses the public Pi loop, read-only tools, and Candy-owned 
     assert.ok(sessionFile);
     const files = await readFile(path.join(root, "task-1", sessionFile), "utf8");
     assert.doesNotMatch(files, /fixture-secret/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MiniMax Pi engine sends image turns through the domestic M3 provider", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-minimax-"));
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return new Response(
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"fixture","type":"message","role":"assistant","model":"MiniMax-M3","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"vision"}}\n\nevent: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  try {
+    const observations = [];
+    for await (const observation of new MiniMaxPiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-vision",
+        prompt: "describe the image",
+        model: "MiniMax-M3",
+        cwd: process.cwd(),
+        images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
+      },
+      new AbortController().signal,
+    )) {
+      observations.push(observation);
+    }
+    assert.equal(requestUrl, "https://api.minimaxi.com/anthropic/v1/messages");
+    assert.ok(observations.some((observation) => observation.type === "assistant.delta"));
   } finally {
     globalThis.fetch = originalFetch;
   }

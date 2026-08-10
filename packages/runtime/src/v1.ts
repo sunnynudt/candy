@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { cleanChildEnvironment } from "@candy/platform";
 
 export type ActionKind =
   | "workspace.read"
@@ -290,7 +292,28 @@ export class FixedValidator implements Validator {
 }
 
 export type LongRunningStopReason =
-  "validator_succeeded" | "budget_exhausted" | "stall_detected" | "cancelled" | "error";
+  | "validator_succeeded"
+  | "budget_exhausted"
+  | "stall_detected"
+  | "cancelled"
+  | "approval_required"
+  | "ownership_lost"
+  | "provider_failure"
+  | "user_stop"
+  | "crash_interrupted"
+  | "error";
+
+export class LongRunningControlError extends Error {
+  public constructor(
+    public readonly stopReason: Exclude<
+      LongRunningStopReason,
+      "validator_succeeded" | "budget_exhausted" | "stall_detected" | "error"
+    >,
+  ) {
+    super(`Long-running task stopped: ${stopReason}.`);
+    this.name = "LongRunningControlError";
+  }
+}
 
 export interface LongRunningResult {
   readonly completed: boolean;
@@ -309,6 +332,11 @@ export interface LongRunningProgress {
     | "budget_exhausted"
     | "stall_detected"
     | "cancelled"
+    | "approval_required"
+    | "ownership_lost"
+    | "provider_failure"
+    | "user_stop"
+    | "crash_interrupted"
     | "error";
   readonly lastFingerprintHash?: string;
 }
@@ -337,13 +365,14 @@ export class LongRunningTaskRunner {
     let unchanged = 0;
     for (let round = 1; round <= this.maxRounds; round += 1) {
       if (signal.aborted) {
+        const stopReason = stopReasonFromSignal(signal);
         persistProgress(progress, {
           rounds: round - 1,
           evidenceCount: evidence.length,
           completed: false,
-          stopReason: "cancelled",
+          stopReason,
         });
-        return { completed: false, stopReason: "cancelled", rounds: round - 1, evidence };
+        return { completed: false, stopReason, rounds: round - 1, evidence };
       }
       try {
         await turn(round, signal);
@@ -379,8 +408,10 @@ export class LongRunningTaskRunner {
           stopReason: "running",
           lastFingerprintHash: fingerprintHash,
         });
-      } catch {
-        const stopReason = signal.aborted ? "cancelled" : "error";
+      } catch (error) {
+        const stopReason = signal.aborted
+          ? stopReasonFromSignal(signal)
+          : stopReasonFromError(error);
         persistProgress(progress, {
           rounds: round,
           evidenceCount: evidence.length,
@@ -398,6 +429,19 @@ export class LongRunningTaskRunner {
     });
     return { completed: false, stopReason: "budget_exhausted", rounds: this.maxRounds, evidence };
   }
+}
+
+function stopReasonFromSignal(
+  signal: AbortSignal,
+): Exclude<
+  LongRunningStopReason,
+  "validator_succeeded" | "budget_exhausted" | "stall_detected" | "error"
+> {
+  return signal.reason instanceof LongRunningControlError ? signal.reason.stopReason : "cancelled";
+}
+
+function stopReasonFromError(error: unknown): LongRunningStopReason {
+  return error instanceof LongRunningControlError ? error.stopReason : "error";
 }
 
 function persistProgress(
@@ -432,6 +476,198 @@ export class ApplyChangesGuard {
     if (input.activeSecrets.some((secret) => secret.length > 0 && input.patchText.includes(secret)))
       return "blocked";
     return "allow";
+  }
+}
+
+export interface GitChangeManifest {
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+}
+
+export interface GitCommandRunner {
+  run(args: readonly string[], cwd: string, input?: string): Promise<string>;
+}
+
+class NodeGitCommandRunner implements GitCommandRunner {
+  public run(args: readonly string[], cwd: string, input?: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("git", [...args], {
+        cwd,
+        env: cleanChildEnvironment(process.env),
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => (stdout += chunk));
+      child.stderr.on("data", (chunk: string) => (stderr += chunk));
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new Error(`git ${args[0] ?? "command"} failed: ${stderr.trim()}`));
+      });
+      child.stdin.end(input);
+    });
+  }
+}
+
+export class GitWorktreeManager {
+  readonly #runner: GitCommandRunner;
+
+  public constructor(
+    private readonly worktreeRoot: string,
+    runner: GitCommandRunner = new NodeGitCommandRunner(),
+  ) {
+    this.#runner = runner;
+  }
+
+  public async create(plan: GitWorktreePlan): Promise<void> {
+    this.assertWorktreePath(plan.worktreePath);
+    await mkdir(path.dirname(path.resolve(plan.worktreePath)), { recursive: true });
+    await this.#runner.run(plan.createArgs, plan.repository);
+    await this.inspect(plan);
+  }
+
+  public async inspect(plan: GitWorktreePlan): Promise<string> {
+    const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
+    if (!listing.includes(plan.worktreePath) || !listing.includes(`candy:${plan.taskId}`))
+      throw new Error("Git worktree association could not be verified.");
+    return listing;
+  }
+
+  public async unlock(plan: GitWorktreePlan): Promise<void> {
+    await this.#runner.run(plan.unlockArgs, plan.repository);
+  }
+
+  public async removeClean(plan: GitWorktreePlan): Promise<void> {
+    const status = await this.#runner.run(["status", "--porcelain=v1", "-z"], plan.worktreePath);
+    if (status.length > 0) throw new Error("Dirty worktrees cannot be removed automatically.");
+    await this.#runner.run(plan.removeArgs, plan.repository);
+  }
+
+  public async changes(
+    plan: GitWorktreePlan,
+  ): Promise<GitChangeManifest & { readonly patchText: string }> {
+    const tracked = splitNull(
+      await this.#runner.run(
+        ["diff", "--name-only", "--no-ext-diff", "-z", plan.baseCommit, "--"],
+        plan.worktreePath,
+      ),
+    );
+    const untracked = splitNull(
+      await this.#runner.run(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        plan.worktreePath,
+      ),
+    );
+    const patchText = await this.#runner.run(
+      ["diff", "--binary", "--no-ext-diff", "--no-color", plan.baseCommit, "--"],
+      plan.worktreePath,
+    );
+    return { tracked, untracked, patchText };
+  }
+
+  private assertWorktreePath(worktreePath: string): void {
+    const root = path.resolve(this.worktreeRoot);
+    const candidate = path.resolve(worktreePath);
+    const relative = path.relative(root, candidate);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      throw new Error("Task worktree is outside Candy's worktree root.");
+  }
+}
+
+export class ApplyChangesBlockedError extends Error {
+  public constructor(message = "Apply Changes was blocked by a preflight check.") {
+    super(message);
+    this.name = "ApplyChangesBlockedError";
+  }
+}
+
+export class ApplyChangesService {
+  readonly #guard: ApplyChangesGuard;
+  readonly #runner: GitCommandRunner;
+
+  public constructor(
+    private readonly targetRoot: string,
+    runner: GitCommandRunner = new NodeGitCommandRunner(),
+  ) {
+    this.#guard = new ApplyChangesGuard(targetRoot);
+    this.#runner = runner;
+  }
+
+  public async apply(sourceRoot: string, input: ApplyChangesInput): Promise<"applied"> {
+    const targetRoot = path.resolve(this.targetRoot);
+    let actualBase: string;
+    let targetStatus: string;
+    try {
+      actualBase = (await this.#runner.run(["rev-parse", "HEAD"], targetRoot)).trim();
+      targetStatus = await this.#runner.run(["status", "--porcelain=v1", "-z"], targetRoot);
+    } catch {
+      throw new ApplyChangesBlockedError("Apply Changes requires a valid Git target.");
+    }
+    const effective = {
+      ...input,
+      targetIsGit: true,
+      targetClean: targetStatus.length === 0,
+      actualBase,
+    };
+    if (this.#guard.check(effective) === "blocked") throw new ApplyChangesBlockedError();
+
+    const paths = uniqueRelativePaths(input.paths);
+    const source = path.resolve(sourceRoot);
+    for (const requested of paths) {
+      await assertSafePath(source, requested, true);
+      await assertSafePath(targetRoot, requested, false);
+    }
+    const untrackedPaths: string[] = [];
+    for (const requested of paths) {
+      const isUntracked = Boolean(
+        (
+          await this.#runner.run(
+            ["ls-files", "--others", "--exclude-standard", "--", requested],
+            source,
+          )
+        ).trim(),
+      );
+      if (!isUntracked) continue;
+      untrackedPaths.push(requested);
+      try {
+        await lstat(path.resolve(targetRoot, requested));
+        throw new ApplyChangesBlockedError(
+          "Target already contains an untracked Apply Changes path.",
+        );
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      }
+    }
+    if (input.patchText.length > 0) {
+      try {
+        await this.#runner.run(
+          ["apply", "--check", "--binary", "--whitespace=nowarn", "--"],
+          targetRoot,
+          input.patchText,
+        );
+        await this.#runner.run(
+          ["apply", "--binary", "--whitespace=nowarn", "--"],
+          targetRoot,
+          input.patchText,
+        );
+      } catch (error) {
+        throw new ApplyChangesBlockedError(
+          `Git refused the reviewed patch: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+    }
+    for (const requested of untrackedPaths) {
+      const sourcePath = path.resolve(source, requested);
+      const targetPath = path.resolve(targetRoot, requested);
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      const content = await readFile(sourcePath);
+      await writeFile(targetPath, content, { flag: "wx" });
+    }
+    return "applied";
   }
 }
 
@@ -505,4 +741,51 @@ export class WorkspaceHandoff {
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
+}
+
+function splitNull(value: string): string[] {
+  return value.split("\0").filter((entry) => entry.length > 0);
+}
+
+function uniqueRelativePaths(paths: readonly string[]): string[] {
+  const unique = [...new Set(paths)];
+  for (const requested of unique) {
+    if (requested.length === 0 || path.isAbsolute(requested))
+      throw new ApplyChangesBlockedError("Apply Changes contains an invalid path.");
+    const normalized = path.normalize(requested);
+    if (normalized === ".." || normalized.startsWith(`..${path.sep}`))
+      throw new ApplyChangesBlockedError("Apply Changes contains an escaping path.");
+  }
+  return unique;
+}
+
+async function assertSafePath(
+  root: string,
+  requested: string,
+  requireLeaf: boolean,
+): Promise<void> {
+  const absolute = path.resolve(root, requested);
+  const relative = path.relative(root, absolute);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    throw new ApplyChangesBlockedError("Apply Changes path escaped its source workspace.");
+  const segments = relative.split(path.sep);
+  let current = root;
+  for (const [index, segment] of segments.entries()) {
+    current = path.join(current, segment);
+    try {
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink())
+        throw new ApplyChangesBlockedError("Symlinked Apply Changes paths are blocked.");
+    } catch (error) {
+      if (
+        isNodeError(error) &&
+        error.code === "ENOENT" &&
+        (!requireLeaf || index === segments.length - 1)
+      )
+        return;
+      if (isNodeError(error) && error.code === "ENOENT")
+        throw new ApplyChangesBlockedError("Apply Changes source path is missing.");
+      throw error;
+    }
+  }
 }

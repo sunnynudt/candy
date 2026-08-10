@@ -9,8 +9,8 @@ const api: DesktopPreloadApi = {
     has: async () => "absent",
   },
   tasks: {
-    create: (prompt, approvalProfile) =>
-      ipcRenderer.invoke("task.create", prompt, approvalProfile) as Promise<
+    create: (prompt, approvalProfile, model) =>
+      ipcRenderer.invoke("task.create", prompt, approvalProfile, model) as Promise<
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["create"]>>
       >,
     snapshot: (taskId) =>

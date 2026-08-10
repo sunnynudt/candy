@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { SQLiteTaskStore } from "@candy/platform";
 import {
+  ApplyChangesService,
   ApplyChangesGuard,
   AttachmentStore,
   ApprovalPolicy,
   BrowserControlError,
   BrowserRevisionError,
   FixedValidator,
+  LongRunningControlError,
+  GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
   ProviderConcurrencyGate,
@@ -191,6 +194,24 @@ test("long-running validator progress persists only bounded evidence metadata", 
   store.close();
 });
 
+test("long-running control stops preserve distinct approval, ownership, provider, and user reasons", async () => {
+  for (const stopReason of [
+    "approval_required",
+    "ownership_lost",
+    "provider_failure",
+    "user_stop",
+  ] as const) {
+    const result = await new LongRunningTaskRunner(3).run(
+      async () => {
+        throw new LongRunningControlError(stopReason);
+      },
+      new FixedValidator({ ok: false, fingerprint: "unused", evidence: "unused", durationMs: 0 }),
+      new AbortController().signal,
+    );
+    assert.equal(result.stopReason, stopReason);
+  }
+});
+
 test("Apply Changes guard fails closed for dirty, changed-base, escaped, and secret-containing patches", () => {
   const guard = new ApplyChangesGuard("C:/workspace");
   const base = {
@@ -266,6 +287,64 @@ test("Git worktree fixture creates, inspects, and cleans a detached task worktre
     git(plan.unlockArgs, repository);
     git(plan.removeArgs, repository);
     assert.equal(existsSync(worktree), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Git changes are reviewed and applied without changing the target index", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-apply-"));
+  const repository = path.join(root, "repo");
+  const worktreeRoot = path.join(root, "worktrees");
+  const worktree = path.join(worktreeRoot, "task-apply");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    git(["init", "-q"], repository);
+    writeFileSync(path.join(repository, "README.md"), "base\n");
+    writeFileSync(path.join(repository, "binary.bin"), Buffer.from([0, 1, 2]));
+    git(["add", "."], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      repository,
+    );
+    const baseCommit = git(["rev-parse", "HEAD"], repository).trim();
+    const plan = planGitWorktree(repository, worktree, "task-apply", baseCommit);
+    const manager = new GitWorktreeManager(worktreeRoot);
+    await manager.create(plan);
+    writeFileSync(path.join(worktree, "README.md"), "changed\n");
+    writeFileSync(path.join(worktree, "binary.bin"), Buffer.from([0, 1, 3]));
+    writeFileSync(path.join(worktree, "new.txt"), "untracked\n");
+    const changes = await manager.changes(plan);
+    assert.deepEqual(changes.tracked, ["README.md", "binary.bin"]);
+    assert.deepEqual(changes.untracked, ["new.txt"]);
+
+    const service = new ApplyChangesService(repository);
+    assert.equal(
+      await service.apply(worktree, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: baseCommit,
+        actualBase: baseCommit,
+        paths: [...changes.tracked, ...changes.untracked],
+        patchText: changes.patchText,
+        activeSecrets: [],
+      }),
+      "applied",
+    );
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed\n");
+    assert.deepEqual([...(await readFile(path.join(repository, "binary.bin")))], [0, 1, 3]);
+    assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked\n");
+    assert.equal(git(["diff", "--cached", "--quiet"], repository), "");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

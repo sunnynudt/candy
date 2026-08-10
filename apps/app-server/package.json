@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@candy/pi-adapter": "0.0.0",
     "@candy/platform": "0.0.0",
     "@candy/protocol": "0.0.0",
     "@candy/runtime": "0.0.0"

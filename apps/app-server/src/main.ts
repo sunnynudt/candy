@@ -1,5 +1,17 @@
 import { createInterface } from "node:readline";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  resolveAppPaths,
+  resolveCredential,
+  resolveDefaultAppDataRoot,
+  SQLiteTaskStore,
+  SystemClock,
+  type CandyModelId,
+  DEFAULT_CANDY_MODEL,
+  type TaskMetadata,
+} from "@candy/platform";
+import { PiAgentEngine, type PiAgentEngineInput, type PiAgentObservation } from "@candy/pi-adapter";
 import {
   CommandLedger,
   decodeJsonLine,
@@ -11,8 +23,41 @@ import {
   type RuntimeEvent,
   type TaskSnapshot,
 } from "@candy/protocol";
-import { SystemClock, SQLiteTaskStore, type TaskMetadata } from "@candy/platform";
-import { DeterministicAgentEngine, type AgentEngine, type AgentObservation } from "@candy/runtime";
+import {
+  DeterministicAgentEngine,
+  type AgentEngine,
+  type AgentObservation,
+  type AgentTurnInput,
+  type RecoverableAgentEngine,
+} from "@candy/runtime";
+
+class PiAppServerEngine implements RecoverableAgentEngine {
+  public constructor(
+    private readonly deepseek: PiAgentEngine,
+    private readonly minimax: PiAgentEngine,
+  ) {}
+
+  public async *runTurn(
+    input: AgentTurnInput,
+    signal: AbortSignal,
+  ): AsyncIterable<AgentObservation> {
+    const model: CandyModelId = input.model ?? DEFAULT_CANDY_MODEL;
+    const piInput: PiAgentEngineInput = {
+      taskId: input.taskId,
+      prompt: input.prompt,
+      model,
+      cwd: process.cwd(),
+    };
+    const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
+    for await (const observation of engine.runTurn(piInput, signal)) {
+      yield mapPiObservation(observation);
+    }
+  }
+
+  public recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
+    return this.deepseek.recoverPrompt(taskId, cwd);
+  }
+}
 
 export interface AppServerState {
   readonly protocolVersion: 1;
@@ -64,7 +109,7 @@ interface ActiveTask {
  */
 export class AppServerController {
   readonly #store: SQLiteTaskStore;
-  readonly #engine: AgentEngine;
+  readonly #engine: RecoverableAgentEngine;
   readonly #ownerId: string;
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
@@ -102,12 +147,14 @@ export class AppServerController {
         message.taskId,
         command.approvalProfile,
         this.nextQueueOrder(),
+        command.model ?? DEFAULT_CANDY_MODEL,
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
         this.event(message.taskId, metadata.revision, {
           type: "task.created",
           approvalProfile: command.approvalProfile,
+          model: metadata.model,
         }),
         this.snapshot(metadata),
       ];
@@ -121,6 +168,7 @@ export class AppServerController {
             revision: message.expectedRevision,
             state: "queued",
             approvalProfile: "read-only",
+            model: DEFAULT_CANDY_MODEL,
           },
         ),
       ];
@@ -185,10 +233,13 @@ export class AppServerController {
 
   private async runTask(taskId: string, active: ActiveTask, emit: Emit): Promise<void> {
     try {
-      const prompt = this.#prompts.get(taskId);
+      const prompt =
+        this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, process.cwd()));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
+      const current = this.#store.get(taskId);
+      if (!current) throw new Error("Task metadata is unavailable.");
       for await (const observation of this.#engine.runTurn(
-        { taskId, prompt },
+        { taskId, prompt, model: current.model },
         active.abort.signal,
       )) {
         const metadata = this.#store.get(taskId);
@@ -239,6 +290,7 @@ export class AppServerController {
         ...(metadata.approvalProfile === undefined
           ? {}
           : { approvalProfile: metadata.approvalProfile }),
+        ...(metadata.model === undefined ? {} : { model: metadata.model }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
       },
     });
@@ -269,13 +321,32 @@ function observationToEvent(
 ): RuntimeEvent | undefined {
   if (observation.type === "assistant.delta")
     return { type: "assistant.delta", text: observation.text };
+  if (observation.type === "tool.started") return { type: "tool.started", tool: observation.tool };
   if (observation.type === "tool.completed")
-    return { type: "tool.completed", tool: observation.tool, ok: true };
+    return { type: "tool.completed", tool: observation.tool, ok: observation.ok };
   return undefined;
 }
 
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
-  const controller = new AppServerController();
+  const paths = resolveAppPaths(resolveDefaultAppDataRoot());
+  const controller = new AppServerController({
+    databasePath: path.join(paths.state, "tasks.sqlite"),
+    engine: new PiAppServerEngine(
+      new PiAgentEngine(paths.sessions, async () => {
+        const lease = resolveCredential("deepseek");
+        return lease ? { secret: lease.value, release: lease.release } : undefined;
+      }),
+      new PiAgentEngine(
+        paths.sessions,
+        async () => {
+          const lease = resolveCredential("minimax-cn");
+          return lease ? { secret: lease.value, release: lease.release } : undefined;
+        },
+        "minimax-cn",
+      ),
+    ),
+    ownerId: `app-server:${process.pid}`,
+  });
   const lines = createInterface({ input: stdin, crlfDelay: Infinity });
   const write = (message: ProtocolMessage): void => {
     stdout.write(encodeJsonLine(message));
@@ -294,6 +365,23 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       controller.close();
     }
   })();
+}
+
+function mapPiObservation(observation: PiAgentObservation): AgentObservation {
+  if (observation.type === "turn.started")
+    return { type: "turn.started", taskId: observation.taskId, at: Date.now() };
+  if (observation.type === "assistant.delta")
+    return { type: "assistant.delta", text: observation.text };
+  if (observation.type === "tool.started")
+    return { type: "tool.started", taskId: observation.taskId, tool: observation.tool };
+  if (observation.type === "tool.completed")
+    return {
+      type: "tool.completed",
+      taskId: observation.taskId,
+      tool: observation.tool,
+      ok: observation.ok,
+    };
+  return { type: "turn.completed", taskId: observation.taskId, at: Date.now() };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

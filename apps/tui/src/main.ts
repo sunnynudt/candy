@@ -145,6 +145,10 @@ export class InteractiveTui {
   }
 
   private create(prompt: string): void {
+    if (containsCredentialMaterial(prompt)) {
+      this.write("prompt rejected: credential-shaped content is forbidden\n");
+      return;
+    }
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const metadata = this.#store.create(taskId, "read-only", this.#store.queued().length + 1);
     const controller = new TaskController(taskId, "read-only", this.#store);
@@ -234,6 +238,12 @@ function safeError(error: unknown): string {
   if (error instanceof Error && /credentials|cancelled|unavailable/iu.test(error.message))
     return error.message;
   return "runtime error";
+}
+
+function containsCredentialMaterial(value: string): boolean {
+  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
+    value,
+  );
 }
 
 function isDirectExecution(): boolean {
