@@ -52,6 +52,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - `npm run package:desktop:windows` copied the user-verified Electron `43.2.0` Windows x64 runtime into the ignored `out/windows/Candy` bundle, renamed the executable to `Candy.exe`, and embedded Node `v22.23.2`, the built app-server, the Windows native runner, and the runtime dependencies. The generated metadata records `signing: unsigned`.
 - `npm run smoke:desktop:packaged:windows` passed the packaged app-server JSONL snapshot/quit smoke. This is local unsigned development evidence only; it does not prove Windows signing, installation, recovery, Browser, native containment, or release acceptance.
 
+## 2026-08-11 Windows packaged Credential Manager checkpoint
+
+- Added a packaged Windows Node smoke that executes Candy's own `KeyringCredentialStore` through the embedded `resources/node/node.exe` and bundled keyring addon. The synthetic MiniMax account passes `absent -> present -> present -> absent`; the existing DeepSeek account is presence-only and unchanged.
+- This is packaged adapter/lifecycle evidence without provider calls or credential output. Full ACC-02 still requires a user-authorized mutation window for the existing account and the signed Desktop path.
+
 ## 2026-08-11 Windows active-task recovery checkpoint
 
 - Extended the real Windows app-server child-process smoke to create a queued task and an active task, stop the owner process, restart it, and verify queued metadata survives while the active task becomes `interrupted` with revision `+1` and bounded `crash_interrupted` progress.
@@ -65,7 +70,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 ## 2026-08-11 Windows deterministic acceptance runner checkpoint
 
-- `npm run acceptance:windows` ran on clean source revision `0cd1dfce442280830aac889a495c36fb808b2401` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 12 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, queued/active process-restart recovery smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1219 ms` and Desktop `1565 ms`.
+- `npm run acceptance:windows` ran on clean source revision `37d60ed9f22d1426449faa6cb75c2b69655913de` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 13 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, queued/active process-restart recovery smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser fixture smoke, packaged Credential Manager fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1239 ms` and Desktop `1419 ms`.
 - The sanitized reports are `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md`; both remain ignored. They explicitly list signed installation, Browser, complete G2 OS containment/security review, active-owner/tool interruption recovery, live provider/entitlement, remaining ACC-01..12, and product-owner acceptance as open; this is not a release or complete acceptance report.
 
 ## 2026-08-10 Windows 11 live DeepSeek checkpoint
