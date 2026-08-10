@@ -953,6 +953,44 @@ async function runBrowserSmoke(): Promise<void> {
   const fixtureUrl = process.env.CANDY_BROWSER_FIXTURE_URL;
   if (!fixtureUrl || !browserView) throw new Error("Browser smoke fixture is unavailable.");
   const fixture = parseCandyBrowserUrl(fixtureUrl);
+  const expectBrowserRejection = async (
+    operation: () => unknown | Promise<unknown>,
+    message: string,
+  ): Promise<void> => {
+    let rejected = false;
+    try {
+      await operation();
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(message);
+  };
+  await expectBrowserRejection(
+    () => openBrowserUrl("http://example.com/"),
+    "Browser accepted non-loopback HTTP.",
+  );
+  await expectBrowserRejection(
+    () => openBrowserUrl("https://user:password@example.com/"),
+    "Browser accepted URL credentials.",
+  );
+  await expectBrowserRejection(
+    () => openBrowserUrl("https://not-allowed.example/"),
+    "Browser opened a site without explicit authorization.",
+  );
+  await expectBrowserRejection(
+    () => openBrowserUrl("javascript:document.body.innerHTML='escaped'"),
+    "Browser accepted a script URL.",
+  );
+  for (const action of [
+    null,
+    { type: "click", target: "", expectedRevision: 0 },
+    { type: "type", target: "#x", text: "contains\0nul", expectedRevision: 0 },
+    { type: "navigate", url: 123, expectedRevision: 0 },
+  ])
+    await expectBrowserRejection(
+      () => assertBrowserAction(action),
+      "Browser accepted a malformed structured action.",
+    );
   browserHosts.add(fixture.host.toLowerCase());
   const opened = await openBrowserUrl(fixtureUrl);
   if (!opened.text.includes("Candy browser fixture"))
@@ -992,6 +1030,35 @@ async function runBrowserSmoke(): Promise<void> {
   });
   if (!submitted.text.includes("submitted"))
     throw new Error("Browser submit action was not observed.");
+  await expectBrowserRejection(
+    () =>
+      actInBrowser({
+        type: "click",
+        target: "#missing-fixture-target",
+        expectedRevision: submitted.revision,
+      }),
+    "Browser accepted a missing selector.",
+  );
+  await expectBrowserRejection(
+    () =>
+      actInBrowser({
+        type: "type",
+        target: "#fixture-form",
+        text: "wrong-target",
+        expectedRevision: submitted.revision,
+      }),
+    "Browser typed into a non-field target.",
+  );
+  await expectBrowserRejection(
+    () =>
+      actInBrowser({
+        type: "submit",
+        target: "#fixture-status",
+        confirmed: true,
+        expectedRevision: submitted.revision,
+      }),
+    "Browser submitted a non-submit target.",
+  );
   let staleRejected = false;
   try {
     await actInBrowser({
@@ -1045,7 +1112,7 @@ async function runBrowserSmoke(): Promise<void> {
       `Browser security or explicit Take Control smoke failed: navigation=${browserNavigationDenied}, popup=${browserPopupDenied}, permission=${browserPermissionDenied}, download=${browserDownloadPrevented}, user=${user.control}, agent=${agent.control}`,
     );
   console.log(
-    "packaged Windows Browser Workspace smoke ok: allowlist, navigation, popup, permission, download, and Take Control",
+    "packaged Windows Browser Workspace smoke ok: allowlist, typed actions, adversarial rejection, navigation, popup, permission, download, and Take Control",
   );
   app.quit();
 }
