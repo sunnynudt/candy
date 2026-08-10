@@ -17,9 +17,10 @@ const appServer = path.join(root, "apps", "app-server", "dist", "main.js");
 const fixtureRoot = await mkdtemp(path.join(tmpdir(), "candy-recovery-windows-"));
 const workspace = path.join(fixtureRoot, "workspace");
 await mkdir(workspace);
-const taskId = "windows-recovery-fixture";
+const queuedTaskId = "windows-recovery-fixture";
+const activeTaskId = "windows-active-recovery";
 
-function command(commandId, expectedRevision, value) {
+function command(taskId, commandId, expectedRevision, value) {
   return {
     v: 1,
     kind: "command",
@@ -86,7 +87,7 @@ try {
   const first = await startServer();
   const created = await sendAndReadSnapshot(
     first,
-    command("recovery-create", 0, {
+    command(queuedTaskId, "recovery-create", 0, {
       type: "task.create",
       prompt: "Windows recovery fixture",
       approvalProfile: "read-only",
@@ -95,22 +96,51 @@ try {
       attachmentIds: [],
     }),
   );
-  assert.equal(created.taskId, taskId);
+  assert.equal(created.taskId, queuedTaskId);
   assert.equal(created.state, "queued");
   assert.equal(created.workspacePath, workspace);
+  const activeCreated = await sendAndReadSnapshot(
+    first,
+    command(activeTaskId, "active-recovery-create", 0, {
+      type: "task.create",
+      prompt: "Windows active recovery fixture",
+      approvalProfile: "read-only",
+      workspacePath: workspace,
+      model: "deepseek-v4-flash",
+      attachmentIds: [],
+    }),
+  );
+  const activeRunning = await sendAndReadSnapshot(
+    first,
+    command(activeTaskId, "active-recovery-run", activeCreated.revision, { type: "task.run" }),
+  );
+  assert.equal(activeRunning.taskId, activeTaskId);
+  assert.equal(activeRunning.state, "running");
   await stopServer(first);
 
   const second = await startServer();
   const restored = await sendAndReadSnapshot(
     second,
-    command("recovery-snapshot", created.revision, { type: "snapshot" }),
+    command(queuedTaskId, "recovery-snapshot", created.revision, { type: "snapshot" }),
   );
-  assert.equal(restored.taskId, taskId);
+  assert.equal(restored.taskId, queuedTaskId);
   assert.equal(restored.state, "queued");
   assert.equal(restored.workspacePath, workspace);
   assert.equal(restored.revision, created.revision);
+  const activeRestored = await sendAndReadSnapshot(
+    second,
+    command(activeTaskId, "active-recovery-snapshot", activeRunning.revision + 1, {
+      type: "snapshot",
+    }),
+  );
+  assert.equal(activeRestored.taskId, activeTaskId);
+  assert.equal(activeRestored.state, "interrupted");
+  assert.equal(activeRestored.revision, activeRunning.revision + 1);
+  assert.equal(activeRestored.progress?.stopReason, "crash_interrupted");
   await stopServer(second);
-  console.log("Windows app-server recovery smoke passed: task metadata survived process restart");
+  console.log(
+    "Windows app-server recovery smoke passed: queued metadata and active owner crash interruption survived process restart",
+  );
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
