@@ -12,6 +12,7 @@ export interface RendererTaskProjection {
     | "completed"
     | "cancelled";
   readonly revision: number;
+  readonly approvalProfile: "read-only" | "auto";
   readonly changedFiles: readonly string[];
   readonly transcript: readonly {
     readonly role: "user" | "assistant" | "tool";
@@ -29,12 +30,14 @@ export interface CredentialBridge {
 export interface DesktopPreloadApi {
   readonly credentials: CredentialBridge;
   readonly tasks: {
+    create(prompt: string, approvalProfile: "read-only" | "auto"): Promise<RendererTaskProjection>;
     snapshot(taskId: string): Promise<RendererTaskProjection>;
     send(command: {
       readonly taskId: string;
       readonly expectedRevision: number;
       readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
     }): Promise<void>;
+    onUpdate(listener: (projection: RendererTaskProjection) => void): () => void;
   };
 }
 
@@ -58,4 +61,12 @@ export function createCredentialBridge(store: CredentialBridge): CredentialBridg
     delete: (name) => store.delete(name),
     has: (name) => store.has(name),
   };
+}
+
+export function assertCredentialName(name: string): asserts name is "deepseek" | "minimax-cn" {
+  if (name !== "deepseek" && name !== "minimax-cn") throw new Error("Unsupported credential name.");
+}
+
+export function assertTaskId(taskId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(taskId)) throw new Error("Invalid task id.");
 }

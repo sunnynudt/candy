@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
+import { Entry } from "@napi-rs/keyring";
 
 export interface Clock {
   now(): number;
@@ -262,6 +263,24 @@ function assertTaskId(taskId: string): void {
 export type CredentialName = "deepseek" | "minimax-cn";
 export type CredentialPresence = "present" | "absent";
 
+export const CANDY_CREDENTIAL_ENV_KEYS = {
+  deepseek: "CANDY_DEEPSEEK_API_KEY",
+  "minimax-cn": "CANDY_MINIMAX_TOKEN_PLAN_KEY",
+} as const satisfies Record<CredentialName, string>;
+
+const KEYRING_SERVICE = "candy-v1";
+const KEYRING_ACCOUNTS = {
+  deepseek: "deepseek",
+  "minimax-cn": "minimax-token-plan",
+} as const satisfies Record<CredentialName, string>;
+
+export class CredentialStoreUnavailableError extends Error {
+  public constructor(message = "Candy OS credential store is unavailable.") {
+    super(message);
+    this.name = "CredentialStoreUnavailableError";
+  }
+}
+
 export interface SecretLease {
   readonly value: string;
   readonly release: () => void;
@@ -313,7 +332,68 @@ export class InMemoryCredentialStore implements CredentialStore {
   }
 }
 
-export const PROVIDER_ENV_KEYS = ["DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY"] as const;
+/**
+ * Trusted OS credential-store adapter. It deliberately has no file or CLI
+ * fallback: a missing native binding is a controlled capability error.
+ */
+export class KeyringCredentialStore implements CredentialStore {
+  public set(name: CredentialName, value: string): void {
+    assertCredentialValue(value);
+    try {
+      this.entry(name).setPassword(value);
+    } catch (error) {
+      throw new CredentialStoreUnavailableError(errorMessage(error));
+    }
+  }
+
+  public replace(name: CredentialName, value: string): void {
+    this.set(name, value);
+  }
+
+  public delete(name: CredentialName): void {
+    try {
+      this.entry(name).deleteCredential();
+    } catch (error) {
+      throw new CredentialStoreUnavailableError(errorMessage(error));
+    }
+  }
+
+  public has(name: CredentialName): CredentialPresence {
+    try {
+      return this.entry(name).getPassword() === null ? "absent" : "present";
+    } catch (error) {
+      throw new CredentialStoreUnavailableError(errorMessage(error));
+    }
+  }
+
+  public lease(name: CredentialName): SecretLease | undefined {
+    try {
+      const value = this.entry(name).getPassword();
+      if (value === null || value.length === 0) return undefined;
+      return { value, release: () => undefined };
+    } catch (error) {
+      throw new CredentialStoreUnavailableError(errorMessage(error));
+    }
+  }
+
+  private entry(name: CredentialName): Entry {
+    return new Entry(KEYRING_SERVICE, KEYRING_ACCOUNTS[name]);
+  }
+}
+
+/** Resolve a Candy-owned temporary credential before consulting the OS store. */
+export function resolveCredential(
+  name: CredentialName,
+  environment: NodeJS.ProcessEnv = process.env,
+  store: CredentialStore = new KeyringCredentialStore(),
+): SecretLease | undefined {
+  const temporary = environment[CANDY_CREDENTIAL_ENV_KEYS[name]];
+  if (temporary !== undefined) {
+    assertCredentialValue(temporary);
+    return { value: temporary, release: () => undefined };
+  }
+  return store.lease(name);
+}
 
 export function cleanChildEnvironment(
   source: NodeJS.ProcessEnv,
@@ -344,6 +424,10 @@ export function cleanChildEnvironment(
 
 function assertCredentialValue(value: string): void {
   if (value.length === 0 || /[\r\n]/u.test(value)) throw new Error("Credential value is invalid.");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "native credential store error";
 }
 
 export class ManualClock implements Clock {

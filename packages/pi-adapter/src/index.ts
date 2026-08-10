@@ -93,6 +93,34 @@ export interface DeepSeekDelta {
   readonly done: boolean;
 }
 
+export interface MiniMaxMessage {
+  readonly role: "user" | "assistant";
+  readonly content: readonly (
+    | { readonly type: "text"; readonly text: string }
+    | {
+        readonly type: "image";
+        readonly source: {
+          readonly type: "base64";
+          readonly media_type: string;
+          readonly data: string;
+        };
+      }
+  )[];
+}
+
+export interface MiniMaxRequest {
+  readonly model: "MiniMax-M3";
+  readonly messages: readonly MiniMaxMessage[];
+  readonly max_tokens: number;
+  readonly stream: true;
+}
+
+export interface MiniMaxDelta {
+  readonly text?: string;
+  readonly thinking?: string;
+  readonly done: boolean;
+}
+
 export type SecretLease = { readonly secret: string; readonly release: () => void };
 export type SecretLeaseProvider = () => Promise<SecretLease | undefined>;
 export type HttpTransport = (input: string, init: RequestInit) => Promise<Response>;
@@ -170,6 +198,99 @@ export class DeepSeekClient {
       reader.releaseLock();
     }
   }
+}
+
+/** Domestic-only MiniMax M3 contract. There is intentionally no fallback URL. */
+export class MiniMaxClient {
+  public constructor(
+    private readonly acquireSecret: SecretLeaseProvider,
+    private readonly transport: HttpTransport = fetch,
+  ) {}
+
+  public async *stream(request: MiniMaxRequest, signal: AbortSignal): AsyncIterable<MiniMaxDelta> {
+    if (request.model !== "MiniMax-M3" || request.max_tokens <= 0) {
+      throw new ProviderContractError(
+        "MiniMax model request is not approved.",
+        "unapproved_endpoint",
+      );
+    }
+    const lease = await this.acquireSecret();
+    if (!lease) {
+      throw new ProviderContractError("MiniMax credentials are unavailable.", "needs_credentials");
+    }
+
+    let response: Response;
+    try {
+      response = await this.transport("https://api.minimaxi.com/anthropic/v1/messages", {
+        method: "POST",
+        headers: {
+          accept: "text/event-stream",
+          "content-type": "application/json",
+          authorization: `Bearer ${lease.secret}`,
+        },
+        body: JSON.stringify(request),
+        signal,
+      });
+    } finally {
+      lease.release();
+    }
+    if (!response.ok || !response.body) {
+      throw new ProviderContractError(
+        `MiniMax request failed with HTTP ${response.status}.`,
+        "provider_error",
+      );
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        pending += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        const lines = pending.split(/\r?\n/u);
+        pending = lines.pop() ?? "";
+        for (const line of lines) {
+          const delta = parseMiniMaxSseLine(line);
+          if (delta) yield delta;
+        }
+        if (chunk.done) break;
+      }
+      if (pending.trim()) {
+        const delta = parseMiniMaxSseLine(pending);
+        if (delta) yield delta;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+}
+
+export function parseMiniMaxSseLine(line: string): MiniMaxDelta | undefined {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.startsWith("data:")) return undefined;
+  const payload = trimmed.slice("data:".length).trim();
+  if (payload === "[DONE]") return { done: true };
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch {
+    throw new ProviderContractError("MiniMax emitted malformed SSE JSON.", "malformed_stream");
+  }
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw new ProviderContractError("MiniMax emitted an invalid event.", "malformed_stream");
+  }
+  if (value.type === "message_stop") return { done: true };
+  if (value.type === "content_block_delta" && isRecord(value.delta)) {
+    const text = typeof value.delta.text === "string" ? value.delta.text : undefined;
+    const thinking = typeof value.delta.thinking === "string" ? value.delta.thinking : undefined;
+    return {
+      ...(text === undefined ? {} : { text }),
+      ...(thinking === undefined ? {} : { thinking }),
+      done: false,
+    };
+  }
+  return { done: false };
 }
 
 export function parseDeepSeekSseLine(line: string): DeepSeekDelta | undefined {
@@ -300,5 +421,196 @@ export class PiProofEngine {
       if (delta.text) yield { type: "assistant.delta", taskId: input.taskId, text: delta.text };
     }
     yield { type: "turn.completed", taskId: input.taskId };
+  }
+}
+
+export interface PiAgentEngineInput {
+  readonly taskId: string;
+  readonly prompt: string;
+  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  readonly cwd: string;
+}
+
+export type PiAgentObservation =
+  | { readonly type: "turn.started"; readonly taskId: string }
+  | { readonly type: "assistant.delta"; readonly taskId: string; readonly text: string }
+  | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
+  | {
+      readonly type: "tool.completed";
+      readonly taskId: string;
+      readonly tool: string;
+      readonly ok: boolean;
+    }
+  | { readonly type: "turn.completed"; readonly taskId: string };
+
+/**
+ * Pi-backed runtime path. Only the documented coding-agent root SDK is used;
+ * Pi owns the loop, read tool, stream and Candy-owned session JSONL.
+ */
+export class PiAgentEngine {
+  public constructor(
+    private readonly sessionRoot: string,
+    private readonly acquireSecret: SecretLeaseProvider,
+  ) {}
+
+  public async *runTurn(
+    input: PiAgentEngineInput,
+    signal: AbortSignal,
+  ): AsyncIterable<PiAgentObservation> {
+    const lease = await this.acquireSecret();
+    if (!lease)
+      throw new ProviderContractError("DeepSeek credentials are unavailable.", "needs_credentials");
+    const sessionDirectory = path.join(this.sessionRoot, input.taskId);
+    await mkdir(sessionDirectory, { recursive: true });
+    const credentialStore = new PiCredentialStore(lease.secret);
+    let session: piSdk.AgentSession | undefined;
+    try {
+      const modelRuntime = await piSdk.ModelRuntime.create({
+        credentials: credentialStore,
+        modelsPath: null,
+        refreshOnCreate: false,
+      });
+      const model = modelRuntime.getModel("deepseek", input.model);
+      if (!model)
+        throw new ProviderContractError("DeepSeek model is not available.", "provider_error");
+      const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
+        (left, right) => right.modified.getTime() - left.modified.getTime(),
+      )[0];
+      const sessionManager = existing
+        ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
+        : piSdk.SessionManager.create(input.cwd, sessionDirectory);
+      const created = await piSdk.createAgentSession({
+        cwd: input.cwd,
+        agentDir: path.join(this.sessionRoot, "pi-agent"),
+        modelRuntime,
+        model,
+        sessionManager,
+        tools: ["read"],
+      });
+      session = created.session;
+      const events = new AsyncEventQueue<piSdk.AgentSessionEvent>();
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      const abort = (): void => session?.agent.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      let promptError: unknown;
+      const promptPromise = session.prompt(input.prompt).catch((error: unknown) => {
+        promptError = error;
+        events.fail(new Error("Pi agent turn failed."));
+      });
+      let started = false;
+      try {
+        for (;;) {
+          const event = await events.next();
+          if (event.done) break;
+          if (event.value.type === "agent_start" && !started) {
+            started = true;
+            yield { type: "turn.started", taskId: input.taskId };
+          } else if (
+            event.value.type === "message_update" &&
+            event.value.assistantMessageEvent.type === "text_delta"
+          ) {
+            yield {
+              type: "assistant.delta",
+              taskId: input.taskId,
+              text: event.value.assistantMessageEvent.delta,
+            };
+          } else if (event.value.type === "tool_execution_start") {
+            yield { type: "tool.started", taskId: input.taskId, tool: event.value.toolName };
+          } else if (event.value.type === "tool_execution_end") {
+            yield {
+              type: "tool.completed",
+              taskId: input.taskId,
+              tool: event.value.toolName,
+              ok: !event.value.isError,
+            };
+          } else if (event.value.type === "agent_end") {
+            await promptPromise;
+            if (promptError !== undefined) throw new Error("Pi agent turn failed.");
+            break;
+          }
+        }
+      } finally {
+        unsubscribe();
+        signal.removeEventListener("abort", abort);
+      }
+      if (signal.aborted) throw new Error("Pi agent turn cancelled.");
+      yield { type: "turn.completed", taskId: input.taskId };
+    } finally {
+      session?.dispose();
+      credentialStore.clear();
+      lease.release();
+    }
+  }
+}
+
+type PiCredentialStoreContract = NonNullable<
+  NonNullable<Parameters<typeof piSdk.ModelRuntime.create>[0]>["credentials"]
+>;
+type PiCredential = Awaited<ReturnType<PiCredentialStoreContract["read"]>>;
+type PiCredentialInfo = Awaited<ReturnType<PiCredentialStoreContract["list"]>>[number];
+type PiCredentialModifier = Parameters<PiCredentialStoreContract["modify"]>[1];
+
+class PiCredentialStore implements PiCredentialStoreContract {
+  #secret: string | undefined;
+
+  public constructor(secret: string) {
+    this.#secret = secret;
+  }
+
+  public async read(providerId: string): Promise<PiCredential> {
+    return providerId === "deepseek" && this.#secret !== undefined
+      ? { type: "api_key", key: this.#secret }
+      : undefined;
+  }
+
+  public async list(): Promise<readonly PiCredentialInfo[]> {
+    return this.#secret === undefined ? [] : [{ providerId: "deepseek", type: "api_key" }];
+  }
+
+  public async modify(providerId: string, fn: PiCredentialModifier): Promise<PiCredential> {
+    const current = await this.read(providerId);
+    const next = await fn(current);
+    if (providerId === "deepseek") this.#secret = next?.type === "api_key" ? next.key : undefined;
+    return next;
+  }
+
+  public async delete(providerId: string): Promise<void> {
+    if (providerId === "deepseek") this.#secret = undefined;
+  }
+
+  public clear(): void {
+    this.#secret = undefined;
+  }
+}
+
+class AsyncEventQueue<T> {
+  readonly #values: T[] = [];
+  readonly #waiters: ((result: IteratorResult<T>) => void)[] = [];
+  #ended = false;
+  #error: Error | undefined;
+
+  public push(value: T): void {
+    if (this.#ended) return;
+    const waiter = this.#waiters.shift();
+    if (waiter) waiter({ done: false, value });
+    else this.#values.push(value);
+  }
+
+  public fail(error: Error): void {
+    this.#error = error;
+    this.end();
+  }
+
+  public end(): void {
+    this.#ended = true;
+    while (this.#waiters.length > 0) this.#waiters.shift()!({ done: true, value: undefined });
+  }
+
+  public next(): Promise<IteratorResult<T>> {
+    if (this.#values.length > 0)
+      return Promise.resolve({ done: false, value: this.#values.shift()! });
+    if (this.#error) return Promise.reject(this.#error);
+    if (this.#ended) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve) => this.#waiters.push(resolve));
   }
 }

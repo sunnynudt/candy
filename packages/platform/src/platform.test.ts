@@ -8,6 +8,7 @@ import {
   LeaseConflictError,
   ManualClock,
   InMemoryCredentialStore,
+  resolveCredential,
   SQLiteTaskStore,
   StaleLeaseError,
   cleanChildEnvironment,
@@ -66,6 +67,19 @@ test("child environment is allowlisted and removes values containing active secr
   assert.equal(environment.HOME, "home");
   assert.equal(environment.DEEPSEEK_API_KEY, undefined);
   assert.equal(environment.CUSTOM, undefined);
+});
+
+test("credential resolution uses only Candy-owned temporary variables before the OS store", () => {
+  const store = new InMemoryCredentialStore();
+  store.set("deepseek", "os-secret");
+  const temporary = resolveCredential(
+    "deepseek",
+    { CANDY_DEEPSEEK_API_KEY: "temporary-secret", DEEPSEEK_API_KEY: "untrusted-name" },
+    store,
+  );
+  assert.equal(temporary?.value, "temporary-secret");
+  temporary?.release();
+  assert.equal(resolveCredential("deepseek", {}, store)?.value, "os-secret");
 });
 
 test("sqlite task metadata survives restart and fences stale transitions", () => {

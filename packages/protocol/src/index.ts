@@ -15,6 +15,8 @@ export interface TaskSnapshot {
   readonly taskId: string;
   readonly revision: number;
   readonly state: TaskState;
+  readonly approvalProfile?: "read-only" | "auto";
+  readonly ownerId?: string;
 }
 
 export interface SnapshotCommand {
@@ -65,7 +67,35 @@ export interface TaskCreatedEvent {
   readonly approvalProfile: "read-only" | "auto";
 }
 
-export type RuntimeEvent = SnapshotEvent | TaskStateChangedEvent | TaskCreatedEvent;
+export interface AssistantDeltaEvent {
+  readonly type: "assistant.delta";
+  readonly text: string;
+}
+
+export interface ToolStartedEvent {
+  readonly type: "tool.started";
+  readonly tool: string;
+}
+
+export interface ToolCompletedEvent {
+  readonly type: "tool.completed";
+  readonly tool: string;
+  readonly ok: boolean;
+}
+
+export interface TaskErrorEvent {
+  readonly type: "task.error";
+  readonly code: "cancelled" | "needs_credentials" | "provider_error" | "runtime_error";
+}
+
+export type RuntimeEvent =
+  | SnapshotEvent
+  | TaskStateChangedEvent
+  | TaskCreatedEvent
+  | AssistantDeltaEvent
+  | ToolStartedEvent
+  | ToolCompletedEvent
+  | TaskErrorEvent;
 
 export interface EventEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -220,6 +250,31 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
   if (value.type === "task.created") {
     if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto")
       throw new ProtocolValidationError("invalid_message", "event.approvalProfile is invalid.");
+    return;
+  }
+  if (value.type === "assistant.delta") {
+    assertString(value.text, "event.text");
+    return;
+  }
+  if (value.type === "tool.started") {
+    assertString(value.tool, "event.tool");
+    return;
+  }
+  if (value.type === "tool.completed") {
+    assertString(value.tool, "event.tool");
+    if (typeof value.ok !== "boolean")
+      throw new ProtocolValidationError("invalid_message", "event.ok is invalid.");
+    return;
+  }
+  if (value.type === "task.error") {
+    if (
+      value.code !== "cancelled" &&
+      value.code !== "needs_credentials" &&
+      value.code !== "provider_error" &&
+      value.code !== "runtime_error"
+    ) {
+      throw new ProtocolValidationError("invalid_message", "event.code is invalid.");
+    }
     return;
   }
   throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
