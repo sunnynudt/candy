@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`a02b7e6beae33343b6b019afeabf2af862c691c1`
+当前基线提交：`ba62aba3bbf41a885bef8cc4eaddc995d8255966`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -37,7 +37,7 @@
   未完成条件：`network:true` 拒绝只是协议/策略边界，不等于命令的 OS 级无网络；尚未完成任意命令的 OS 级 workspace ACL/AppContainer containment、运行期间 reparse/race 防逃逸、签名/正式发布打包路径和独立安全评审。Shell Auto 与 Shell Auto Debug 继续禁用。
 
 - ◐ 验收 Windows Browser Workspace：打包 Electron 中的 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。
-  已完成：packaged Windows fixture 通过 allowlist 后加载本机页面，阻止不允许的 redirect、popup、permission 和 download，并验证显式 Take Control/return-to-agent revision；Browser profile 使用 Candy-owned persistent partition，页面没有 Candy preload 或 provider credential。
+  已完成：packaged Windows fixture 通过 allowlist 后加载本机页面，阻止不允许的 redirect、popup、permission 和 download，并验证显式 Take Control/return-to-agent revision；对凭据 URL、非 loopback HTTP、script URL、未授权 host、畸形 structured action、缺失 selector 和错误 target 做 fail-closed 检查；Browser profile 使用 Candy-owned persistent partition，页面没有 Candy preload 或 provider credential。
   已完成：packaged fixture 通过窄桥接执行 selector-scoped click/type/confirmed-submit，拒绝未确认 submit、stale revision 和 Take Control 后的 user-owned action；截图写入 Candy AttachmentStore，snapshot 只返回不透明 `att_...` id。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
   待完成：可靠的物理输入来源识别与更多对抗性页面；完整 ACC-09/ACC-12 Browser 指标仍未完成。
 
@@ -56,8 +56,8 @@
   待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、packaged active-owner/tool recovery 和完整响应性矩阵仍未完成；active validator interruption、owner crash interruption、non-owner read-only fencing 和 attachment restart recovery 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `a02b7e6beae33343b6b019afeabf2af862c691c1` 上执行 `npm run acceptance:windows`，15/15 个确定性步骤通过，包含 queued/active crash recovery、attachment restart recovery、active validator interruption、non-owner read-only fencing、未签名 packaged Desktop、Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1178 ms`、Desktop `1462 ms`；完整 ACC-12 指标仍未完成。
+  已完成：在干净提交 `ba62aba3bbf41a885bef8cc4eaddc995d8255966` 上执行 `npm run acceptance:windows`，15/15 个确定性步骤通过，包含 queued/active crash recovery、attachment restart recovery、active validator interruption、non-owner read-only fencing、未签名 packaged Desktop、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1197 ms`、Desktop `1409 ms`；完整 ACC-12 指标仍未完成。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、packaged active-owner/工具中断恢复、packaged cross-client recovery、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 ## 明天执行：macOS `26.5.2` Apple Silicon
