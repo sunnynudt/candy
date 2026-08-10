@@ -216,7 +216,8 @@ function assertBrowserAction(value: unknown): asserts value is BrowserAction {
     (action.type !== "navigate" &&
       (typeof action.target !== "string" ||
         action.target.length === 0 ||
-        action.target.length > 512)) ||
+        action.target.length > 512 ||
+        action.target.includes("\0"))) ||
     (action.type === "type" &&
       (typeof action.text !== "string" ||
         action.text.length > 10_000 ||
@@ -984,6 +985,7 @@ async function runBrowserSmoke(): Promise<void> {
   for (const action of [
     null,
     { type: "click", target: "", expectedRevision: 0 },
+    { type: "click", target: "\0", expectedRevision: 0 },
     { type: "type", target: "#x", text: "contains\0nul", expectedRevision: 0 },
     { type: "navigate", url: 123, expectedRevision: 0 },
   ])
@@ -1038,6 +1040,15 @@ async function runBrowserSmoke(): Promise<void> {
         expectedRevision: submitted.revision,
       }),
     "Browser accepted a missing selector.",
+  );
+  await expectBrowserRejection(
+    () =>
+      actInBrowser({
+        type: "click",
+        target: "[",
+        expectedRevision: submitted.revision,
+      }),
+    "Browser accepted an invalid CSS selector.",
   );
   await expectBrowserRejection(
     () =>
