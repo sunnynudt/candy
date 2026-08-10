@@ -121,6 +121,20 @@ rustup component add rustfmt clippy
 
 The official Rust distribution service is the default and preferred trust boundary. When it is unusably slow, Rustup supports a session-scoped mirror through `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT`. Record the mirror used in verification evidence; do not persist an unofficial mirror as a repository default.
 
+### 3.1 Cargo registry connectivity in mainland China
+
+For a Windows development host on a mainland-China network, do not spend an unbounded time waiting for a first native build to refresh the crates.io index. After a bounded direct attempt is demonstrably slow, prefer a user- or maintainer-approved domestic Cargo mirror.
+
+The mirror is a local development transport decision, not a Candy dependency source-of-truth change:
+
+- keep the mirror configuration outside the repository, preferably in a dedicated local `CARGO_HOME` used only for that verification session;
+- require a sparse registry URL from an explicitly approved mirror operator; never guess or commit a third-party registry URL;
+- continue to run `cargo ... --locked`, preserve the committed `Cargo.lock`, and fail if a mirror attempts to alter the resolved package graph;
+- never put provider credentials, mirror credentials, or private registry URLs in repository configuration, diagnostics, acceptance reports, or command arguments;
+- record only the mirror operator and sanitized connectivity outcome in local verification evidence, then remove the temporary `CARGO_HOME` override after the run.
+
+This rule applies to `npm run check:native` as well as direct Cargo diagnostics. An unavailable or untrusted mirror is a controlled local-network blocker, not a reason to weaken lockfile or dependency verification.
+
 ### 4. MSVC and Windows SDK for native development
 
 Install the Build Tools product if it is absent:
