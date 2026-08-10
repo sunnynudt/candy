@@ -92,6 +92,7 @@ export interface InteractiveTuiOptions {
 
 export interface TuiAgentEngine {
   runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
+  recoverPrompt?(taskId: string, cwd: string): Promise<string | undefined>;
 }
 
 export class InteractiveTui {
@@ -102,6 +103,7 @@ export class InteractiveTui {
   readonly #controllers = new Map<string, TaskController>();
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
+  readonly #requestedStops = new Map<string, "paused" | "cancelled">();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}`;
   #closing = false;
@@ -122,7 +124,9 @@ export class InteractiveTui {
 
   public async run(): Promise<void> {
     this.write("Candy TUI — local-first, one agent per task\n");
-    this.write("Enter a prompt, :tasks, :cancel <task-id>, or :quit.\n> ");
+    this.write(
+      "Enter a prompt, :tasks, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n> ",
+    );
     const lines = createInterface({ input: this.#input, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -130,6 +134,10 @@ export class InteractiveTui {
         if (trimmed === ":quit") break;
         if (trimmed === ":tasks") {
           this.printTasks();
+        } else if (trimmed.startsWith(":pause ")) {
+          this.pause(trimmed.slice(7).trim());
+        } else if (trimmed.startsWith(":resume ")) {
+          this.resume(trimmed.slice(8).trim());
         } else if (trimmed.startsWith(":cancel ")) {
           await this.cancel(trimmed.slice(8).trim());
         } else if (trimmed.length > 0) {
@@ -185,10 +193,13 @@ export class InteractiveTui {
   ): Promise<void> {
     const taskId = task.snapshot().taskId;
     try {
+      const prompt =
+        this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, process.cwd()));
+      if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       for await (const observation of this.#engine.runTurn(
         {
           taskId,
-          prompt: this.#prompts.get(taskId) ?? "",
+          prompt,
           model: "deepseek-v4-flash",
           cwd: process.cwd(),
         },
@@ -205,14 +216,16 @@ export class InteractiveTui {
     } catch (error) {
       const current = task.snapshot();
       if (current.state === "running") {
-        const cancelled = abort.signal.aborted;
-        const stopped = task.transition(cancelled ? "cancelled" : "interrupted", current.revision);
-        this.write(
-          `\n${stopped.taskId} ${cancelled ? "cancelled" : "interrupted"}: ${safeError(error)}\n`,
+        const requestedStop = this.#requestedStops.get(taskId);
+        const stopped = task.transition(
+          requestedStop ?? (abort.signal.aborted ? "cancelled" : "interrupted"),
+          current.revision,
         );
+        this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
       }
     } finally {
       this.#abortControllers.delete(taskId);
+      this.#requestedStops.delete(taskId);
       this.#scheduler.finish(taskId);
       if (!this.#closing) this.drain();
     }
@@ -221,6 +234,7 @@ export class InteractiveTui {
   private async cancel(taskId: string): Promise<void> {
     const abort = this.#abortControllers.get(taskId);
     if (abort) {
+      this.#requestedStops.set(taskId, "cancelled");
       abort.abort();
       return;
     }
@@ -231,6 +245,34 @@ export class InteractiveTui {
       this.write(`${taskId} cancelled before start\n`);
     } else {
       this.write(`${taskId} is not an active task\n`);
+    }
+  }
+
+  private pause(taskId: string): void {
+    const abort = this.#abortControllers.get(taskId);
+    if (abort) {
+      this.#requestedStops.set(taskId, "paused");
+      abort.abort();
+      return;
+    }
+    const task = this.#controllers.get(taskId);
+    if (task?.snapshot().state === "queued") {
+      this.#scheduler.cancelQueued(taskId);
+      task.transition("paused", task.snapshot().revision);
+      this.write(`${taskId} paused before start\n`);
+    } else {
+      this.write(`${taskId} is not pausable\n`);
+    }
+  }
+
+  private resume(taskId: string): void {
+    const task = this.#controllers.get(taskId);
+    if (task?.snapshot().state === "paused" || task?.snapshot().state === "interrupted") {
+      this.#scheduler.enqueue(taskId);
+      this.write(`${taskId} queued for resume\n`);
+      this.drain();
+    } else {
+      this.write(`${taskId} is not resumable\n`);
     }
   }
 
