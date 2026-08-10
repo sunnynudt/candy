@@ -21,7 +21,7 @@ import {
   type CredentialName,
   type CandyModelId,
 } from "@candy/platform";
-import { AttachmentStore } from "@candy/runtime";
+import { AttachmentStore, type BrowserTabSnapshot } from "@candy/runtime";
 import {
   decodeJsonLine,
   encodeJsonLine,
@@ -121,8 +121,101 @@ class AppServerClient {
 const projections = new Map<string, RendererTaskProjection>();
 let appServer: AppServerClient | undefined;
 let mainWindow: BrowserWindow | undefined;
+let browserView: WebContentsView | undefined;
+let browserTab: BrowserTabSnapshot | undefined;
+const browserHosts = new Set<string>();
+let browserNavigationDenied = false;
+let browserPopupDenied = false;
+let browserPermissionDenied = false;
+let browserDownloadPrevented = false;
 let explicitQuit = false;
 let selectedWorkspacePath: string | undefined;
+
+function assertBrowserHost(host: unknown): asserts host is string {
+  if (typeof host !== "string" || host.length === 0 || host.length > 255)
+    throw new Error("Browser site host is invalid.");
+  let parsed: URL;
+  try {
+    parsed = new URL(`https://${host}`);
+  } catch {
+    throw new Error("Browser site host is invalid.");
+  }
+  if (parsed.host !== host.toLowerCase() || parsed.pathname !== "/" || parsed.search || parsed.hash)
+    throw new Error("Browser site host is invalid.");
+}
+
+function parseCandyBrowserUrl(value: unknown): URL {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2_048)
+    throw new Error("Browser URL is invalid.");
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Browser URL is invalid.");
+  }
+  const localHttp =
+    parsed.protocol === "http:" &&
+    (parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "[::1]");
+  if (parsed.username || parsed.password || !(parsed.protocol === "https:" || localHttp))
+    throw new Error("Browser URL must be HTTPS or a loopback HTTP fixture without credentials.");
+  return parsed;
+}
+
+function browserSnapshotWithRevision(
+  current: BrowserTabSnapshot | undefined,
+  updates: Pick<BrowserTabSnapshot, "url" | "title" | "text" | "siteAllowed">,
+): BrowserTabSnapshot {
+  return {
+    tabId: current?.tabId ?? "browser-tab-1",
+    revision: (current?.revision ?? 0) + 1,
+    control: current?.control ?? "user",
+    ...updates,
+  };
+}
+
+async function readBrowserPage(): Promise<BrowserTabSnapshot> {
+  if (!browserView || !browserTab) throw new Error("Browser Workspace has no open tab.");
+  const page = (await browserView.webContents.executeJavaScript(
+    "({ title: document.title || '', url: location.href, text: (document.body?.innerText || '').slice(0, 20000) })",
+    true,
+  )) as { readonly title?: unknown; readonly url?: unknown; readonly text?: unknown };
+  const url = typeof page.url === "string" ? page.url : browserTab.url;
+  const parsed = parseCandyBrowserUrl(url);
+  browserTab = {
+    ...browserTab,
+    url,
+    title: typeof page.title === "string" ? page.title : "",
+    text: typeof page.text === "string" ? page.text : "",
+    siteAllowed: browserHosts.has(parsed.host.toLowerCase()),
+  };
+  mainWindow?.webContents.send("browser.update", browserTab);
+  return { ...browserTab };
+}
+
+async function openBrowserUrl(urlValue: unknown): Promise<BrowserTabSnapshot> {
+  if (!browserView) throw new Error("Browser Workspace is unavailable.");
+  const parsed = parseCandyBrowserUrl(urlValue);
+  if (!browserHosts.has(parsed.host.toLowerCase()))
+    throw new Error("Allow this Browser site before opening it.");
+  browserTab = browserSnapshotWithRevision(browserTab, {
+    url: parsed.toString(),
+    title: "",
+    text: "",
+    siteAllowed: true,
+  });
+  browserView.setVisible(true);
+  await browserView.webContents.loadURL(parsed.toString());
+  return readBrowserPage();
+}
+
+function updateBrowserControl(control: "user" | "agent"): BrowserTabSnapshot {
+  if (!browserTab) throw new Error("Browser Workspace has no open tab.");
+  browserTab = { ...browserTab, control, revision: browserTab.revision + 1 };
+  mainWindow?.webContents.send("browser.update", browserTab);
+  return { ...browserTab };
+}
 
 function assertTrustedRenderer(event: IpcMainInvokeEvent): void {
   if (mainWindow === undefined || event.sender !== mainWindow.webContents)
@@ -259,6 +352,38 @@ async function saveWorkspaceSelection(workspacePath: string): Promise<void> {
 function registerIpcHandlers(): void {
   const credentials = new KeyringCredentialStore();
   const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
+  ipcMain.handle("browser.allow-site", (event, host: unknown) => {
+    assertTrustedRenderer(event);
+    assertBrowserHost(host);
+    browserHosts.add(host.toLowerCase());
+  });
+  ipcMain.handle("browser.open", async (event, url: unknown) => {
+    assertTrustedRenderer(event);
+    return openBrowserUrl(url);
+  });
+  ipcMain.handle("browser.navigate", async (event, url: unknown, expectedRevision: unknown) => {
+    assertTrustedRenderer(event);
+    if (!browserTab || !browserView) throw new Error("Browser Workspace has no open tab.");
+    if (browserTab.control !== "agent") throw new Error("User owns this browser tab.");
+    if (expectedRevision !== browserTab.revision) throw new Error("Browser observation is stale.");
+    const parsed = parseCandyBrowserUrl(url);
+    if (!browserHosts.has(parsed.host.toLowerCase()))
+      throw new Error("Browser site permission is required.");
+    await browserView.webContents.loadURL(parsed.toString());
+    return readBrowserPage();
+  });
+  ipcMain.handle("browser.observe", (event) => {
+    assertTrustedRenderer(event);
+    return readBrowserPage();
+  });
+  ipcMain.handle("browser.take-control", (event) => {
+    assertTrustedRenderer(event);
+    return updateBrowserControl("user");
+  });
+  ipcMain.handle("browser.return-control", (event) => {
+    assertTrustedRenderer(event);
+    return updateBrowserControl("agent");
+  });
   ipcMain.handle("workspace.current", (event): WorkspaceSelection | undefined => {
     assertTrustedRenderer(event);
     return selectedWorkspacePath === undefined ? undefined : { path: selectedWorkspacePath };
@@ -495,7 +620,7 @@ export function createDesktopWindow(): BrowserWindow {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.js"),
     },
   });
-  const browserView = new WebContentsView({
+  const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -504,17 +629,29 @@ export function createDesktopWindow(): BrowserWindow {
       partition: "persist:candy-browser-v1",
     },
   });
-  const browserHosts: readonly string[] = [];
-  browserView.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  browserView.webContents.on("will-navigate", (event, url) => {
-    if (!isAllowedCandyBrowserUrl(url, browserHosts)) event.preventDefault();
+  browserView = view;
+  view.webContents.setWindowOpenHandler(() => {
+    browserPopupDenied = true;
+    return { action: "deny" };
   });
-  browserView.webContents.on("will-redirect", (event, url) => {
-    if (!isAllowedCandyBrowserUrl(url, browserHosts)) event.preventDefault();
+  view.webContents.on("will-navigate", (event, url) => {
+    if (!isAllowedCandyBrowserUrl(url, [...browserHosts])) {
+      browserNavigationDenied = true;
+      event.preventDefault();
+    }
   });
-  window.contentView.addChildView(browserView);
-  browserView.setBounds({ x: 360, y: 0, width: 840, height: 800 });
-  browserView.setVisible(false);
+  view.webContents.on("will-redirect", (event, url) => {
+    if (!isAllowedCandyBrowserUrl(url, [...browserHosts])) {
+      browserNavigationDenied = true;
+      event.preventDefault();
+    }
+  });
+  view.webContents.on("did-finish-load", () => {
+    if (browserTab) void readBrowserPage();
+  });
+  window.contentView.addChildView(view);
+  view.setBounds({ x: 360, y: 0, width: 840, height: 800 });
+  view.setVisible(false);
   const nonce = randomUUID().replaceAll("-", "");
   void window.loadURL(
     "data:text/html;charset=utf-8," + encodeURIComponent(desktopShellHtml(nonce)),
@@ -555,6 +692,15 @@ function desktopShellHtml(nonce: string): string {
   const discardWorktree = document.getElementById('discardWorktree');
   const transcript = document.getElementById('transcript');
   const diff = document.getElementById('diff');
+  const browserCard = document.createElement('div');
+  browserCard.className = 'card';
+  browserCard.innerHTML = '<strong>Browser Workspace</strong><label for="browserHost">Allowed site host</label><input id="browserHost" placeholder="localhost:3000"><button id="allowBrowserSite">Allow site</button><label for="browserUrl">Visible page URL</label><input id="browserUrl" placeholder="https://example.com"><button id="openBrowser">Open</button><button id="navigateBrowser">Agent navigate</button><button id="takeBrowserControl">Take Control</button><button id="returnBrowserControl">Return to agent</button><div id="browserStatus" class="status muted">No browser tab.</div><pre id="browserText">No browser page.</pre>';
+  document.querySelector('aside').append(browserCard);
+  const browserHost = browserCard.querySelector('#browserHost');
+  const browserUrl = browserCard.querySelector('#browserUrl');
+  const browserStatus = browserCard.querySelector('#browserStatus');
+  const browserText = browserCard.querySelector('#browserText');
+  let currentBrowser;
   let current;
   let attachmentIds = [];
   let workspace;
@@ -562,6 +708,13 @@ function desktopShellHtml(nonce: string): string {
   const refreshCredentials = async () => { for (const name of ['deepseek','minimax-cn']) credentialStatus[name].textContent = await window.candy.credentials.has(name) === 'present' ? 'present' : 'absent'; };
   const saveCredential = async (name) => { const value = credentialInputs[name].value; if (!value) return; await window.candy.credentials.replace(name, value); credentialInputs[name].value = ''; await refreshCredentials(); };
   const deleteCredential = async (name) => { await window.candy.credentials.delete(name); await refreshCredentials(); };
+  const showBrowser = (snapshot) => { currentBrowser = snapshot; browserStatus.textContent = snapshot.url + ' · ' + snapshot.control + ' · revision ' + snapshot.revision + (snapshot.siteAllowed ? ' · allowed' : ' · site not allowed'); browserText.textContent = snapshot.text || '(empty page)'; };
+  browserCard.querySelector('#allowBrowserSite').addEventListener('click', async () => { try { await window.candy.browser.allowSite(browserHost.value.trim()); browserStatus.textContent = 'Site allowed. Open it explicitly.'; } catch (error) { browserStatus.textContent = 'Browser site failed: ' + error.message; } });
+  browserCard.querySelector('#openBrowser').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.open(browserUrl.value.trim())); } catch (error) { browserStatus.textContent = 'Browser open failed: ' + error.message; } });
+  browserCard.querySelector('#navigateBrowser').addEventListener('click', async () => { if (!currentBrowser) return; try { showBrowser(await window.candy.browser.navigate(browserUrl.value.trim(), currentBrowser.revision)); } catch (error) { browserStatus.textContent = 'Browser navigate failed: ' + error.message; } });
+  browserCard.querySelector('#takeBrowserControl').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.takeControl()); } catch (error) { browserStatus.textContent = 'Take Control failed: ' + error.message; } });
+  browserCard.querySelector('#returnBrowserControl').addEventListener('click', async () => { try { showBrowser(await window.candy.browser.returnControlToAgent()); } catch (error) { browserStatus.textContent = 'Return control failed: ' + error.message; } });
+  window.candy.browser.onUpdate(showBrowser);
   const readValidator = () => { if (!validatorExecutable.value.trim()) return undefined; const args = JSON.parse(validatorArgs.value || '[]'); if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) throw new Error('Validator args must be a JSON string array.'); return { executable: validatorExecutable.value.trim(), args }; };
   chooseWorkspace.addEventListener('click', async () => { try { showWorkspace(await window.candy.workspace.choose()); } catch (error) { taskStatus.textContent = 'Workspace failed: ' + error.message; } });
   document.getElementById('saveDeepSeek').addEventListener('click', () => saveCredential('deepseek').catch((error) => { taskStatus.textContent = error.message; }));
@@ -614,8 +767,8 @@ export function isAllowedCandyBrowserUrl(
   allowedHosts: readonly string[] = [],
 ): boolean {
   try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && allowedHosts.includes(parsed.host.toLowerCase());
+    const parsed = parseCandyBrowserUrl(url);
+    return allowedHosts.includes(parsed.host.toLowerCase());
   } catch {
     return false;
   }
@@ -625,11 +778,15 @@ export function configureCandyBrowserSession(): void {
   const paths = resolveAppPaths(app.getPath("userData"));
   void paths;
   const browserSession = session.fromPartition("persist:candy-browser-v1");
-  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
-    callback(false),
-  );
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    browserPermissionDenied = true;
+    callback(false);
+  });
   browserSession.setPermissionCheckHandler(() => false);
-  browserSession.on("will-download", (event) => event.preventDefault());
+  browserSession.on("will-download", (event) => {
+    browserDownloadPrevented = true;
+    event.preventDefault();
+  });
 }
 
 export function startDesktop(): void {
@@ -643,7 +800,12 @@ export function startDesktop(): void {
     registerIpcHandlers();
     mainWindow = createDesktopWindow();
     mainWindow.show();
-    if (process.env.CANDY_DESKTOP_SMOKE === "1") void runDesktopSmoke();
+    if (process.env.CANDY_BROWSER_SMOKE === "1")
+      void runBrowserSmoke().catch((error: unknown) => {
+        console.error(error instanceof Error ? error.message : "Browser smoke failed.");
+        app.exit(1);
+      });
+    else if (process.env.CANDY_DESKTOP_SMOKE === "1") void runDesktopSmoke();
   });
   app.on("before-quit", () => {
     explicitQuit = true;
@@ -661,6 +823,47 @@ async function runDesktopSmoke(): Promise<void> {
     expectedRevision: 0,
     command: { type: "snapshot" },
   });
+  app.quit();
+}
+
+async function runBrowserSmoke(): Promise<void> {
+  const fixtureUrl = process.env.CANDY_BROWSER_FIXTURE_URL;
+  if (!fixtureUrl || !browserView) throw new Error("Browser smoke fixture is unavailable.");
+  const fixture = parseCandyBrowserUrl(fixtureUrl);
+  browserHosts.add(fixture.host.toLowerCase());
+  const opened = await openBrowserUrl(fixtureUrl);
+  if (!opened.text.includes("Candy browser fixture"))
+    throw new Error("Browser fixture text was not observed.");
+  await browserView.webContents.executeJavaScript(
+    "window.open('https://example.com/'); navigator.geolocation?.getCurrentPosition(() => {}, () => {}); true",
+    true,
+  );
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
+  await browserView.webContents.downloadURL(`${fixture.origin}/download`);
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
+  try {
+    await browserView.webContents.loadURL(`${fixture.origin}/redirect`);
+  } catch {
+    // Chromium reports a rejected navigation after will-redirect prevents it.
+  }
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+  const user = updateBrowserControl("user");
+  const agent = updateBrowserControl("agent");
+  if (
+    !browserPopupDenied ||
+    !browserNavigationDenied ||
+    !browserDownloadPrevented ||
+    !browserPermissionDenied ||
+    user.control !== "user" ||
+    agent.control !== "agent" ||
+    agent.revision <= user.revision
+  )
+    throw new Error(
+      `Browser security or explicit Take Control smoke failed: navigation=${browserNavigationDenied}, popup=${browserPopupDenied}, permission=${browserPermissionDenied}, download=${browserDownloadPrevented}, user=${user.control}, agent=${agent.control}`,
+    );
+  console.log(
+    "packaged Windows Browser Workspace smoke ok: allowlist, navigation, popup, permission, download, and Take Control",
+  );
   app.quit();
 }
 

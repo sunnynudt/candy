@@ -42,6 +42,7 @@
     "package:desktop:windows": "npm run build && node scripts/package-desktop-windows.mjs",
     "smoke:desktop:packaged": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged.mjs && node scripts/smoke-packaged-keychain.mjs",
     "smoke:desktop:packaged:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-windows.mjs",
+    "smoke:browser:windows": "npm run package:desktop:windows && node scripts/smoke-browser-windows.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"
   },

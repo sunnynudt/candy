@@ -22,6 +22,37 @@ const api: DesktopPreloadApi = {
         Awaited<ReturnType<DesktopPreloadApi["workspace"]["current"]>>
       >,
   },
+  browser: {
+    allowSite: (host) => ipcRenderer.invoke("browser.allow-site", host) as Promise<void>,
+    open: (url) =>
+      ipcRenderer.invoke("browser.open", url) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["open"]>>
+      >,
+    navigate: (url, expectedRevision) =>
+      ipcRenderer.invoke("browser.navigate", url, expectedRevision) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["navigate"]>>
+      >,
+    observe: () =>
+      ipcRenderer.invoke("browser.observe") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["observe"]>>
+      >,
+    takeControl: () =>
+      ipcRenderer.invoke("browser.take-control") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["takeControl"]>>
+      >,
+    returnControlToAgent: () =>
+      ipcRenderer.invoke("browser.return-control") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["returnControlToAgent"]>>
+      >,
+    onUpdate: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        snapshot: Parameters<typeof listener>[0],
+      ) => listener(snapshot);
+      ipcRenderer.on("browser.update", handler);
+      return () => ipcRenderer.removeListener("browser.update", handler);
+    },
+  },
   attachments: {
     pickImage: () => ipcRenderer.invoke("attachment.pick-image") as Promise<string | undefined>,
   },

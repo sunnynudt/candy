@@ -1,5 +1,6 @@
 import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
 import type { TaskProgress, ValidatorSpec } from "@candy/protocol";
+import type { BrowserTabSnapshot } from "@candy/runtime";
 
 export interface RendererTaskProjection {
   readonly taskId: string;
@@ -54,9 +55,20 @@ export interface WorkspaceBridge {
   current(): Promise<WorkspaceSelection | undefined>;
 }
 
+export interface BrowserBridge {
+  allowSite(host: string): Promise<void>;
+  open(url: string): Promise<BrowserTabSnapshot>;
+  navigate(url: string, expectedRevision: number): Promise<BrowserTabSnapshot>;
+  observe(): Promise<BrowserTabSnapshot>;
+  takeControl(): Promise<BrowserTabSnapshot>;
+  returnControlToAgent(): Promise<BrowserTabSnapshot>;
+  onUpdate(listener: (snapshot: BrowserTabSnapshot) => void): () => void;
+}
+
 export interface DesktopPreloadApi {
   readonly credentials: CredentialBridge;
   readonly workspace: WorkspaceBridge;
+  readonly browser: BrowserBridge;
   readonly attachments: {
     pickImage(): Promise<string | undefined>;
   };

@@ -34,6 +34,7 @@ const steps = [
   "smoke:recovery:windows",
   "smoke:desktop",
   "smoke:desktop:packaged:windows",
+  "smoke:browser:windows",
   "measure:windows:responsiveness",
 ];
 const results = [];
