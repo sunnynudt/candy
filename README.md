@@ -1,6 +1,6 @@
 # Candy
 
-Candy is a standalone, DeepSeek-first coding product for macOS Sequoia 15+ and Windows 11.
+Candy is a standalone, DeepSeek-first coding product for macOS `26.5.2` on Apple Silicon and Windows 11.
 
 ## Development baseline
 
@@ -24,4 +24,4 @@ Product scope is defined in `docs/product/candy-v1.md`. Implementation order and
 Development machine setup:
 
 - Windows 11: `docs/development/windows-11-toolchain.md`
-- macOS Sequoia 15+ / Apple Silicon: `docs/development/macos-sequoia-toolchain.md`
+- macOS `26.5.2` / Apple Silicon: `docs/development/macos-26-5-2-toolchain.md`

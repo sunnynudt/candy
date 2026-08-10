@@ -59,7 +59,7 @@ Pi and its boundary-sensitive toolchain move as one compatibility train:
 2. inspect that tag's engine, TypeScript, package-manager, lockfile, CI, release, and public-export contracts;
 3. choose a security-patched Node release from the major line that Pi tests, and use its bundled npm unless a documented Pi consumer requirement says otherwise;
 4. regenerate the Candy lockfile once and verify that every installed Pi package has the selected exact version;
-5. run clean install, public import, session create/reload, tool hook, cancellation, provider streaming, and process-exit tests on Windows 11 and macOS Sequoia 15+;
+5. run clean install, public import, session create/reload, tool hook, cancellation, provider streaming, and process-exit tests on Windows 11 and macOS `26.5.2` Apple Silicon;
 6. run the same Pi Adapter suite in both TUI and packaged Desktop app-server topology;
 7. update Pi, Node/npm/TypeScript baselines, the lockfile, and compatibility evidence together.
 
@@ -76,4 +76,3 @@ The baseline is accepted for implementation only when:
 - the same Adapter contract suite passes in TUI and packaged Desktop app-server processes;
 - Electron main/renderer package graphs contain no Pi import;
 - a deliberately mismatched Pi package or unsupported Node version fails before a task starts with an actionable compatibility error.
-

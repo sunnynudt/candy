@@ -8,6 +8,7 @@ import { cleanChildEnvironment } from "@candy/platform";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const acceptanceRoot = path.join(root, "out", "acceptance", "macos");
 const npmScript = process.env.npm_execpath;
+const requiredMacosVersion = "26.5.2";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("macOS acceptance requires macOS arm64.");
@@ -23,6 +24,11 @@ const lockfileDigest = createHash("sha256")
   .digest("hex");
 const macosVersion = runCapture("/usr/bin/sw_vers", ["-productVersion"]);
 const architecture = runCapture("/usr/bin/uname", ["-m"]);
+if (macosVersion !== requiredMacosVersion || architecture !== "arm64") {
+  throw new Error(
+    `macOS acceptance requires ${requiredMacosVersion} on arm64; received ${macosVersion} on ${architecture}.`,
+  );
+}
 const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
 const steps = [
   "check:toolchain",
@@ -56,7 +62,7 @@ const report = [
   `- Node: \`${process.version}\``,
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  "This is a local deterministic and packaged smoke run. It does not run live providers, inspect other tool credentials, or claim Sequoia, signing, sandbox, Browser, or final ACC acceptance.",
+  `This is a deterministic and packaged smoke run for the macOS ${requiredMacosVersion} arm64 acceptance baseline. It does not run live providers, inspect other tool credentials, or claim signing, sandbox, Browser, recovery, or final ACC acceptance.`,
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",
@@ -69,7 +75,7 @@ const report = [
   "",
   "## External gates still not established",
   "",
-  "- Exact macOS Sequoia 15+ Apple Silicon acceptance-machine evidence.",
+  `- Completion of the full macOS ${requiredMacosVersion} Apple Silicon acceptance matrix.`,
   "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
   "- macOS native containment security review; Shell and Auto Debug remain gated.",
   "- Apple signing/notarization and packaged Browser adversarial evidence.",

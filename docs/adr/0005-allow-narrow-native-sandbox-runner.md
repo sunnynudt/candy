@@ -8,4 +8,4 @@ Candy remains a TypeScript product and control plane, but V1 permits one audited
 
 ## Consequences
 
-Model, task, approval, provider, workspace policy, session, Browser, and UI logic remain in TypeScript. The helper never receives provider credentials, prompts, sessions, or unrestricted inherited environments. Shell-enabled Auto and Shell-based Auto Debug remain disabled until both native backends pass escape, no-network, process inheritance, cancellation, packaging, and security review on macOS Sequoia 15+ and Windows 11.
+Model, task, approval, provider, workspace policy, session, Browser, and UI logic remain in TypeScript. The helper never receives provider credentials, prompts, sessions, or unrestricted inherited environments. Shell-enabled Auto and Shell-based Auto Debug remain disabled until both native backends pass escape, no-network, process inheritance, cancellation, packaging, and security review on macOS `26.5.2` Apple Silicon and Windows 11.

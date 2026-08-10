@@ -8,7 +8,7 @@ This document records the accepted product decisions and the remaining grilling 
 
 ### Product foundation
 
-- Candy is a standalone, local-first coding product for macOS Sequoia 15 or newer and Windows 11. Product and control-plane code is TypeScript, with one audited Rust native-helper exception for OS command containment and Windows process-tree ownership.
+- Candy is a standalone, local-first coding product for macOS `26.5.2` on Apple Silicon and Windows 11. Product and control-plane code is TypeScript, with one audited Rust native-helper exception for OS command containment and Windows process-tree ownership.
 - Candy is DeepSeek-first: DeepSeek V4 Flash is the default Primary Model, with DeepSeek V4 Pro and MiniMax M3 selectable per task.
 - MiniMax M3 is a native multimodal Primary Model in V1, not a secondary vision-only service.
 - Browser Workspace and Auto Debug are required V1 capabilities.
@@ -77,8 +77,8 @@ Detailed evidence and pass conditions are in [Compatibility Gate 0](../research/
 3. DeepSeek static contract is frozen; real Flash/Pro credentials, thinking/tool replay, cancellation, rate-limit, and secret-redaction smoke remain.
 4. The first read-only fixture is a Candy-owned TypeScript workspace under `fixtures/read-only-workspace`. The allowed root is that fixture directory; an in-root read requires no approval, while traversal, symlink/reparse escape, mutation, and Shell are rejected rather than escalated.
 5. Cross-platform session loading means reopening Candy-owned session data after an explicit workspace remap; absolute paths are not portable. Windows and macOS execute the same fixture and compare normalized session events rather than native path strings.
-6. Credential backend selected conditionally as `@napi-rs/keyring@1.3.0`; signed macOS Sequoia 15+/Windows 11 package loading and secret non-propagation remain to be proved.
-7. macOS Sequoia 15+ is the accepted minimum. The narrow Rust Sandbox Runner path and explicit Browser takeover fallback are accepted in ADR-0005 through ADR-0007.
+6. Credential backend selected conditionally as `@napi-rs/keyring@1.3.0`; signed macOS `26.5.2` Apple Silicon/Windows 11 package loading and secret non-propagation remain to be proved.
+7. macOS `26.5.2` Apple Silicon is the accepted target. The narrow Rust Sandbox Runner path and explicit Browser takeover fallback are accepted in ADR-0005, ADR-0006, and ADR-0008.
 
 ### Task, workspace, and recovery architecture
 
@@ -122,7 +122,7 @@ Read, in order:
 6. `docs/adr/0004-codex-style-local-control-baseline.md`
 7. `docs/adr/0005-allow-narrow-native-sandbox-runner.md`
 8. `docs/adr/0006-use-explicit-browser-takeover-fallback.md`
-9. `docs/adr/0007-require-macos-sequoia-15.md`
+9. `docs/adr/0008-target-current-macos-26-5-2.md`
 10. `docs/research/compatibility-gate-0.md`
 11. `docs/research/pi-toolchain-baseline.md`
 12. `docs/research/platform-gate-0.md`

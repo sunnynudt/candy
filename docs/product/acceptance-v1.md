@@ -8,7 +8,7 @@ Passing unit tests alone is not product acceptance. Candy V1 is accepted only wh
 
 ## Acceptance policy
 
-- Required platforms are macOS Sequoia 15+ on Apple Silicon and Windows 11 x64.
+- Required platforms are macOS `26.5.2` on Apple Silicon and Windows 11 x64.
 - Every deterministic test must pass. A flaky retry does not convert a failure into a pass.
 - Every required live-provider contract must pass with real credentials through the same Pi Adapter and Provider path used by the product.
 - A provider or network failure may produce a controlled, actionable product result; it must never produce silent fallback, state corruption, or secret exposure.
@@ -40,7 +40,7 @@ V1 release requires zero open P0 and P1 defects. P2 items require explicit produ
 
 | ID      | Environment                                               | Required scope                                                                                   |
 | ------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| ENV-MAC | Current supported macOS Sequoia 15 patch on Apple Silicon | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
+| ENV-MAC | macOS `26.5.2` on Apple Silicon                           | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
 | ENV-WIN | Current supported Windows 11 patch on x64                 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
 
 Older macOS versions, Intel macOS, and Windows versions before Windows 11 are not V1 acceptance targets.

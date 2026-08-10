@@ -5,7 +5,7 @@
 - 适用范围：Candy V1 技术定版前的 Pi 0.84.1、DeepSeek、MiniMax、Node.js、TypeScript、npm 与 Electron 兼容性核查
 - 证据规则：只使用供应商官方文档、官方源码/tag、官方 npm 注册表和官方运行时文档；用户截图仅作为待核对线索，不作为 API 合同
 
-> 后续决策（2026-08-09）：Candy 已在 ADR-0005 至 ADR-0007 中接受窄 Rust Sandbox Runner、显式 Browser 接管回退，并将最低系统定为 macOS Sequoia 15；Electron `43.2.0` 因而成为正式 Gate 基线。这些决策不替代本报告列出的真实凭证与双平台验证。
+> 当前决策（2026-08-10）：ADR-0008 以当前 macOS `26.5.2` Apple Silicon 验收机器取代了 ADR-0007 的 Sequoia 15+ 谓词；窄 Rust Sandbox Runner、显式 Browser 接管回退与 Electron `43.2.0` Gate 基线保持不变。这些决策不替代本报告列出的真实凭证与双平台验证。
 
 ## 1. 结论摘要
 
@@ -231,7 +231,7 @@ Windows 11 与 macOS 均有 Node 22 官方 64 位发行路径；Electron 也支�
 
 ### ✅ G0-R2：Electron major 已随最低 macOS 决策冻结
 
-- Candy V1 已在 ADR-0007 将最低系统定为 macOS Sequoia 15，并在技术方案中固定 Electron `43.2.0`。
+- Candy V1 已在 ADR-0008 将 macOS 验收目标定为 `26.5.2` Apple Silicon，并在技术方案中固定 Electron `43.2.0`。
 - Electron major 不再是方案阻塞项；签名、打包、app-server 子进程和双平台真机验证仍属于 release Gate。
 
 ## 9. 建议的最小首切合同
@@ -270,7 +270,7 @@ Windows 11 与 macOS 均有 Node 22 官方 64 位发行路径；Electron 也支�
 | ID | 环境 | 验证项 | 通过标准 |
 | --- | --- | --- | --- |
 | LIVE-PI-01 | 干净 Windows 11 | Node/npm 固定版本下 `npm ci` 安装 Pi 0.84.1、仅从公开 exports 加载、创建/释放内存会话 | 无原生依赖或 ESM 加载错误；进程正常退出 |
-| LIVE-PI-02 | macOS Sequoia 15+ Apple Silicon | 同 LIVE-PI-01，并验证持久 session 打开/恢复 | 与 Windows 行为一致；路径无 POSIX/Windows 假设泄漏 |
+| LIVE-PI-02 | macOS `26.5.2` Apple Silicon | 同 LIVE-PI-01，并验证持久 session 打开/恢复 | 与 Windows 行为一致；路径无 POSIX/Windows 假设泄漏 |
 | LIVE-DS-01 | 真实 DeepSeek Key | Flash 非 thinking SSE 文本 | 首 token、delta、结束与 usage 正常 |
 | LIVE-DS-02 | 真实 DeepSeek Key | Flash thinking + 只读 tool + tool result + 后续回答 | `reasoning_content` 回传正确，无 400 |
 | LIVE-DS-03 | 真实 DeepSeek Key | Pro 重复 LIVE-DS-01/02 | Chat 合同与 Flash 一致可用 |
@@ -295,7 +295,7 @@ Windows 11 与 macOS 均有 Node 22 官方 64 位发行路径；Electron 也支�
 | V1 MiniMax M3 文本/图片 | **条件确认**：官方合同成立，Pi 公共类型可承载，待真实 Token Plan + Pi 冒烟 |
 | V1 MiniMax M3 视频 | **否决于 Pi 0.84.1 路径**：保持 UI gated/不可用，除非重新决策并重跑 Gate |
 | Node/TS/npm 基线 | **已确认**：Pi-compatible Node 22.23.2、npm 10.9.8、TypeScript 5.9.3；与 Pi 作为一个兼容性列车升级 |
-| Electron major | **已确认**：macOS Sequoia 15+ 基线使用 Electron `43.2.0` |
+| Electron major | **已确认**：macOS `26.5.2` Apple Silicon 基线使用 Electron `43.2.0` |
 
 ## 12. 需要在编码前重新核查的易变事实
 
