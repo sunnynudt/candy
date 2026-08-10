@@ -17,7 +17,7 @@ Updated: 2026-08-10
 
 Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is `Pass` only when its mapped acceptance evidence is complete.
 
-Windows 11 x64 implementation and acceptance are scheduled for a later work packet when a suitable host is available. They remain required for the final cross-platform V1 release claim; see `G0-WIN` in `docs/implementation/blockers-v1.md` for the deferred checklist.
+Windows 11 x64 implementation and acceptance are scheduled for a later work packet when a suitable host is available. For ACC-12, the current work packet measures ten runs on macOS `26.5.2` Apple Silicon first; the equivalent Windows ten-run matrix remains pending under `G0-WIN`. Both remain required for the final cross-platform V1 release claim; see `G0-WIN` in `docs/implementation/blockers-v1.md` for the deferred checklist.
 
 ## 2026-08-10 persistence and workspace checkpoint
 

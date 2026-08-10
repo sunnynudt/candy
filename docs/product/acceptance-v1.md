@@ -38,10 +38,10 @@ V1 release requires zero open P0 and P1 defects. P2 items require explicit produ
 
 ### Platform matrix
 
-| ID      | Environment                                               | Required scope                                                                                   |
-| ------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| ENV-MAC | macOS `26.5.2` on Apple Silicon                           | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
-| ENV-WIN | Current supported Windows 11 patch on x64                 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
+| ID      | Environment                               | Required scope                                                                                   |
+| ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| ENV-MAC | macOS `26.5.2` on Apple Silicon           | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
+| ENV-WIN | Current supported Windows 11 patch on x64 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
 
 Older macOS versions, Intel macOS, and Windows versions before Windows 11 are not V1 acceptance targets.
 
@@ -207,6 +207,8 @@ Required outcomes:
 ### ACC-12 Local responsiveness
 
 Targets are measured over ten runs on each acceptance machine, excluding provider and public-network latency:
+
+Execution order follows host availability: complete the ten-run measurement on the current `ENV-MAC` macOS `26.5.2` Apple Silicon machine first. The identical `ENV-WIN` measurement remains a `G0-WIN` pending task until a Windows 11 x64 host is available. Both measurements remain required before a final cross-platform V1 release claim.
 
 | Metric                                                   | V1 acceptance target                                       |
 | -------------------------------------------------------- | ---------------------------------------------------------- |
