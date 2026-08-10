@@ -39,7 +39,9 @@
     "smoke:safe-edit": "npm run build && node scripts/smoke-safe-edit.mjs",
     "smoke:desktop": "npm run build && node scripts/smoke-desktop.mjs",
     "package:desktop:macos": "npm run build && node scripts/package-desktop-macos.mjs",
+    "package:desktop:windows": "npm run build && node scripts/package-desktop-windows.mjs",
     "smoke:desktop:packaged": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged.mjs && node scripts/smoke-packaged-keychain.mjs",
+    "smoke:desktop:packaged:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-windows.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"
   },

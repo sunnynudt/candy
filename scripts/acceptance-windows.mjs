@@ -33,6 +33,7 @@ const steps = [
   "smoke:app-server",
   "smoke:recovery:windows",
   "smoke:desktop",
+  "smoke:desktop:packaged:windows",
   "measure:windows:responsiveness",
 ];
 const results = [];
@@ -67,7 +68,7 @@ const report = [
   "",
   "## Required Windows evidence still open",
   "",
-  "- Windows signed Desktop installation, packaged Node app-server lifecycle, recovery, and packaged Browser evidence.",
+  "- Windows signed Desktop installation, packaged active-owner/tool interruption recovery, and packaged Browser evidence; the unsigned packaged JSONL smoke is recorded separately.",
   "- Full Windows Credential Manager lifecycle for the already-present DeepSeek account; the synthetic empty MiniMax account was tested and real credentials were not changed.",
   "- Windows G2 OS-level no-network and arbitrary-command workspace containment, runtime reparse/race prevention, packaging, and independent security review. Shell Auto and Shell Auto Debug remain disabled.",
   "- Browser Workspace site authorization, observation revisions, Take Control, downloads, and adversarial page matrix.",
