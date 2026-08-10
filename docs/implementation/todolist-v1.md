@@ -2,7 +2,7 @@
 
 更新日期：2026-08-10
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`514b3b779e600e826b2dc1f42125a1972876ea70`
+当前基线提交：`e25ef550f5a6c2c1ecf6a9bd7a0cd848a4dbd129`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -39,7 +39,9 @@
   已完成：有界 Auto 执行、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖。
   待完成：上述 Windows 交互、证据和原生验证器集成，以及 Windows 打包证据。
 
-- ⬜ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。OpenCode 配置不作为自动凭据来源；结果只形成 Windows 脱敏本地证据。
+- ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
+  已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。
+  待完成：MiniMax Windows Gate 与 Token Plan entitlement。OpenCode 配置不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
 
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
   已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试。

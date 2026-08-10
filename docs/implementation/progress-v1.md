@@ -29,6 +29,12 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - Windows workspace-boundary coverage uses a directory junction, which is available to a normal Windows user session, and confirms the Pi tool host rejects traversal into the junction target. Real Git task creation, Apply, discard, and restart handoff fixtures now pass on Windows.
 - This closes no acceptance Gate by itself. Windows Job Object containment, broader reparse-point fixtures, packaged Desktop/Keyring, signing, recovery, Browser, live providers, and ACC-12 remain open.
 
+## 2026-08-10 Windows 11 live DeepSeek checkpoint
+
+- The user-authorized local DeepSeek credential was written to Candy's own Windows Credential Manager path without printing or recording its value. The source configuration was not copied into the repository.
+- `npm run gate:live:deepseek` completed all seven Windows scenarios: `LIVE-DS-01..04`, cancellation, controlled 401/429/timeout recovery, secret-free session scan, and secret-lease release. The runner used only `https://api.deepseek.com` and wrote a sanitized, ignored local report at `out/acceptance/live/deepseek-latest.md`.
+- This advances the Windows DeepSeek Gate only. MiniMax, macOS repetition, packaging, Credential Manager lifecycle, and ACC-01..12 acceptance remain separate work.
+
 ## 2026-08-10 durable queued-task reorder checkpoint
 
 - SQLite metadata now moves a queued task before another queued task inside an immediate transaction and stores contiguous queue positions. The reordered sequence survives reopening the Candy-owned database.
