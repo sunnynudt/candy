@@ -34,6 +34,7 @@ const steps = [
   "smoke:recovery:windows",
   "smoke:attachment-recovery:windows",
   "smoke:cross-client:windows",
+  "smoke:concurrency:windows",
   "smoke:desktop",
   "smoke:desktop:packaged:windows",
   "smoke:browser:windows",
