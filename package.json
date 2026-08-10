@@ -25,6 +25,7 @@
     "smoke:credential-manager:packaged:windows": "node scripts/smoke-credential-manager-packaged-windows.mjs",
     "smoke:native:windows": "npm run build && node scripts/smoke-native-windows.mjs",
     "smoke:recovery:windows": "npm run build && node scripts/smoke-recovery-windows.mjs",
+    "smoke:attachment-recovery:windows": "npm run build && node scripts/smoke-attachment-recovery-windows.mjs",
     "smoke:cross-client:windows": "npm run build && node scripts/smoke-cross-client-windows.mjs",
     "measure:windows:responsiveness": "npm run build && node scripts/measure-windows-responsiveness.mjs",
     "acceptance:windows": "npm run build && node scripts/acceptance-windows.mjs",

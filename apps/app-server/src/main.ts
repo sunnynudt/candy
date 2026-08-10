@@ -892,6 +892,17 @@ function samePathList(left: readonly string[], right: readonly string[]): boolea
   return a.length === b.length && a.every((entry, index) => entry === b[index]);
 }
 
+function createDeterministicRecoveryEngine(): RecoverableAgentEngine {
+  const engine = new DeterministicAgentEngine(
+    new SystemClock(),
+    "Candy deterministic recovery fixture",
+  );
+  return {
+    runTurn: (input, signal) => engine.runTurn(input, signal),
+    recoverPrompt: async () => "Candy deterministic recovery fixture prompt",
+  };
+}
+
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const sandboxRunner = resolveSandboxRunner();
@@ -900,7 +911,7 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments),
     engine: deterministicRecoverySmoke
-      ? new DeterministicAgentEngine(new SystemClock(), "Candy deterministic recovery fixture")
+      ? createDeterministicRecoveryEngine()
       : new PiAppServerEngine(
           new PiAgentEngine(paths.sessions, async () => {
             const lease = resolveCredential("deepseek");
