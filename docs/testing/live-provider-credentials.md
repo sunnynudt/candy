@@ -6,14 +6,14 @@ This procedure defines how Candy development and acceptance tests receive real D
 
 ## Local configuration audit result
 
-A redacted local audit on 2026-08-09 established only the following facts:
+A redacted local audit on 2026-08-10 established only the following facts:
 
-- an existing Claude Code configuration selects the domestic MiniMax Anthropic-compatible endpoint and MiniMax M3, and a credential is present;
+- an existing Claude Code configuration declares MiniMax with the configuration model identifier `MiniMax-M3[1M]`, selects the domestic MiniMax Anthropic-compatible endpoint `https://api.minimaxi.com`, and has authentication information present;
 - local Claude Code usage metadata contains entries for DeepSeek V4 Flash, DeepSeek V4 Pro, and MiniMax M3;
 - an existing OpenCode authentication store contains a DeepSeek API credential entry;
 - the user reports these provider configurations are currently usable.
 
-No credential value, credential fragment, reversible fingerprint, complete configuration, external local path, or unrelated project data was copied into Candy or this document. These facts show that suitable accounts likely exist; they do not close Candy's live Pi/Provider contract tests.
+No credential value, credential fragment, reversible fingerprint, complete configuration, external local path, or unrelated project data was read into, copied into, or recorded by Candy or this document. These facts show that suitable accounts likely exist; they do not close Candy's live Pi/Provider contract tests.
 
 ## What Candy may and may not do
 

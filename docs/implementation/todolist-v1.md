@@ -41,7 +41,8 @@
 
 - ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
   已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。
-  待完成：MiniMax Windows Gate 与 Token Plan entitlement。OpenCode 配置不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
+  已完成：经用户授权的脱敏读取确认 Claude Code 已声明 MiniMax，配置模型标识为 `MiniMax-M3[1M]`，认证信息存在，且端点为 `https://api.minimaxi.com`；未读取或复制 Token。此项仅为发现证据，Candy 没有 Claude Code → MiniMax 自动导入器。
+  待完成：MiniMax Windows Gate 与 Token Plan entitlement。Claude Code/OpenCode 配置均不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
 
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
   已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试。
