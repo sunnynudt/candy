@@ -23,6 +23,8 @@ export interface TaskSnapshot {
   readonly attachmentIds?: readonly string[];
   readonly workspacePath?: string;
   readonly workspaceBaseline?: string;
+  readonly workspaceState?: "local" | "worktree";
+  readonly worktreePath?: string;
   readonly ownerId?: string;
 }
 
@@ -56,6 +58,10 @@ export interface WorkspaceApplyCommand {
   readonly untracked: readonly string[];
 }
 
+export interface WorkspaceDiscardCommand {
+  readonly type: "workspace.discard";
+}
+
 export interface ApprovalCommand {
   readonly type: "approval.respond";
   readonly approvalId: string;
@@ -63,7 +69,12 @@ export interface ApprovalCommand {
 }
 
 export type RuntimeCommand =
-  SnapshotCommand | CreateTaskCommand | TaskActionCommand | WorkspaceApplyCommand | ApprovalCommand;
+  | SnapshotCommand
+  | CreateTaskCommand
+  | TaskActionCommand
+  | WorkspaceApplyCommand
+  | WorkspaceDiscardCommand
+  | ApprovalCommand;
 
 export interface CommandEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -250,6 +261,15 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   }
   if (value.workspaceBaseline !== undefined)
     assertBaseCommit(value.workspaceBaseline, "snapshot.workspaceBaseline");
+  if (
+    value.workspaceState !== undefined &&
+    value.workspaceState !== "local" &&
+    value.workspaceState !== "worktree"
+  ) {
+    throw new ProtocolValidationError("invalid_message", "snapshot.workspaceState is unsupported.");
+  }
+  if (value.worktreePath !== undefined)
+    assertWorkspacePath(value.worktreePath, "snapshot.worktreePath");
 }
 
 function validateCommand(value: unknown): asserts value is RuntimeCommand {
@@ -291,6 +311,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     assertRelativePaths(value.untracked, "command.untracked");
     return;
   }
+  if (value.type === "workspace.discard") return;
   if (value.type === "approval.respond") {
     assertString(value.approvalId, "command.approvalId");
     if (value.decision !== "approve" && value.decision !== "deny") {

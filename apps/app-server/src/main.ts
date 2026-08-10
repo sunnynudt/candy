@@ -30,16 +30,20 @@ import {
   ApplyChangesService,
   DeterministicAgentEngine,
   AttachmentStore,
+  GitWorktreeManager,
   GitWorkspaceChangeTracker,
   MacSandboxRunner,
   MacSandboxValidator,
+  WorkspaceHandoff,
   type AgentEngine,
   type AgentObservation,
   type AgentTurnInput,
   type ApplyChangesInput,
+  type GitWorktreePlan,
   type RecoverableAgentEngine,
   type MacSandboxValidatorCommand,
   type WorkspaceChangeTracker,
+  planGitWorktree,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -116,6 +120,8 @@ export interface AppServerControllerOptions {
   readonly changeTracker?: WorkspaceChangeTracker;
   readonly activeSecrets?: () => readonly string[];
   readonly applyChanges?: ApplyChangesRunner;
+  readonly worktreeRoot?: string;
+  readonly worktreeManager?: TaskWorktreeManager;
 }
 
 interface AppServerValidator {
@@ -128,6 +134,12 @@ interface AppServerValidator {
 
 interface ApplyChangesRunner {
   apply(sourceRoot: string, input: ApplyChangesInput): Promise<"applied">;
+}
+
+interface TaskWorktreeManager {
+  create(plan: GitWorktreePlan): Promise<void>;
+  inspect(plan: GitWorktreePlan): Promise<string>;
+  discard(plan: GitWorktreePlan): Promise<void>;
 }
 
 type Emit = (message: ProtocolMessage) => void;
@@ -157,6 +169,9 @@ export class AppServerController {
   readonly #changeTracker: WorkspaceChangeTracker;
   readonly #activeSecrets: (() => readonly string[]) | undefined;
   readonly #applyChanges: ApplyChangesRunner | undefined;
+  readonly #worktreeRoot: string | undefined;
+  #worktreeManager: TaskWorktreeManager | undefined;
+  readonly #handoffs = new Map<string, WorkspaceHandoff>();
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
   readonly #active = new Map<string, ActiveTask>();
@@ -175,6 +190,8 @@ export class AppServerController {
     this.#changeTracker = options.changeTracker ?? new GitWorkspaceChangeTracker();
     this.#activeSecrets = options.activeSecrets;
     this.#applyChanges = options.applyChanges;
+    this.#worktreeRoot = options.worktreeRoot;
+    this.#worktreeManager = options.worktreeManager;
   }
 
   public get state(): AppServerState {
@@ -202,6 +219,19 @@ export class AppServerController {
       if (!(await stat(command.workspacePath)).isDirectory())
         throw new Error("Task workspace is not a directory.");
       const workspaceBaseline = await this.#changeTracker.captureBaseline(command.workspacePath);
+      let worktreePath: string | undefined;
+      if (command.approvalProfile === "auto" && workspaceBaseline !== undefined) {
+        const plan = this.planForTask(message.taskId, command.workspacePath, workspaceBaseline);
+        try {
+          await this.worktreeManager().create(plan);
+        } catch (error) {
+          throw new Error("Task Worktree creation failed.", { cause: error });
+        }
+        worktreePath = plan.worktreePath;
+        const handoff = new WorkspaceHandoff();
+        handoff.startWorktree();
+        this.#handoffs.set(message.taskId, handoff);
+      }
       const metadata = this.#store.create(
         message.taskId,
         command.approvalProfile,
@@ -211,6 +241,7 @@ export class AppServerController {
         command.workspacePath,
         command.validator,
         workspaceBaseline,
+        worktreePath,
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
@@ -302,8 +333,9 @@ export class AppServerController {
         throw new Error("Apply Changes requires released task ownership.");
       if (existing.workspaceBaseline === undefined)
         throw new Error("Apply Changes baseline is unavailable.");
+      const executionPath = existing.worktreePath ?? existing.workspacePath;
       const reviewed = await this.#changeTracker.inspect(
-        existing.workspacePath,
+        executionPath,
         existing.workspaceBaseline,
         [],
       );
@@ -316,17 +348,44 @@ export class AppServerController {
         throw new ApplyChangesBlockedError("Reviewed workspace changed before Apply.");
       }
       const runner = this.#applyChanges ?? new ApplyChangesService(existing.workspacePath);
-      await runner.apply(existing.workspacePath, {
-        targetIsGit: true,
-        targetClean: true,
-        expectedBase: existing.workspaceBaseline,
-        actualBase: existing.workspaceBaseline,
-        paths: [...command.tracked, ...command.untracked],
-        untrackedPaths: command.untracked,
-        patchText: reviewed.patchText,
-        activeSecrets: this.#activeSecrets?.() ?? [],
-      });
+      const handoff =
+        existing.worktreePath === undefined ? undefined : this.#handoffs.get(existing.taskId);
+      handoff?.beginApply("allow");
+      try {
+        await runner.apply(executionPath, {
+          targetIsGit: true,
+          targetClean: true,
+          expectedBase: existing.workspaceBaseline,
+          actualBase: existing.workspaceBaseline,
+          paths: [...command.tracked, ...command.untracked],
+          untrackedPaths: command.untracked,
+          patchText: reviewed.patchText,
+          activeSecrets: this.#activeSecrets?.() ?? [],
+        });
+      } catch (error) {
+        if (existing.worktreePath !== undefined) this.#handoffs.delete(existing.taskId);
+        throw error;
+      }
+      if (existing.worktreePath !== undefined) {
+        await this.worktreeManager().discard(this.planFromMetadata(existing));
+        const updated = this.#store.updateWorktree(existing.taskId);
+        handoff?.finishApply();
+        this.#handoffs.delete(existing.taskId);
+        return [this.snapshot(updated)];
+      }
       return [this.snapshot(existing)];
+    }
+
+    if (command.type === "workspace.discard") {
+      if (existing.state !== "completed") throw new Error("Discard requires a completed task.");
+      if (existing.ownerId !== undefined)
+        throw new Error("Discard requires released task ownership.");
+      if (existing.worktreePath === undefined)
+        throw new Error("Task has no Task Worktree to discard.");
+      await this.worktreeManager().discard(this.planFromMetadata(existing));
+      const updated = this.#store.updateWorktree(existing.taskId);
+      this.#handoffs.delete(existing.taskId);
+      return [this.snapshot(updated)];
     }
 
     if (command.type === "approval.respond") {
@@ -358,9 +417,9 @@ export class AppServerController {
       if (!current) throw new Error("Task metadata is unavailable.");
       if (!path.isAbsolute(current.workspacePath))
         throw new Error("Task workspace is unavailable after restart.");
+      const executionPath = current.worktreePath ?? current.workspacePath;
       const prompt =
-        this.#prompts.get(taskId) ??
-        (await this.#engine.recoverPrompt?.(taskId, current.workspacePath));
+        this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, executionPath));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       const images =
         current.attachmentIds.length === 0
@@ -377,7 +436,7 @@ export class AppServerController {
           taskId,
           prompt,
           model: current.model,
-          cwd: current.workspacePath,
+          cwd: executionPath,
           approvalProfile: current.approvalProfile,
           ...(images === undefined ? {} : { images }),
         },
@@ -397,7 +456,7 @@ export class AppServerController {
           emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
           const result = await this.#validatorRunner.run(
             metadata.validator,
-            metadata.workspacePath,
+            executionPath,
             active.abort.signal,
           );
           emit(
@@ -465,10 +524,42 @@ export class AppServerController {
     return this.#store.queued().reduce((max, item) => Math.max(max, item.queueOrder ?? 0), 0) + 1;
   }
 
+  private worktreeManager(): TaskWorktreeManager {
+    if (this.#worktreeManager !== undefined) return this.#worktreeManager;
+    if (this.#worktreeRoot === undefined)
+      throw new Error("Task Worktree root is unavailable on this installation.");
+    this.#worktreeManager = new GitWorktreeManager(this.#worktreeRoot);
+    return this.#worktreeManager;
+  }
+
+  private planForTask(taskId: string, workspacePath: string, baseCommit: string): GitWorktreePlan {
+    if (this.#worktreeRoot === undefined)
+      throw new Error("Task Worktree root is unavailable on this installation.");
+    return planGitWorktree(
+      workspacePath,
+      path.join(this.#worktreeRoot, taskId),
+      taskId,
+      baseCommit,
+    );
+  }
+
+  private planFromMetadata(metadata: TaskMetadata): GitWorktreePlan {
+    if (metadata.worktreePath === undefined)
+      throw new Error("Task has no associated Task Worktree.");
+    if (metadata.workspaceBaseline === undefined)
+      throw new Error("Task Worktree baseline is unavailable.");
+    return planGitWorktree(
+      metadata.workspacePath,
+      metadata.worktreePath,
+      metadata.taskId,
+      metadata.workspaceBaseline,
+    );
+  }
+
   private async workspaceChanges(metadata: TaskMetadata): Promise<EventEnvelope> {
     const activeSecrets = this.#activeSecrets?.() ?? [];
     const changes = await this.#changeTracker.inspect(
-      metadata.workspacePath,
+      metadata.worktreePath ?? metadata.workspacePath,
       metadata.workspaceBaseline,
       activeSecrets,
     );
@@ -489,6 +580,7 @@ export class AppServerController {
   }
 
   private snapshot(metadata: TaskMetadata | TaskSnapshot): EventEnvelope {
+    const worktreePath = "worktreePath" in metadata ? metadata.worktreePath : undefined;
     return this.event(metadata.taskId, metadata.revision, {
       type: "snapshot",
       snapshot: {
@@ -504,6 +596,8 @@ export class AppServerController {
         ...(metadata.workspaceBaseline === undefined
           ? {}
           : { workspaceBaseline: metadata.workspaceBaseline }),
+        workspaceState: worktreePath === undefined ? "local" : "worktree",
+        ...(worktreePath === undefined ? {} : { worktreePath }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
       },
     });
@@ -592,6 +686,7 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
     ),
     ownerId: `app-server:${process.pid}`,
     activeSecrets: resolveActiveProviderSecrets,
+    worktreeRoot: paths.worktrees,
     ...(sandboxRunner === undefined
       ? {}
       : {

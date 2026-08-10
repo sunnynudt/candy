@@ -17,6 +17,8 @@ export interface RendererTaskProjection {
   readonly model: CandyModelId;
   readonly workspacePath?: string;
   readonly workspaceBaseline?: string;
+  readonly workspaceState: "local" | "worktree";
+  readonly worktreePath?: string;
   readonly changedFiles: readonly string[];
   readonly trackedFiles: readonly string[];
   readonly untrackedFiles: readonly string[];
@@ -70,6 +72,10 @@ export interface DesktopPreloadApi {
       readonly expectedBase: string;
       readonly tracked: readonly string[];
       readonly untracked: readonly string[];
+    }): Promise<RendererTaskProjection>;
+    discard(input: {
+      readonly taskId: string;
+      readonly expectedRevision: number;
     }): Promise<RendererTaskProjection>;
     onUpdate(listener: (projection: RendererTaskProjection) => void): () => void;
   };

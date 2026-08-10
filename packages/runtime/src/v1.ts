@@ -794,16 +794,36 @@ export interface ApplyChangesInput {
   readonly activeSecrets: readonly string[];
 }
 
+/** Platform path operations; the Node `path` module satisfies this shape on any host. */
+export interface PathSeam {
+  readonly resolve: (...paths: string[]) => string;
+  readonly relative: (from: string, to: string) => string;
+  readonly isAbsolute: (value: string) => boolean;
+  readonly sep: string;
+}
+
 export class ApplyChangesGuard {
-  public constructor(private readonly targetRoot: string) {}
+  readonly #path: PathSeam;
+
+  public constructor(
+    private readonly targetRoot: string,
+    pathSeam: PathSeam = path,
+  ) {
+    this.#path = pathSeam;
+  }
 
   public check(input: ApplyChangesInput): "allow" | "blocked" {
     if (!input.targetIsGit || !input.targetClean || input.expectedBase !== input.actualBase)
       return "blocked";
     for (const requested of input.paths) {
-      const absolute = path.resolve(this.targetRoot, requested);
-      const relative = path.relative(path.resolve(this.targetRoot), absolute);
-      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      const absolute = this.#path.resolve(this.targetRoot, requested);
+      const root = this.#path.resolve(this.targetRoot);
+      const relative = this.#path.relative(root, absolute);
+      if (
+        relative === ".." ||
+        relative.startsWith(`..${this.#path.sep}`) ||
+        this.#path.isAbsolute(relative)
+      )
         return "blocked";
     }
     if (input.activeSecrets.some((secret) => secret.length > 0 && input.patchText.includes(secret)))
@@ -915,12 +935,15 @@ export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
 
 export class GitWorktreeManager {
   readonly #runner: GitCommandRunner;
+  readonly #path: PathSeam;
 
   public constructor(
     private readonly worktreeRoot: string,
     runner: GitCommandRunner = new NodeGitCommandRunner(),
+    pathSeam: PathSeam = path,
   ) {
     this.#runner = runner;
+    this.#path = pathSeam;
   }
 
   public async create(plan: GitWorktreePlan): Promise<void> {
@@ -947,6 +970,15 @@ export class GitWorktreeManager {
     await this.#runner.run(plan.removeArgs, plan.repository);
   }
 
+  /** Explicitly discard a task-owned worktree after review, then remove it. */
+  public async discard(plan: GitWorktreePlan): Promise<void> {
+    await this.inspect(plan);
+    await this.#runner.run(["reset", "--hard", plan.baseCommit], plan.worktreePath);
+    await this.#runner.run(["clean", "-fd"], plan.worktreePath);
+    await this.unlock(plan);
+    await this.#runner.run(plan.removeArgs, plan.repository);
+  }
+
   public async changes(
     plan: GitWorktreePlan,
   ): Promise<GitChangeManifest & { readonly patchText: string }> {
@@ -970,10 +1002,14 @@ export class GitWorktreeManager {
   }
 
   private assertWorktreePath(worktreePath: string): void {
-    const root = path.resolve(this.worktreeRoot);
-    const candidate = path.resolve(worktreePath);
-    const relative = path.relative(root, candidate);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    const root = this.#path.resolve(this.worktreeRoot);
+    const candidate = this.#path.resolve(worktreePath);
+    const relative = this.#path.relative(root, candidate);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${this.#path.sep}`) ||
+      this.#path.isAbsolute(relative)
+    )
       throw new Error("Task worktree is outside Candy's worktree root.");
   }
 }

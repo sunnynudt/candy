@@ -44,6 +44,10 @@ const api: DesktopPreloadApi = {
       ipcRenderer.invoke("task.apply", input) as Promise<
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["apply"]>>
       >,
+    discard: (input) =>
+      ipcRenderer.invoke("task.discard", input) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["tasks"]["discard"]>>
+      >,
     onUpdate: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { PiAgentEngineInput } from "@candy/pi-adapter";
 import { type CommandEnvelope, type ProtocolMessage } from "@candy/protocol";
-import { AttachmentStore, type AgentTurnInput, type ApplyChangesInput } from "@candy/runtime";
+import {
+  AttachmentStore,
+  type AgentEngine,
+  type AgentTurnInput,
+  type ApplyChangesInput,
+} from "@candy/runtime";
 import { AppServerController, PiAppServerEngine } from "./main.js";
 
 function command(
@@ -19,6 +26,60 @@ function command(
 
 function eventTypes(messages: readonly ProtocolMessage[]): string[] {
   return messages.flatMap((message) => (message.kind === "event" ? [message.event.type] : []));
+}
+
+async function waitForCompletion(
+  background: readonly ProtocolMessage[],
+  taskId: string,
+): Promise<void> {
+  for (
+    let attempt = 0;
+    attempt < 200 &&
+    !background.some(
+      (message) =>
+        message.kind === "event" &&
+        message.event.type === "snapshot" &&
+        message.event.snapshot.taskId === taskId &&
+        message.event.snapshot.state === "completed",
+    );
+    attempt += 1
+  )
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+}
+
+function createGitFixture(root: string): { readonly repository: string; readonly base: string } {
+  const repository = path.join(root, "repo");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  git(["init", "-q"], repository);
+  writeFileSync(path.join(repository, "README.md"), "base\n");
+  git(["add", "README.md"], repository);
+  git(
+    [
+      "-c",
+      "user.name=Candy Fixture",
+      "-c",
+      "user.email=candy-fixture@example.invalid",
+      "commit",
+      "-qm",
+      "base",
+    ],
+    repository,
+  );
+  return { repository, base: git(["rev-parse", "HEAD"], repository).trim() };
+}
+
+function worktreeEditingEngine(): AgentEngine {
+  return {
+    async *runTurn(input: AgentTurnInput) {
+      if (input.cwd !== undefined) {
+        await writeFile(path.join(input.cwd, "README.md"), "changed by task\n");
+        await writeFile(path.join(input.cwd, "new.txt"), "untracked by task\n");
+      }
+      yield { type: "turn.completed", taskId: input.taskId, at: Date.now() };
+    },
+  };
 }
 
 test("app-server creates, runs, streams and durably completes one task", async () => {
@@ -230,7 +291,7 @@ test("app-server publishes the reviewed workspace changes before task completion
       command("task-changes", "create-changes", 0, {
         type: "task.create",
         prompt: "edit fixture",
-        approvalProfile: "auto",
+        approvalProfile: "read-only",
         workspacePath: process.cwd(),
       }),
     );
@@ -310,7 +371,7 @@ test("app-server applies reviewed changes through the reviewed command seam", as
       command("task-apply", "create-apply", 0, {
         type: "task.create",
         prompt: "review then apply",
-        approvalProfile: "auto",
+        approvalProfile: "read-only",
         workspacePath: workspace,
       }),
     );
@@ -366,6 +427,199 @@ test("app-server applies reviewed changes through the reviewed command seam", as
   }
 });
 
+test("app-server runs an auto Git task in a Task Worktree and hands off reviewed changes to Local", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-worktree-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  try {
+    const { repository, base } = createGitFixture(root);
+    const controller = new AppServerController({
+      engine: worktreeEditingEngine(),
+      worktreeRoot,
+    });
+    const background: ProtocolMessage[] = [];
+    try {
+      const created = await controller.dispatch(
+        command("task-worktree", "create-worktree", 0, {
+          type: "task.create",
+          prompt: "edit in worktree",
+          approvalProfile: "auto",
+          workspacePath: repository,
+        }),
+      );
+      const createdSnapshot = created.at(-1);
+      assert.ok(createdSnapshot?.kind === "event" && createdSnapshot.event.type === "snapshot");
+      if (createdSnapshot?.kind === "event" && createdSnapshot.event.type === "snapshot") {
+        assert.equal(createdSnapshot.event.snapshot.workspaceState, "worktree");
+        assert.equal(createdSnapshot.event.snapshot.worktreePath?.startsWith(worktreeRoot), true);
+        assert.equal(createdSnapshot.event.snapshot.workspaceBaseline, base);
+      }
+      assert.equal(existsSync(path.join(worktreeRoot, "task-worktree", "README.md")), true);
+      assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+
+      await controller.dispatch(
+        command("task-worktree", "run-worktree", 0, { type: "task.run" }),
+        (message) => background.push(message),
+      );
+      await waitForCompletion(background, "task-worktree");
+      const changes = background.find(
+        (message) => message.kind === "event" && message.event.type === "workspace.changes",
+      );
+      assert.ok(changes?.kind === "event" && changes.event.type === "workspace.changes");
+      if (changes?.kind === "event" && changes.event.type === "workspace.changes") {
+        assert.deepEqual(changes.event.tracked, ["README.md"]);
+        assert.deepEqual(changes.event.untracked, ["new.txt"]);
+      }
+
+      const applied = await controller.dispatch(
+        command("task-worktree", "apply-worktree", 2, {
+          type: "workspace.apply",
+          expectedBase: base,
+          tracked: ["README.md"],
+          untracked: ["new.txt"],
+        }),
+      );
+      const appliedSnapshot = applied.at(-1);
+      assert.ok(appliedSnapshot?.kind === "event" && appliedSnapshot.event.type === "snapshot");
+      if (appliedSnapshot?.kind === "event" && appliedSnapshot.event.type === "snapshot") {
+        assert.equal(appliedSnapshot.event.snapshot.state, "completed");
+        assert.equal(appliedSnapshot.event.snapshot.workspaceState, "local");
+        assert.equal(appliedSnapshot.event.snapshot.worktreePath, undefined);
+      }
+      assert.equal(existsSync(path.join(worktreeRoot, "task-worktree")), false);
+      assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed by task\n");
+      assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked by task\n");
+      assert.equal(
+        execFileSync("git", ["diff", "--cached", "--quiet"], {
+          cwd: repository,
+          stdio: ["ignore", "pipe", "pipe"],
+        }).length,
+        0,
+      );
+    } finally {
+      controller.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server discards a completed Task Worktree without touching Local", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-discard-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  try {
+    const { repository } = createGitFixture(root);
+    const controller = new AppServerController({
+      engine: worktreeEditingEngine(),
+      worktreeRoot,
+    });
+    const background: ProtocolMessage[] = [];
+    try {
+      await controller.dispatch(
+        command("task-discard", "create-discard", 0, {
+          type: "task.create",
+          prompt: "edit then discard",
+          approvalProfile: "auto",
+          workspacePath: repository,
+        }),
+      );
+      await controller.dispatch(
+        command("task-discard", "run-discard", 0, { type: "task.run" }),
+        (message) => background.push(message),
+      );
+      await waitForCompletion(background, "task-discard");
+
+      const discarded = await controller.dispatch(
+        command("task-discard", "discard-task", 2, { type: "workspace.discard" }),
+      );
+      const snapshot = discarded.at(-1);
+      assert.ok(snapshot?.kind === "event" && snapshot.event.type === "snapshot");
+      if (snapshot?.kind === "event" && snapshot.event.type === "snapshot") {
+        assert.equal(snapshot.event.snapshot.workspaceState, "local");
+        assert.equal(snapshot.event.snapshot.worktreePath, undefined);
+      }
+      assert.equal(existsSync(path.join(worktreeRoot, "task-discard")), false);
+      assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+      assert.equal(existsSync(path.join(repository, "new.txt")), false);
+    } finally {
+      controller.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server restores the Task Worktree association after restart and can still Apply", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-worktree-restart-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  try {
+    const { repository, base } = createGitFixture(root);
+    const first = new AppServerController({
+      databasePath,
+      engine: worktreeEditingEngine(),
+      worktreeRoot,
+    });
+    const background: ProtocolMessage[] = [];
+    try {
+      await first.dispatch(
+        command("task-restart-wt", "create-restart-wt", 0, {
+          type: "task.create",
+          prompt: "persist worktree",
+          approvalProfile: "auto",
+          workspacePath: repository,
+        }),
+      );
+      await first.dispatch(
+        command("task-restart-wt", "run-restart-wt", 0, { type: "task.run" }),
+        (message) => background.push(message),
+      );
+      await waitForCompletion(background, "task-restart-wt");
+    } finally {
+      first.close();
+    }
+
+    const second = new AppServerController({
+      databasePath,
+      engine: worktreeEditingEngine(),
+      worktreeRoot,
+    });
+    try {
+      const snapshots = await second.dispatch(
+        command("task-restart-wt", "snapshot-restart-wt", 2, { type: "snapshot" }),
+      );
+      const snapshot = snapshots.at(-1);
+      assert.ok(snapshot?.kind === "event" && snapshot.event.type === "snapshot");
+      if (snapshot?.kind === "event" && snapshot.event.type === "snapshot") {
+        assert.equal(snapshot.event.snapshot.workspaceState, "worktree");
+        assert.equal(
+          snapshot.event.snapshot.worktreePath,
+          path.join(worktreeRoot, "task-restart-wt"),
+        );
+        assert.equal(snapshot.event.snapshot.workspaceBaseline, base);
+      }
+      const applied = await second.dispatch(
+        command("task-restart-wt", "apply-restart-wt", 2, {
+          type: "workspace.apply",
+          expectedBase: base,
+          tracked: ["README.md"],
+          untracked: ["new.txt"],
+        }),
+      );
+      const appliedSnapshot = applied.at(-1);
+      assert.ok(appliedSnapshot?.kind === "event" && appliedSnapshot.event.type === "snapshot");
+      if (appliedSnapshot?.kind === "event" && appliedSnapshot.event.type === "snapshot") {
+        assert.equal(appliedSnapshot.event.snapshot.workspaceState, "local");
+      }
+      assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed by task\n");
+      assert.equal(existsSync(path.join(worktreeRoot, "task-restart-wt")), false);
+    } finally {
+      second.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server blocks Apply when the reviewed manifest changed after review", async () => {
   let inspections = 0;
   const controller = new AppServerController({
@@ -396,7 +650,7 @@ test("app-server blocks Apply when the reviewed manifest changed after review", 
       command("task-apply-stale", "create-apply-stale", 0, {
         type: "task.create",
         prompt: "review then apply",
-        approvalProfile: "auto",
+        approvalProfile: "read-only",
         workspacePath: process.cwd(),
       }),
     );

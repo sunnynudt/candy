@@ -66,6 +66,7 @@ export interface TaskMetadata {
   readonly workspacePath: string;
   readonly validator?: TaskValidatorSpec;
   readonly workspaceBaseline?: string;
+  readonly worktreePath?: string;
 }
 
 export interface TaskValidatorSpec {
@@ -132,7 +133,8 @@ export class SQLiteTaskStore {
         attachment_ids TEXT NOT NULL DEFAULT '[]',
         workspace_path TEXT NOT NULL DEFAULT '',
         validator_json TEXT,
-        workspace_baseline TEXT
+        workspace_baseline TEXT,
+        worktree_path TEXT
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -142,7 +144,7 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 7;
+      PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
@@ -151,6 +153,7 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -159,7 +162,7 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 7;
+        PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
@@ -168,7 +171,8 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
-        PRAGMA user_version = 7;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
@@ -176,27 +180,36 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
-        PRAGMA user_version = 7;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 4) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
-        PRAGMA user_version = 7;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 5) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
-        PRAGMA user_version = 7;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
       `);
     } else if (schemaVersion === 6) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
-        PRAGMA user_version = 7;
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
       `);
-    } else if (schemaVersion !== 7) {
+    } else if (schemaVersion === 7) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
+        PRAGMA user_version = 8;
+      `);
+    } else if (schemaVersion !== 8) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -210,14 +223,16 @@ export class SQLiteTaskStore {
     workspacePath = process.cwd(),
     validator?: TaskValidatorSpec,
     workspaceBaseline?: string,
+    worktreePath?: string,
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
       throw new Error("Workspace baseline is invalid.");
+    if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -228,6 +243,7 @@ export class SQLiteTaskStore {
         assertWorkspacePath(workspacePath),
         serializeValidator(validator),
         workspaceBaseline ?? null,
+        worktreePath ?? null,
       );
     return this.require(taskId);
   }
@@ -245,10 +261,20 @@ export class SQLiteTaskStore {
     return this.require(taskId);
   }
 
+  /** Persist the associated Task Worktree path (or clear it after handoff). */
+  public updateWorktree(taskId: string, worktreePath?: string): TaskMetadata {
+    assertTaskId(taskId);
+    if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
+    this.#database
+      .prepare("UPDATE task_metadata SET worktree_path = ? WHERE task_id = ?")
+      .run(worktreePath ?? null, taskId);
+    return this.require(taskId);
+  }
+
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -257,7 +283,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -266,7 +292,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -392,6 +418,9 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     ...(row.owner_id !== null ? { ownerId: String(row.owner_id) } : {}),
     ...(row.workspace_baseline !== null
       ? { workspaceBaseline: String(row.workspace_baseline) }
+      : {}),
+    ...(row.worktree_path !== null && row.worktree_path !== ""
+      ? { worktreePath: String(row.worktree_path) }
       : {}),
   };
 }

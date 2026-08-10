@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -334,6 +334,49 @@ test("Apply Changes guard fails closed for dirty, changed-base, escaped, and sec
   assert.equal(guard.check({ ...base, patchText: "canary", activeSecrets: ["canary"] }), "blocked");
 });
 
+test("Apply Changes guard and worktree planning cover the Windows path matrix", () => {
+  const guard = new ApplyChangesGuard("C:\\Users\\alice\\repo", path.win32);
+  const base = {
+    targetIsGit: true,
+    targetClean: true,
+    expectedBase: "a",
+    actualBase: "a",
+    paths: ["src/a.ts"],
+    patchText: "safe",
+    activeSecrets: [],
+  } as const;
+  assert.equal(guard.check(base), "allow");
+  assert.equal(guard.check({ ...base, paths: ["..\\secret.ts"] }), "blocked");
+  assert.equal(guard.check({ ...base, paths: ["src\\..\\..\\secret.ts"] }), "blocked");
+  assert.equal(guard.check({ ...base, paths: ["C:\\secret.ts"] }), "blocked");
+  assert.equal(guard.check({ ...base, paths: ["\\\\server\\share\\secret.ts"] }), "blocked");
+  assert.equal(guard.check({ ...base, paths: ["src\\with space.ts"] }), "allow");
+  assert.equal(guard.check({ ...base, targetClean: false }), "blocked");
+  assert.equal(guard.check({ ...base, actualBase: "b" }), "blocked");
+
+  const plan = planGitWorktree(
+    "C:\\Users\\alice\\repo",
+    "C:\\Candy Data\\worktrees\\task-1",
+    "task-1",
+    "0123456789abcdef",
+  );
+  assert.deepEqual(plan.createArgs, [
+    "worktree",
+    "add",
+    "--detach",
+    "--lock",
+    "--reason",
+    "candy:task-1",
+    "C:\\Candy Data\\worktrees\\task-1",
+    "0123456789abcdef",
+  ]);
+  assert.throws(() => planGitWorktree("C:\\repo", "C:\\wt", "task\\1", "0123456"), /Task id/u);
+  assert.throws(
+    () => planGitWorktree("C:\\repo", "C:\\wt", "task-1", "not-a-commit"),
+    /commit id/u,
+  );
+});
+
 test("Git worktree planning uses argument arrays and handoff blocks unsafe transfer", () => {
   const plan = planGitWorktree(
     "C:/repo",
@@ -391,6 +434,138 @@ test("Git worktree fixture creates, inspects, and cleans a detached task worktre
     git(plan.unlockArgs, repository);
     git(plan.removeArgs, repository);
     assert.equal(existsSync(worktree), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Git worktree discard resets and removes a dirty task worktree", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "candy-git-discard-"));
+  const repository = path.join(root, "repo");
+  const worktree = path.join(root, "worktrees", "task-worktree");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  try {
+    git(["init", "-q"], repository);
+    writeFileSync(path.join(repository, "README.md"), "base\n");
+    git(["add", "README.md"], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      repository,
+    );
+    const baseCommit = git(["rev-parse", "HEAD"], repository).trim();
+    const plan = planGitWorktree(repository, worktree, "task-discard", baseCommit);
+    const manager = new GitWorktreeManager(path.join(root, "worktrees"));
+    await manager.create(plan);
+    writeFileSync(path.join(worktree, "README.md"), "reviewed\n");
+    writeFileSync(path.join(worktree, "new.txt"), "untracked\n");
+
+    await manager.discard(plan);
+    assert.equal(existsSync(worktree), false);
+    assert.equal(git(["worktree", "list", "--porcelain"], repository).includes(worktree), false);
+    assert.equal(git(["status", "--porcelain"], repository), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Apply Changes service stops on dirty target, changed base, conflict, and untracked collision", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "candy-git-apply-matrix-"));
+  const repository = path.join(root, "repo");
+  const worktree = path.join(root, "worktrees", "task-worktree");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  try {
+    git(["init", "-q"], repository);
+    writeFileSync(path.join(repository, "README.md"), "base\n");
+    git(["add", "README.md"], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      repository,
+    );
+    const baseCommit = git(["rev-parse", "HEAD"], repository).trim();
+    const plan = planGitWorktree(repository, worktree, "task-matrix", baseCommit);
+    const manager = new GitWorktreeManager(path.join(root, "worktrees"));
+    await manager.create(plan);
+    writeFileSync(path.join(worktree, "README.md"), "changed\n");
+    writeFileSync(path.join(worktree, "new.txt"), "untracked\n");
+    const service = new ApplyChangesService(repository);
+    const reviewed = {
+      targetIsGit: true,
+      targetClean: true,
+      expectedBase: baseCommit,
+      actualBase: baseCommit,
+      paths: ["README.md", "new.txt"],
+      untrackedPaths: ["new.txt"],
+      patchText: git(
+        ["diff", "--binary", "--no-ext-diff", "--no-color", baseCommit, "--"],
+        worktree,
+      ),
+      activeSecrets: [],
+    } as const;
+
+    writeFileSync(path.join(repository, "README.md"), "dirty local\n");
+    await assert.rejects(service.apply(worktree, reviewed), /blocked/iu);
+    git(["checkout", "--", "README.md"], repository);
+
+    writeFileSync(path.join(repository, "README.md"), "next base\n");
+    git(["add", "README.md"], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "next",
+      ],
+      repository,
+    );
+    await assert.rejects(service.apply(worktree, reviewed), /blocked/iu);
+    git(["reset", "--hard", "-q", baseCommit], repository);
+
+    const conflictingPatch =
+      "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n base\n+extra\n";
+    await assert.rejects(
+      service.apply(worktree, {
+        ...reviewed,
+        paths: ["README.md"],
+        untrackedPaths: [],
+        patchText: conflictingPatch,
+      }),
+      /refused the reviewed patch/u,
+    );
+
+    const target = path.join(root, "target");
+    git(["clone", "-q", repository, target], root);
+    await appendFile(path.join(target, ".git", "info", "exclude"), "new.txt\n");
+    writeFileSync(path.join(target, "new.txt"), "already here\n");
+    await assert.rejects(
+      new ApplyChangesService(target).apply(worktree, reviewed),
+      /untracked Apply Changes path/u,
+    );
+    assert.equal(existsSync(path.join(target, "new.txt")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

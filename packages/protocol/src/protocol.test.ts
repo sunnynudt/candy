@@ -206,6 +206,63 @@ test("workspace apply commands carry only relative reviewed paths and a Git base
   );
 });
 
+test("workspace discard commands are accepted without payload and snapshots carry worktree state", () => {
+  const discard = {
+    v: 1,
+    kind: "command",
+    commandId: "discard-1",
+    taskId: "task-worktree",
+    expectedRevision: 3,
+    command: { type: "workspace.discard" },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(discard)), discard);
+  assert.doesNotThrow(() => validateProtocolMessage(discard));
+
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-worktree",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "snapshot",
+      snapshot: {
+        taskId: "task-worktree",
+        revision: 2,
+        state: "completed",
+        workspaceState: "worktree",
+        workspacePath: "C:\\Users\\alice\\repo",
+        worktreePath: "C:\\Candy Data\\worktrees\\task-worktree",
+      },
+    },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: { ...event.event.snapshot, workspaceState: "applying" },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: { ...event.event.snapshot, worktreePath: "relative/wt" },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
 test("snapshots carry an optional validated workspace baseline", () => {
   const event = {
     v: 1,

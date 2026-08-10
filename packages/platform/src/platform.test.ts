@@ -160,3 +160,34 @@ test("sqlite task metadata persists the workspace baseline and never overwrites 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("sqlite task metadata persists the Task Worktree path and clears it after handoff", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-worktree-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  const worktreePath = path.join(directory, "worktrees", "task-wt");
+  try {
+    const first = new SQLiteTaskStore(databasePath);
+    first.create(
+      "task-worktree",
+      "auto",
+      1,
+      "deepseek-v4-flash",
+      [],
+      process.cwd(),
+      undefined,
+      "0123456789abcdef",
+      worktreePath,
+    );
+    assert.equal(first.get("task-worktree")?.worktreePath, worktreePath);
+    first.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.get("task-worktree")?.worktreePath, worktreePath);
+    const cleared = reopened.updateWorktree("task-worktree");
+    assert.equal(cleared.worktreePath, undefined);
+    assert.throws(() => reopened.updateWorktree("task-worktree", "relative/wt"), /absolute/u);
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
