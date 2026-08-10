@@ -32,6 +32,7 @@ const steps = [
   "smoke:tui-task",
   "smoke:app-server",
   "smoke:recovery:windows",
+  "smoke:long-running:windows",
   "smoke:attachment-recovery:windows",
   "smoke:cross-client:windows",
   "smoke:concurrency:windows",
