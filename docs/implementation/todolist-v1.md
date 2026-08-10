@@ -45,8 +45,8 @@
   待完成：MiniMax Windows Gate 与 Token Plan entitlement。Claude Code/OpenCode 配置均不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
 
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
-  已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试。
-  待完成：真实 Credential Manager set/replace/has/delete、Windows Desktop 二进制下载/启动、打包、签名、恢复和响应性矩阵。2026-08-10 的首次 Desktop smoke 在下载 Electron 二进制时长时间无进度，已中止且未记为通过。
+  已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`。
+  待完成：真实 Credential Manager set/replace/has/delete、Windows Desktop 二进制下载/启动、打包、签名、恢复和响应性矩阵。该开发态 smoke 不替代 Windows 打包、签名、恢复或完整 Desktop 验收。
 
 - ⬜ 重新生成当前提交的 Windows 验收证据；旧证据仍指向 `0710d00`，且不可替代本机 Windows 结果。
 
