@@ -48,6 +48,7 @@
     "smoke:desktop:packaged": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged.mjs && node scripts/smoke-packaged-keychain.mjs",
     "smoke:desktop:packaged:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-windows.mjs",
     "smoke:desktop:packaged:recovery:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-recovery-windows.mjs",
+    "smoke:desktop:packaged:handoff:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-handoff-windows.mjs",
     "smoke:browser:windows": "npm run package:desktop:windows && node scripts/smoke-browser-windows.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"

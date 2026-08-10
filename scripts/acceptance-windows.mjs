@@ -39,6 +39,7 @@ const steps = [
   "smoke:desktop",
   "smoke:desktop:packaged:windows",
   "smoke:desktop:packaged:recovery:windows",
+  "smoke:desktop:packaged:handoff:windows",
   "smoke:browser:windows",
   "smoke:credential-manager:packaged:windows",
   "measure:windows:responsiveness",
