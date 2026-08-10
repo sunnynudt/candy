@@ -130,6 +130,27 @@ test("task lifecycle commands and state events remain versioned and secret-free"
   );
 });
 
+test("queued task reorder commands carry only the destination task id", () => {
+  const command = {
+    v: 1,
+    kind: "command",
+    commandId: "reorder-1",
+    taskId: "task-later",
+    expectedRevision: 0,
+    command: { type: "task.reorder", beforeTaskId: "task-first" },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(command)), command);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...command,
+        command: { type: "task.reorder", beforeTaskId: 1 },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
 test("assistant thinking deltas remain typed and secret-free", () => {
   const event = {
     v: 1,

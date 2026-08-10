@@ -287,6 +287,26 @@ export class AppServerController {
     }
 
     if (!existing) throw new Error(`Task ${message.taskId} does not exist.`);
+    if (command.type === "task.reorder") {
+      if (message.taskId === command.beforeTaskId)
+        throw new Error("A task cannot be reordered before itself.");
+      const sourceIndex = this.#pendingRuns.findIndex(({ taskId }) => taskId === message.taskId);
+      const targetIndex = this.#pendingRuns.findIndex(
+        ({ taskId }) => taskId === command.beforeTaskId,
+      );
+      if (sourceIndex < 0 || targetIndex < 0)
+        throw new Error("Only queued run requests can be reordered.");
+      const reordered = this.#store.reorderQueued(message.taskId, command.beforeTaskId);
+      const [moved] = this.#pendingRuns.splice(sourceIndex, 1);
+      if (moved === undefined) throw new Error("Queued task is unavailable.");
+      const insertionIndex = this.#pendingRuns.findIndex(
+        ({ taskId }) => taskId === command.beforeTaskId,
+      );
+      if (insertionIndex < 0) throw new Error("Queued destination is unavailable.");
+      this.#pendingRuns.splice(insertionIndex, 0, moved);
+      const snapshot = reordered.find((task) => task.taskId === message.taskId);
+      return [this.snapshot(snapshot ?? existing)];
+    }
     if (command.type === "task.run" || command.type === "task.resume") {
       if (existing.state === "running") return [this.snapshot(existing)];
       if (

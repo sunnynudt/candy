@@ -73,6 +73,11 @@ export interface TaskActionCommand {
   readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
 }
 
+export interface TaskReorderCommand {
+  readonly type: "task.reorder";
+  readonly beforeTaskId: string;
+}
+
 export interface WorkspaceApplyCommand {
   readonly type: "workspace.apply";
   readonly expectedBase: string;
@@ -94,6 +99,7 @@ export type RuntimeCommand =
   | SnapshotCommand
   | CreateTaskCommand
   | TaskActionCommand
+  | TaskReorderCommand
   | WorkspaceApplyCommand
   | WorkspaceDiscardCommand
   | ApprovalCommand;
@@ -344,6 +350,10 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     value.type === "task.resume"
   )
     return;
+  if (value.type === "task.reorder") {
+    assertString(value.beforeTaskId, "command.beforeTaskId");
+    return;
+  }
   if (value.type === "task.create") {
     assertString(value.prompt, "command.prompt");
     assertWorkspacePath(value.workspacePath, "command.workspacePath");

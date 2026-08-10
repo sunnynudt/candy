@@ -327,6 +327,7 @@ function allowedTransition(current: TaskState, next: TaskState): boolean {
 export class TaskScheduler {
   readonly #queue: string[] = [];
   readonly #active = new Set<string>();
+  readonly #queueStore: TaskQueueStore | undefined;
 
   public constructor(
     public readonly defaultLimit = 3,
@@ -336,6 +337,7 @@ export class TaskScheduler {
     if (!Number.isInteger(defaultLimit) || defaultLimit < 1 || defaultLimit > hardLimit) {
       throw new Error("Invalid scheduler default limit.");
     }
+    this.#queueStore = queueStore;
     if (queueStore) this.#queue.push(...queueStore.queued().map((task) => task.taskId));
   }
 
@@ -362,6 +364,23 @@ export class TaskScheduler {
     return true;
   }
 
+  /** Moves one not-yet-started task before another queued task. */
+  public moveQueuedBefore(taskId: string, beforeTaskId: string): boolean {
+    if (taskId === beforeTaskId) return false;
+    const sourceIndex = this.#queue.indexOf(taskId);
+    const targetIndex = this.#queue.indexOf(beforeTaskId);
+    if (sourceIndex < 0 || targetIndex < 0) return false;
+    const reordered = [...this.#queue];
+    const [moved] = reordered.splice(sourceIndex, 1);
+    if (moved === undefined) return false;
+    const insertionIndex = reordered.indexOf(beforeTaskId);
+    if (insertionIndex < 0) return false;
+    this.#queueStore?.reorderQueued(taskId, beforeTaskId);
+    reordered.splice(insertionIndex, 0, moved);
+    this.#queue.splice(0, this.#queue.length, ...reordered);
+    return true;
+  }
+
   public queued(): readonly string[] {
     return [...this.#queue];
   }
@@ -369,6 +388,7 @@ export class TaskScheduler {
 
 export interface TaskQueueStore {
   queued(): readonly { readonly taskId: string }[];
+  reorderQueued(taskId: string, beforeTaskId: string): readonly { readonly taskId: string }[];
 }
 
 function assertNoSecret(value: string): void {

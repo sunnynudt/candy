@@ -1340,3 +1340,70 @@ test("app-server limits starts to three active tasks and promotes queued FIFO wo
     controller.close();
   }
 });
+
+test("app-server reorders queued run requests before promoting the next task", async () => {
+  const started: string[] = [];
+  const gates = new Map<string, () => void>();
+  let releaseInitialTasks: (() => void) | undefined;
+  const initialTasksStarted = new Promise<void>((resolve) => {
+    releaseInitialTasks = resolve;
+  });
+  const engine = {
+    async *runTurn(input: AgentTurnInput) {
+      started.push(input.taskId);
+      if (started.length === 3) releaseInitialTasks?.();
+      await new Promise<void>((resolve) => gates.set(input.taskId, resolve));
+      yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+    },
+  };
+  const controller = new AppServerController({
+    engine,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+  });
+  try {
+    for (let index = 1; index <= 5; index += 1) {
+      const taskId = `task-reorder-${index}`;
+      await controller.dispatch(
+        command(taskId, `create-reorder-${index}`, 0, {
+          type: "task.create",
+          prompt: taskId,
+          approvalProfile: "read-only",
+          workspacePath: process.cwd(),
+        }),
+      );
+      await controller.dispatch(command(taskId, `run-reorder-${index}`, 0, { type: "task.run" }));
+    }
+    await initialTasksStarted;
+    await controller.dispatch(
+      command("task-reorder-5", "reorder-5", 0, {
+        type: "task.reorder",
+        beforeTaskId: "task-reorder-4",
+      }),
+    );
+    gates.get("task-reorder-1")?.();
+    for (let attempt = 0; attempt < 20 && !started.includes("task-reorder-5"); attempt += 1)
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(started.slice(0, 4), [
+      "task-reorder-1",
+      "task-reorder-2",
+      "task-reorder-3",
+      "task-reorder-5",
+    ]);
+    for (const resolve of gates.values()) resolve();
+  } finally {
+    controller.close();
+  }
+});

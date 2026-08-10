@@ -41,6 +41,12 @@ Complete and attach sanitized evidence for:
 - The workspace escape fixture now uses a Windows directory junction and proves the Pi workspace boundary rejects it without requiring file-symlink privileges.
 - G0-WIN and G4 remain In progress. This does not provide Windows Job Object, native containment, packaged Desktop/Keyring, signing, Browser, live-provider, recovery, or responsiveness acceptance evidence.
 
+## 2026-08-10 durable queued-task reorder checkpoint
+
+- The SQLite queue now atomically moves a queued task before another queued task and retains the resulting order across reopen. Protocol v1 and the app-server accept `task.reorder` only for pending queued run requests; a five-task fixture proves the reordered task receives the next available slot.
+- The TUI provides `:prioritize <task-id>` and shows durable queue positions with `:tasks`. The current Desktop shell lacks a task-list/queue panel, so Desktop reordering UX remains an implementation task rather than a hidden capability claim.
+- The Windows 11 Pro x64 deterministic gate passes with 92 tests. G0-WIN remains In progress because full restart, cross-client, provider-rate-limit, packaged Desktop, and acceptance evidence are still incomplete.
+
 ## 2026-08-10 Phase 2 checkpoint
 
 - Q1 Pi public surface: Pass for the deterministic adapter seam. `@earendil-works/pi-coding-agent` root exports and documented `SessionManager` are used; no internal Pi import is used by Candy source.

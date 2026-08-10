@@ -293,6 +293,41 @@ export class SQLiteTaskStore {
       .map((row) => mapTaskMetadata(row));
   }
 
+  /** Reorder one queued task before another without changing either task's execution state. */
+  public reorderQueued(taskId: string, beforeTaskId: string): readonly TaskMetadata[] {
+    assertTaskId(taskId);
+    assertTaskId(beforeTaskId);
+    if (taskId === beforeTaskId) throw new Error("A task cannot be reordered before itself.");
+    const queue = [...this.queued()];
+    const sourceIndex = queue.findIndex((task) => task.taskId === taskId);
+    const targetIndex = queue.findIndex((task) => task.taskId === beforeTaskId);
+    if (sourceIndex < 0 || targetIndex < 0) throw new Error("Only queued tasks can be reordered.");
+    const [moved] = queue.splice(sourceIndex, 1);
+    if (moved === undefined) throw new Error("Queued task is unavailable.");
+    const insertionIndex = queue.findIndex((task) => task.taskId === beforeTaskId);
+    if (insertionIndex < 0) throw new Error("Queued destination is unavailable.");
+    queue.splice(insertionIndex, 0, moved);
+
+    let transactionOpen = false;
+    try {
+      this.#database.exec("BEGIN IMMEDIATE");
+      transactionOpen = true;
+      const update = this.#database.prepare(
+        "UPDATE task_metadata SET queue_order = ? WHERE task_id = ? AND state = 'queued'",
+      );
+      for (const [index, task] of queue.entries()) {
+        if (update.run(index + 1, task.taskId).changes !== 1)
+          throw new Error("Queued task changed while reordering.");
+      }
+      this.#database.exec("COMMIT");
+      transactionOpen = false;
+    } catch (error) {
+      if (transactionOpen) this.#database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.queued();
+  }
+
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(

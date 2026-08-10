@@ -99,7 +99,7 @@ export class InteractiveTui {
   readonly #input: NodeJS.ReadableStream;
   readonly #output: NodeJS.WritableStream;
   readonly #store: SQLiteTaskStore;
-  readonly #scheduler = new TaskScheduler(3, 5);
+  readonly #scheduler: TaskScheduler;
   readonly #controllers = new Map<string, TaskController>();
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
@@ -114,6 +114,7 @@ export class InteractiveTui {
     const paths = resolveAppPaths(options.appDataRoot ?? resolveDefaultAppDataRoot());
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
     this.#store.markActiveInterrupted();
+    this.#scheduler = new TaskScheduler(3, 5, this.#store);
     this.#engine =
       options.engine ??
       new PiAgentEngine(paths.sessions, async () => {
@@ -125,7 +126,7 @@ export class InteractiveTui {
   public async run(): Promise<void> {
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :tasks, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n> ",
+      "Enter a prompt, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n> ",
     );
     const lines = createInterface({ input: this.#input, crlfDelay: Infinity });
     try {
@@ -134,6 +135,8 @@ export class InteractiveTui {
         if (trimmed === ":quit") break;
         if (trimmed === ":tasks") {
           this.printTasks();
+        } else if (trimmed.startsWith(":prioritize ")) {
+          this.prioritize(trimmed.slice(12).trim());
         } else if (trimmed.startsWith(":pause ")) {
           this.pause(trimmed.slice(7).trim());
         } else if (trimmed.startsWith(":resume ")) {
@@ -165,7 +168,9 @@ export class InteractiveTui {
       return;
     }
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
-    const metadata = this.#store.create(taskId, "read-only", this.#store.queued().length + 1);
+    const queueOrder =
+      this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
+    const metadata = this.#store.create(taskId, "read-only", queueOrder);
     const controller = new TaskController(taskId, "read-only", this.#store);
     this.#controllers.set(taskId, controller);
     this.#prompts.set(taskId, prompt);
@@ -178,7 +183,7 @@ export class InteractiveTui {
     for (const taskId of this.#scheduler.startAvailable()) {
       if (this.#abortControllers.has(taskId)) continue;
       const task = this.#controllers.get(taskId);
-      if (!task || task.snapshot().state !== "queued") continue;
+      if (!task || !["queued", "paused", "interrupted"].includes(task.snapshot().state)) continue;
       const running = task.setOwner(this.#ownerId, task.snapshot().revision);
       const abort = new AbortController();
       this.#abortControllers.set(taskId, abort);
@@ -266,6 +271,19 @@ export class InteractiveTui {
     }
   }
 
+  private prioritize(taskId: string): void {
+    const next = this.#scheduler.queued().find((candidate) => candidate !== taskId);
+    if (next === undefined) {
+      this.write(`${taskId} is already next or is not queued\n`);
+      return;
+    }
+    if (this.#scheduler.moveQueuedBefore(taskId, next)) {
+      this.write(`${taskId} moved to the front of the queue\n`);
+    } else {
+      this.write(`${taskId} is not queued\n`);
+    }
+  }
+
   private resume(taskId: string): void {
     const task = this.#controllers.get(taskId);
     if (task?.snapshot().state === "paused" || task?.snapshot().state === "interrupted") {
@@ -279,7 +297,7 @@ export class InteractiveTui {
 
   private printTasks(): void {
     for (const task of this.#store.list())
-      this.write(`${task.taskId}\t${task.state}\tr${task.revision}\n`);
+      this.write(`${task.taskId}\t${task.state}\tr${task.revision}\tq${task.queueOrder ?? "-"}\n`);
   }
 
   private write(value: string): void {

@@ -218,3 +218,33 @@ test("sqlite task metadata persists the Task Worktree path and clears it after h
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("sqlite task metadata reorders queued tasks atomically across restart", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-reorder-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    store.create("task-first", "read-only", 1);
+    store.create("task-second", "read-only", 2);
+    store.create("task-third", "read-only", 3);
+    assert.deepEqual(
+      store.reorderQueued("task-third", "task-first").map((task) => task.taskId),
+      ["task-third", "task-first", "task-second"],
+    );
+    assert.throws(() => store.reorderQueued("task-third", "task-third"), /itself/u);
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.deepEqual(
+      reopened.queued().map((task) => [task.taskId, task.queueOrder]),
+      [
+        ["task-third", 1],
+        ["task-first", 2],
+        ["task-second", 3],
+      ],
+    );
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -128,3 +128,14 @@ test("task scheduler restores queued FIFO order from durable metadata", () => {
   assert.deepEqual(scheduler.queued(), ["task-first", "task-later"]);
   store.close();
 });
+
+test("task scheduler can move a queued task before another queued task", () => {
+  const scheduler = new TaskScheduler();
+  scheduler.enqueue("first");
+  scheduler.enqueue("second");
+  scheduler.enqueue("third");
+  assert.equal(scheduler.moveQueuedBefore("third", "first"), true);
+  assert.deepEqual(scheduler.queued(), ["third", "first", "second"]);
+  assert.equal(scheduler.moveQueuedBefore("first", "first"), false);
+  assert.equal(scheduler.moveQueuedBefore("missing", "first"), false);
+});
