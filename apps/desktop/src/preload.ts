@@ -3,10 +3,14 @@ import type { DesktopPreloadApi } from "./contracts.js";
 
 const api: DesktopPreloadApi = {
   credentials: {
-    set: async () => undefined,
-    replace: async () => undefined,
-    delete: async () => undefined,
-    has: async () => "absent",
+    set: (name, value) => ipcRenderer.invoke("credential.set", name, value) as Promise<void>,
+    replace: (name, value) =>
+      ipcRenderer.invoke("credential.replace", name, value) as Promise<void>,
+    delete: (name) => ipcRenderer.invoke("credential.delete", name) as Promise<void>,
+    has: (name) =>
+      ipcRenderer.invoke("credential.has", name) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["credentials"]["has"]>>
+      >,
   },
   attachments: {
     pickImage: () => ipcRenderer.invoke("attachment.pick-image") as Promise<string | undefined>,

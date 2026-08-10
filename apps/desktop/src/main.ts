@@ -4,7 +4,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import { app, BrowserWindow, dialog, ipcMain, session, WebContentsView } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+  WebContentsView,
+  type IpcMainInvokeEvent,
+} from "electron";
 import {
   cleanChildEnvironment,
   DEFAULT_CANDY_MODEL,
@@ -110,6 +118,11 @@ let appServer: AppServerClient | undefined;
 let mainWindow: BrowserWindow | undefined;
 let explicitQuit = false;
 
+function assertTrustedRenderer(event: IpcMainInvokeEvent): void {
+  if (mainWindow === undefined || event.sender !== mainWindow.webContents)
+    throw new Error("Unauthorized renderer.");
+}
+
 function emptyProjection(taskId: string): RendererTaskProjection {
   return {
     taskId,
@@ -181,7 +194,8 @@ function validatePrompt(prompt: unknown): asserts prompt is string {
 function registerIpcHandlers(): void {
   const credentials = new KeyringCredentialStore();
   const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
-  ipcMain.handle("attachment.pick-image", async () => {
+  ipcMain.handle("attachment.pick-image", async (event) => {
+    assertTrustedRenderer(event);
     const result = await dialog.showOpenDialog({
       properties: ["openFile"],
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
@@ -193,25 +207,30 @@ function registerIpcHandlers(): void {
       extension === "jpg" || extension === "jpeg" ? "image/jpeg" : `image/${extension ?? "png"}`;
     return (await attachments.put("image", mimeType, await readFile(filePath))).id;
   });
-  ipcMain.handle("credential.set", (_event, name: string, value: string) => {
+  ipcMain.handle("credential.set", (event, name: string, value: string) => {
+    assertTrustedRenderer(event);
     assertCredentialName(name);
     credentials.set(name as CredentialName, value);
   });
-  ipcMain.handle("credential.replace", (_event, name: string, value: string) => {
+  ipcMain.handle("credential.replace", (event, name: string, value: string) => {
+    assertTrustedRenderer(event);
     assertCredentialName(name);
     credentials.replace(name as CredentialName, value);
   });
-  ipcMain.handle("credential.delete", (_event, name: string) => {
+  ipcMain.handle("credential.delete", (event, name: string) => {
+    assertTrustedRenderer(event);
     assertCredentialName(name);
     credentials.delete(name as CredentialName);
   });
-  ipcMain.handle("credential.has", (_event, name: string) => {
+  ipcMain.handle("credential.has", (event, name: string) => {
+    assertTrustedRenderer(event);
     assertCredentialName(name);
     return credentials.has(name as CredentialName);
   });
   ipcMain.handle(
     "task.create",
-    async (_event, prompt: unknown, profile: unknown, model: unknown, attachmentIds: unknown) => {
+    async (event, prompt: unknown, profile: unknown, model: unknown, attachmentIds: unknown) => {
+      assertTrustedRenderer(event);
       validatePrompt(prompt);
       if (profile !== "read-only" && profile !== "auto")
         throw new Error("Invalid approval profile.");
@@ -251,7 +270,8 @@ function registerIpcHandlers(): void {
       return projections.get(taskId) ?? projection;
     },
   );
-  ipcMain.handle("task.snapshot", async (_event, taskId: string) => {
+  ipcMain.handle("task.snapshot", async (event, taskId: string) => {
+    assertTrustedRenderer(event);
     assertTaskId(taskId);
     if (!appServer) return projections.get(taskId) ?? emptyProjection(taskId);
     const current = projections.get(taskId) ?? emptyProjection(taskId);
@@ -268,9 +288,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "task.send",
     async (
-      _event,
+      event,
       input: DesktopPreloadApi["tasks"] extends { send: (value: infer T) => unknown } ? T : never,
     ) => {
+      assertTrustedRenderer(event);
       assertTaskId(input.taskId);
       if (!appServer) throw new AppServerUnavailableError();
       await appServer.send({
