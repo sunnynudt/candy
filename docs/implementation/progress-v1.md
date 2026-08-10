@@ -60,7 +60,12 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 ## 2026-08-11 Windows active-task recovery checkpoint
 
 - Extended the real Windows app-server child-process smoke to create a queued task and an active Auto task with a Windows Job Object validator, interrupt the validator while it is running, verify its delayed marker is never written, stop the owner process, restart it, and verify queued metadata survives while the active task becomes `interrupted` with revision `+1` and bounded `crash_interrupted` progress.
-- `npm run smoke:recovery:windows` passed without provider credentials. This proves Windows active validator interruption plus deterministic app-server owner-crash recovery; attachments, cross-client handoff, and packaged signed recovery remain open.
+- `npm run smoke:recovery:windows` passed without provider credentials. This proves Windows active validator interruption plus deterministic app-server owner-crash recovery; attachment restart recovery is covered by the follow-up fixture, while packaged signed recovery remains open.
+
+## 2026-08-11 Windows attachment restart recovery checkpoint
+
+- Added `npm run smoke:attachment-recovery:windows`. The Windows fixture writes a Candy-owned image attachment, persists a MiniMax task referencing its opaque id, stops the app-server, restarts it with the deterministic recovery engine, verifies the queued task and attachment id survive, and runs the task to completion after the restart. The fixture reads no provider credential and does not expose attachment bytes in protocol output.
+- This closes the un-packaged attachment restart seam only. Packaged active-owner/tool interruption recovery and packaged cross-client handoff remain open.
 
 ## 2026-08-11 Windows cross-client ownership checkpoint
 
@@ -78,10 +83,10 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - `npm run smoke:browser:windows` passed on the packaged Windows x64 bundle after the bridge added structured click/type/submit actions and screenshot attachment capture. The fixture proves action ownership and revision fencing: stale actions and actions after Take Control are rejected, unconfirmed submit is rejected, and confirmed submit updates the observed page state.
 - This is implementation and fixture evidence, not a claim of automatic physical-input detection, full Browser adversarial coverage, or complete Browser acceptance.
 
-## 2026-08-11 Windows 14-step deterministic acceptance runner checkpoint
+## 2026-08-11 Windows 15-step deterministic acceptance runner checkpoint
 
-- `npm run acceptance:windows` ran on clean source revision `8ddfbcc89f756cda1d881853202de6f74742cc42` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 14 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, active validator interruption plus queued/active process-restart recovery smoke, non-owner cross-client fencing smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser action/security fixture smoke, packaged Credential Manager fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1312 ms` and Desktop `1431 ms`.
-- The sanitized reports are `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md`; both remain ignored. They explicitly list signed installation, Browser adversarial/input-origin, complete G2 OS containment/security review, packaged active-owner/tool interruption recovery, attachment/packaged recovery, live provider/entitlement, remaining ACC-01..12, and product-owner acceptance as open; this is not a release or complete acceptance report.
+- `npm run acceptance:windows` ran on clean source revision `a02b7e6beae33343b6b019afeabf2af862c691c1` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 15 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, active validator interruption plus queued/active process-restart recovery smoke, attachment restart recovery smoke, non-owner cross-client fencing smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser action/security fixture smoke, packaged Credential Manager fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1178 ms` and Desktop `1462 ms`.
+- The sanitized reports are `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md`; both remain ignored. They explicitly list signed installation, Browser adversarial/input-origin, complete G2 OS containment/security review, packaged active-owner/tool interruption recovery, packaged cross-client handoff, live provider/entitlement, remaining ACC-01..12, and product-owner acceptance as open; this is not a release or complete acceptance report.
 
 ## 2026-08-10 Windows 11 live DeepSeek checkpoint
 
