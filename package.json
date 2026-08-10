@@ -30,6 +30,7 @@
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
     "smoke:app-server": "npm run build && node scripts/smoke-app-server.mjs",
+    "smoke:safe-edit": "npm run build && node scripts/smoke-safe-edit.mjs",
     "smoke:desktop": "npm run build && node scripts/smoke-desktop.mjs",
     "package:desktop:macos": "npm run build && node scripts/package-desktop-macos.mjs",
     "smoke:desktop:packaged": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged.mjs && node scripts/smoke-packaged-keychain.mjs",

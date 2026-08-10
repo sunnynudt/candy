@@ -15,6 +15,8 @@ import {
   BrowserRevisionError,
   FixedValidator,
   LongRunningControlError,
+  MacSandboxRunner,
+  MacSandboxValidator,
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
@@ -140,6 +142,68 @@ test("process supervisor is shell-free, strips provider env, and keeps Windows g
     activeSecrets: ["fixture-secret"],
   });
   assert.equal(result.stdout, "clean");
+});
+
+test("macOS Sandbox Runner executes a no-network validator through the native boundary", async () => {
+  if (process.platform !== "darwin") return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-native-validator-"));
+  try {
+    const result = await new MacSandboxRunner(runnerPath).run({
+      executable: process.execPath,
+      args: ["-e", "process.stdout.write('validator-ok')"],
+      cwd: root,
+      workspace: root,
+      environment: { CUSTOM: "fixture" },
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout, "validator-ok");
+    assert.equal(result.cancelled, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("macOS Sandbox Validator returns bounded secret-redacted evidence", async () => {
+  if (process.platform !== "darwin") return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-native-validator-evidence-"));
+  try {
+    const result = await new MacSandboxValidator(
+      new MacSandboxRunner(runnerPath),
+      root,
+      {
+        executable: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write([102,105,120,116,117,114,101,45,115,101,99,114,101,116].map((code)=>String.fromCharCode(code)).join(''))",
+        ],
+      },
+      {},
+      ["fixture-secret"],
+    ).run(new AbortController().signal);
+    assert.equal(result.ok, true);
+    assert.equal(result.evidence, "[REDACTED]");
+    assert.doesNotMatch(result.fingerprint, /fixture-secret/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("attachment store hashes image bytes, keeps binary outside session, and rejects video", async () => {

@@ -202,6 +202,7 @@ export class InteractiveTui {
           prompt,
           model: "deepseek-v4-flash",
           cwd: process.cwd(),
+          approvalProfile: "read-only",
         },
         abort.signal,
       )) {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   CandyPiSessionStore,
+  createCandyWorkspaceOperations,
   DeepSeekClient,
   MiniMaxClient,
   MiniMaxPiAgentEngine,
@@ -104,7 +105,7 @@ test("MiniMax parser and client remain domestic-only and release the secret leas
   assert.equal(released, true);
 });
 
-test("Pi agent engine uses the public Pi loop, read-only tools, and Candy-owned sessions", async () => {
+test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-engine-"));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -138,8 +139,53 @@ test("Pi agent engine uses the public Pi loop, read-only tools, and Candy-owned 
     assert.ok(sessionFile);
     const files = await readFile(path.join(root, "task-1", sessionFile), "utf8");
     assert.doesNotMatch(files, /fixture-secret/u);
+
+    const autoObservations = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-auto",
+        prompt: "say hello",
+        model: "deepseek-v4-flash",
+        cwd: process.cwd(),
+        approvalProfile: "auto",
+      },
+      new AbortController().signal,
+    )) {
+      autoObservations.push(observation);
+    }
+    assert.ok(autoObservations.some((observation) => observation.type === "turn.completed"));
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Candy workspace operations keep Pi edit/write inside the selected directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-tools-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-outside-"));
+  const operations = createCandyWorkspaceOperations(root);
+  try {
+    await assert.rejects(operations.readFile("relative.txt"), /absolute/u);
+    await mkdir(path.join(root, "src"));
+    await writeFile(path.join(root, "src", "value.ts"), "export const value = 1;\n");
+    assert.equal(
+      (await operations.readFile(path.join(root, "src", "value.ts"))).toString(),
+      "export const value = 1;\n",
+    );
+    await operations.writeFile(path.join(root, "src", "value.ts"), "export const value = 2;\n");
+    await operations.mkdir(path.join(root, "generated", "nested"));
+    await assert.rejects(
+      operations.readFile(path.join(root, "..", path.basename(outside), "secret.txt")),
+      /escaped/u,
+    );
+    await writeFile(path.join(outside, "secret.txt"), "outside\n");
+    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
+    await assert.rejects(operations.readFile(path.join(root, "linked.txt")), /symbolic/iu);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

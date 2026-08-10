@@ -64,6 +64,12 @@ export interface TaskMetadata {
   readonly model: CandyModelId;
   readonly attachmentIds: readonly string[];
   readonly workspacePath: string;
+  readonly validator?: TaskValidatorSpec;
+}
+
+export interface TaskValidatorSpec {
+  readonly executable: string;
+  readonly args: readonly string[];
 }
 
 export type PersistedRunStopReason =
@@ -123,7 +129,8 @@ export class SQLiteTaskStore {
         owner_id TEXT,
         model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
         attachment_ids TEXT NOT NULL DEFAULT '[]',
-        workspace_path TEXT NOT NULL DEFAULT ''
+        workspace_path TEXT NOT NULL DEFAULT '',
+        validator_json TEXT
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -133,13 +140,14 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 5;
+      PRAGMA user_version = 6;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
+        ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -148,27 +156,35 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
-        PRAGMA user_version = 5;
+        ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
+        PRAGMA user_version = 6;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
-        PRAGMA user_version = 5;
+        ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
+        PRAGMA user_version = 6;
       `);
     } else if (schemaVersion === 4) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
-        PRAGMA user_version = 5;
+        ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
+        PRAGMA user_version = 6;
       `);
-    } else if (schemaVersion !== 5) {
+    } else if (schemaVersion === 5) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
+        PRAGMA user_version = 6;
+      `);
+    } else if (schemaVersion !== 6) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -180,12 +196,13 @@ export class SQLiteTaskStore {
     model: CandyModelId = DEFAULT_CANDY_MODEL,
     attachmentIds: readonly string[] = [],
     workspacePath = process.cwd(),
+    validator?: TaskValidatorSpec,
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -194,6 +211,7 @@ export class SQLiteTaskStore {
         model,
         JSON.stringify(attachmentIds),
         assertWorkspacePath(workspacePath),
+        serializeValidator(validator),
       );
     return this.require(taskId);
   }
@@ -201,7 +219,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -210,7 +228,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -219,7 +237,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -328,6 +346,7 @@ export class SQLiteTaskStore {
 }
 
 function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
+  const validator = parseValidator(row.validator_json);
   const metadata = {
     taskId: String(row.task_id),
     revision: Number(row.revision),
@@ -336,6 +355,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     model: String(row.model_id ?? DEFAULT_CANDY_MODEL) as CandyModelId,
     attachmentIds: parseAttachmentIds(row.attachment_ids),
     workspacePath: String(row.workspace_path ?? ""),
+    ...(validator === undefined ? {} : { validator }),
   };
   return {
     ...metadata,
@@ -368,6 +388,49 @@ function assertWorkspacePath(workspacePath: string): string {
     throw new Error("Workspace path must be absolute.");
   }
   return workspacePath;
+}
+
+function serializeValidator(validator: TaskValidatorSpec | undefined): string | null {
+  if (validator === undefined) return null;
+  assertWorkspacePath(validator.executable);
+  if (
+    validator.args.some(
+      (arg) =>
+        arg.includes("\0") ||
+        /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(arg),
+    )
+  )
+    throw new Error("Validator arguments cannot contain credential material.");
+  return JSON.stringify({ executable: validator.executable, args: validator.args });
+}
+
+function parseValidator(value: unknown): TaskValidatorSpec | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as { readonly executable?: unknown }).executable !== "string" ||
+      !Array.isArray((parsed as { readonly args?: unknown }).args) ||
+      (parsed as { readonly args: unknown[] }).args.some((arg) => typeof arg !== "string")
+    )
+      return undefined;
+    const executable = (parsed as { readonly executable: string }).executable;
+    const args = (parsed as { readonly args: string[] }).args;
+    assertWorkspacePath(executable);
+    if (
+      args.some(
+        (arg) =>
+          arg.includes("\0") ||
+          /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(arg),
+      )
+    )
+      return undefined;
+    return { executable, args };
+  } catch {
+    return undefined;
+  }
 }
 
 function parseAttachmentIds(value: unknown): readonly string[] {

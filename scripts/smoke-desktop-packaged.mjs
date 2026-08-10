@@ -6,7 +6,18 @@ import { cleanChildEnvironment } from "@candy/platform";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executable = path.join(root, "out", "macos", "Candy.app", "Contents", "MacOS", "Candy");
+const sandboxRunner = path.join(
+  root,
+  "out",
+  "macos",
+  "Candy.app",
+  "Contents",
+  "Resources",
+  "native",
+  "candy-sandbox-runner",
+);
 if (!existsSync(executable)) throw new Error("Packaged Candy executable is missing.");
+if (!existsSync(sandboxRunner)) throw new Error("Packaged macOS Sandbox Runner is missing.");
 
 const environment = cleanChildEnvironment(process.env);
 environment.CANDY_DESKTOP_SMOKE = "1";

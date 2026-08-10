@@ -32,6 +32,7 @@ import {
 import {
   assertCredentialName,
   assertTaskId,
+  assertValidatorSpec,
   assertWorkspacePath,
   classifyWindowClose,
   type DesktopPreloadApi,
@@ -282,12 +283,20 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle(
     "task.create",
-    async (event, prompt: unknown, profile: unknown, model: unknown, attachmentIds: unknown) => {
+    async (
+      event,
+      prompt: unknown,
+      profile: unknown,
+      model: unknown,
+      attachmentIds: unknown,
+      validator: unknown,
+    ) => {
       assertTrustedRenderer(event);
       validatePrompt(prompt);
       if (profile !== "read-only" && profile !== "auto")
         throw new Error("Invalid approval profile.");
       if (selectedWorkspacePath === undefined) throw new Error("Choose a workspace first.");
+      if (validator !== undefined) assertValidatorSpec(validator);
       if (
         model !== undefined &&
         model !== "deepseek-v4-flash" &&
@@ -303,6 +312,7 @@ function registerIpcHandlers(): void {
       )
         throw new Error("Invalid attachment ids.");
       const selectedAttachments = (attachmentIds ?? []) as readonly string[];
+      const selectedValidator = validator;
       const taskId = randomUUID().replaceAll("-", "");
       const projection = emptyProjection(taskId);
       projections.set(taskId, {
@@ -323,6 +333,7 @@ function registerIpcHandlers(): void {
           prompt,
           approvalProfile: profile,
           workspacePath: selectedWorkspacePath,
+          ...(selectedValidator === undefined ? {} : { validator: selectedValidator }),
           model: selectedModel,
           attachmentIds: selectedAttachments,
         },
@@ -436,10 +447,12 @@ function desktopShellHtml(nonce: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
 <style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff;overflow:auto}section{padding:20px;overflow:auto}textarea,input{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px}textarea{height:140px}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}.card{border:1px solid #ddd;border-radius:6px;padding:10px;margin:14px 0}.status{font-size:12px}</style></head>
-<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
+<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
 <script nonce="${nonce}">
 (() => {
   const prompt = document.getElementById('prompt');
+  const validatorExecutable = document.getElementById('validatorExecutable');
+  const validatorArgs = document.getElementById('validatorArgs');
   const chooseWorkspace = document.getElementById('chooseWorkspace');
   const workspacePath = document.getElementById('workspacePath');
   const credentialInputs = { deepseek: document.getElementById('deepseekKey'), 'minimax-cn': document.getElementById('minimaxKey') };
@@ -460,6 +473,7 @@ function desktopShellHtml(nonce: string): string {
   const refreshCredentials = async () => { for (const name of ['deepseek','minimax-cn']) credentialStatus[name].textContent = await window.candy.credentials.has(name) === 'present' ? 'present' : 'absent'; };
   const saveCredential = async (name) => { const value = credentialInputs[name].value; if (!value) return; await window.candy.credentials.replace(name, value); credentialInputs[name].value = ''; await refreshCredentials(); };
   const deleteCredential = async (name) => { await window.candy.credentials.delete(name); await refreshCredentials(); };
+  const readValidator = () => { if (!validatorExecutable.value.trim()) return undefined; const args = JSON.parse(validatorArgs.value || '[]'); if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) throw new Error('Validator args must be a JSON string array.'); return { executable: validatorExecutable.value.trim(), args }; };
   chooseWorkspace.addEventListener('click', async () => { try { showWorkspace(await window.candy.workspace.choose()); } catch (error) { taskStatus.textContent = 'Workspace failed: ' + error.message; } });
   document.getElementById('saveDeepSeek').addEventListener('click', () => saveCredential('deepseek').catch((error) => { taskStatus.textContent = error.message; }));
   document.getElementById('deleteDeepSeek').addEventListener('click', () => deleteCredential('deepseek').catch((error) => { taskStatus.textContent = error.message; }));
@@ -475,7 +489,7 @@ function desktopShellHtml(nonce: string): string {
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;
     if (!workspace) { taskStatus.textContent = 'Choose a workspace first.'; return; }
-    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds)); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
+    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds, readValidator())); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
   });
   attach.addEventListener('click', async () => { const id = await window.candy.attachments.pickImage(); if (id) { attachmentIds.push(id); attachments.textContent = attachmentIds.length + ' image attached'; } });
   const send = (type) => current && window.candy.tasks.send({ taskId: current.taskId, expectedRevision: current.revision, type }).catch((error) => { taskStatus.textContent = error.message; });

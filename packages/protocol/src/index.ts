@@ -34,8 +34,14 @@ export interface CreateTaskCommand {
   readonly prompt: string;
   readonly approvalProfile: "read-only" | "auto";
   readonly workspacePath: string;
+  readonly validator?: ValidatorSpec;
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
+}
+
+export interface ValidatorSpec {
+  readonly executable: string;
+  readonly args: readonly string[];
 }
 
 export interface TaskActionCommand {
@@ -241,6 +247,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
   if (value.type === "task.create") {
     assertString(value.prompt, "command.prompt");
     assertWorkspacePath(value.workspacePath, "command.workspacePath");
+    if (value.validator !== undefined) validateValidatorSpec(value.validator);
     if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto") {
       throw new ProtocolValidationError(
         "invalid_message",
@@ -282,6 +289,18 @@ function assertWorkspacePath(value: unknown, name: string): asserts value is str
 
 function pathLikeIsAbsolute(value: string): boolean {
   return value.startsWith("/") || value.startsWith("\\\\") || /^[A-Za-z]:[\\/]/u.test(value);
+}
+
+function validateValidatorSpec(value: unknown): asserts value is ValidatorSpec {
+  if (!isRecord(value))
+    throw new ProtocolValidationError("invalid_message", "command.validator is invalid.");
+  assertWorkspacePath(value.executable, "command.validator.executable");
+  if (
+    !Array.isArray(value.args) ||
+    value.args.some((arg) => typeof arg !== "string" || arg.includes("\0"))
+  ) {
+    throw new ProtocolValidationError("invalid_message", "command.validator.args is invalid.");
+  }
 }
 
 function validateEvent(value: unknown): asserts value is RuntimeEvent {

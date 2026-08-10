@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MiniMaxPiAgentEngine, PiAgentEngine } from "@candy/pi-adapter";
+import { KeyringCredentialStore } from "@candy/platform";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const resultRoot = path.join(root, "out", "acceptance", "live");
@@ -32,20 +33,30 @@ if (!(provider in PROVIDERS) || !confirmed) {
 
 async function runGate(selectedProvider) {
   const definition = PROVIDERS[selectedProvider];
-  let secret = process.env[definition.envKey];
+  const temporarySecret = process.env[definition.envKey];
   delete process.env.CANDY_DEEPSEEK_API_KEY;
   delete process.env.CANDY_MINIMAX_TOKEN_PLAN_KEY;
 
   const startedAt = new Date();
   const results = [];
   let temporaryRoot;
+  let credentialLease;
   try {
+    try {
+      credentialLease = new KeyringCredentialStore().lease(selectedProvider);
+    } catch {
+      credentialLease = undefined;
+    }
+    const secret = credentialLease?.value ?? temporarySecret;
     if (!secret) {
       results.push({
         id: selectedProvider === "deepseek" ? "LIVE-DS" : "LIVE-MM",
         status: "blocked",
         durationMs: 0,
-        summary: "approved_credential_not_present",
+        summary:
+          credentialLease === undefined && temporarySecret === undefined
+            ? "approved_credential_not_present"
+            : "candy_keychain_unavailable",
       });
       return await finishReport(selectedProvider, startedAt, results, false);
     }
@@ -216,7 +227,7 @@ async function runGate(selectedProvider) {
     });
     return await finishReport(selectedProvider, startedAt, results, true);
   } finally {
-    secret = undefined;
+    credentialLease?.release();
     if (temporaryRoot !== undefined) await rm(temporaryRoot, { recursive: true, force: true });
   }
 }

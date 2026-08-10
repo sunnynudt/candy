@@ -34,6 +34,7 @@ const steps = [
   "check:toolchain",
   "check",
   "check:native",
+  "smoke:safe-edit",
   "smoke:tui",
   "smoke:tui-task",
   "smoke:app-server",

@@ -14,6 +14,8 @@ const appRoot = path.join(resources, "app");
 const appServerRoot = path.join(resources, "app-server");
 const nodeRoot = path.join(resources, "node");
 const nodeModulesRoot = path.join(resources, "node_modules");
+const nativeRoot = path.join(resources, "native");
+const nativeRunner = path.join(nativeRoot, "candy-sandbox-runner");
 
 const electronModule = await import("electron");
 const electronExecutable = electronModule.default ?? electronModule;
@@ -36,6 +38,19 @@ await cp(
   path.join(root, "apps", "app-server", "package.json"),
   path.join(appServerRoot, "package.json"),
 );
+
+execFileSync("cargo", [
+  "build",
+  "--locked",
+  "--manifest-path",
+  path.join(root, "native", "sandbox-runner", "Cargo.toml"),
+]);
+await mkdir(nativeRoot, { recursive: true });
+await cp(
+  path.join(root, "native", "sandbox-runner", "target", "debug", "candy-sandbox-runner"),
+  nativeRunner,
+);
+await chmod(nativeRunner, 0o755);
 
 const nodeModulesSource = path.join(root, "node_modules");
 const excludedTopLevel = new Set([
@@ -86,6 +101,7 @@ const metadata = {
   nodeVersion: process.version,
   architecture: process.arch,
   signing: "ad-hoc",
+  sandboxRunner: nativeRunner,
 };
 await writeFile(
   path.join(outputRoot, "package-metadata.json"),

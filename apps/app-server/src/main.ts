@@ -1,7 +1,8 @@
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { stat } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   resolveAppPaths,
   resolveCredential,
@@ -27,10 +28,13 @@ import {
 import {
   DeterministicAgentEngine,
   AttachmentStore,
+  MacSandboxRunner,
+  MacSandboxValidator,
   type AgentEngine,
   type AgentObservation,
   type AgentTurnInput,
   type RecoverableAgentEngine,
+  type MacSandboxValidatorCommand,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -54,6 +58,7 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       prompt: input.prompt,
       model,
       cwd: input.cwd ?? process.cwd(),
+      ...(input.approvalProfile === undefined ? {} : { approvalProfile: input.approvalProfile }),
       ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
       ...(input.images === undefined ? {} : { images: input.images }),
     };
@@ -102,6 +107,15 @@ export interface AppServerControllerOptions {
   readonly engine?: AgentEngine;
   readonly ownerId?: string;
   readonly attachments?: AttachmentStore;
+  readonly validatorRunner?: AppServerValidator;
+}
+
+interface AppServerValidator {
+  run(
+    command: MacSandboxValidatorCommand,
+    workspace: string,
+    signal: AbortSignal,
+  ): Promise<{ readonly ok: boolean }>;
 }
 
 type Emit = (message: ProtocolMessage) => void;
@@ -127,6 +141,7 @@ export class AppServerController {
   readonly #engine: RecoverableAgentEngine;
   readonly #ownerId: string;
   readonly #attachments: AttachmentStore | undefined;
+  readonly #validatorRunner: AppServerValidator | undefined;
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
   readonly #active = new Map<string, ActiveTask>();
@@ -141,6 +156,7 @@ export class AppServerController {
       options.engine ?? new DeterministicAgentEngine(new SystemClock(), "Candy fixture response");
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
     this.#attachments = options.attachments;
+    this.#validatorRunner = options.validatorRunner;
   }
 
   public get state(): AppServerState {
@@ -174,6 +190,7 @@ export class AppServerController {
         command.model ?? DEFAULT_CANDY_MODEL,
         command.attachmentIds ?? [],
         command.workspacePath,
+        command.validator,
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
@@ -303,6 +320,7 @@ export class AppServerController {
           prompt,
           model: current.model,
           cwd: current.workspacePath,
+          approvalProfile: current.approvalProfile,
           ...(images === undefined ? {} : { images }),
         },
         active.abort.signal,
@@ -314,6 +332,24 @@ export class AppServerController {
       }
       const metadata = this.#store.get(taskId);
       if (metadata?.state === "running") {
+        if (metadata.validator !== undefined) {
+          if (this.#validatorRunner === undefined)
+            throw new Error("Validator execution is unavailable on this installation.");
+          emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
+          const result = await this.#validatorRunner.run(
+            metadata.validator,
+            metadata.workspacePath,
+            active.abort.signal,
+          );
+          emit(
+            this.event(taskId, metadata.revision, {
+              type: "tool.completed",
+              tool: "validator",
+              ok: result.ok,
+            }),
+          );
+          if (!result.ok) throw new Error("Validator did not pass.");
+        }
         const completed = this.#store.transition(taskId, metadata.revision, "completed");
         emit(this.stateChanged(completed, "validator"));
         emit(this.snapshot(completed));
@@ -437,6 +473,7 @@ function taskErrorCode(
 
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
+  const sandboxRunner = resolveSandboxRunner();
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments),
@@ -455,6 +492,16 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       ),
     ),
     ownerId: `app-server:${process.pid}`,
+    ...(sandboxRunner === undefined
+      ? {}
+      : {
+          validatorRunner: {
+            run: (command, workspace, signal) =>
+              new MacSandboxValidator(new MacSandboxRunner(sandboxRunner), workspace, command).run(
+                signal,
+              ),
+          },
+        }),
   });
   const lines = createInterface({ input: stdin, crlfDelay: Infinity });
   const write = (message: ProtocolMessage): void => {
@@ -474,6 +521,19 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       controller.close();
     }
   })();
+}
+
+function resolveSandboxRunner(): string | undefined {
+  const candidates = [
+    process.env.CANDY_SANDBOX_RUNNER,
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../native/candy-sandbox-runner"),
+    path.resolve(process.cwd(), "native/sandbox-runner/target/debug/candy-sandbox-runner"),
+    path.resolve(process.cwd(), "../../native/sandbox-runner/target/debug/candy-sandbox-runner"),
+  ];
+  return candidates.find(
+    (candidate): candidate is string =>
+      candidate !== undefined && path.isAbsolute(candidate) && existsSync(candidate),
+  );
 }
 
 function mapPiObservation(observation: PiAgentObservation): AgentObservation {

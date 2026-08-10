@@ -85,6 +85,72 @@ test("app-server runs a task in its selected workspace instead of the child cwd"
   }
 });
 
+test("app-server runs an explicit validator before marking edited work complete", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-validator-workspace-"));
+  const validatorCalls: string[] = [];
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        yield {
+          type: "tool.completed" as const,
+          taskId: input.taskId,
+          tool: "candy_edit",
+          ok: true,
+        };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    validatorRunner: {
+      async run(command, cwd) {
+        validatorCalls.push(`${command.executable}:${cwd}`);
+        return { ok: true };
+      },
+    },
+  });
+  const background: ProtocolMessage[] = [];
+  try {
+    await controller.dispatch(
+      command("task-validator", "create-validator", 0, {
+        type: "task.create",
+        prompt: "edit then test",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        validator: { executable: process.execPath, args: ["-e", "process.exit(0)"] },
+      }),
+    );
+    await controller.dispatch(
+      command("task-validator", "run-validator", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    for (
+      let attempt = 0;
+      attempt < 20 &&
+      !background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      attempt += 1
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(validatorCalls, [`${process.execPath}:${workspace}`]);
+    assert.deepEqual(
+      background
+        .filter((message) => message.kind === "event" && message.event.type.startsWith("tool."))
+        .map((message) =>
+          message.kind === "event" && message.event.type === "tool.started"
+            ? "started"
+            : "completed",
+        ),
+      ["completed", "started", "completed"],
+    );
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("app-server rejects a secret before it can become an event", async () => {
   const controller = new AppServerController();
   try {
@@ -122,6 +188,7 @@ test("app-server Pi bridge preserves image input for the selected provider", asy
       prompt: "describe",
       model: "MiniMax-M3",
       cwd: "/tmp/candy-workspace",
+      approvalProfile: "auto",
       images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
     },
     new AbortController().signal,
@@ -130,6 +197,7 @@ test("app-server Pi bridge preserves image input for the selected provider", asy
   }
   assert.deepEqual(received[0]?.images, [{ mimeType: "image/png", data: "aW1hZ2U=" }]);
   assert.equal(received[0]?.cwd, "/tmp/candy-workspace");
+  assert.equal(received[0]?.approvalProfile, "auto");
 });
 
 test("app-server preserves actionable provider error codes without exposing messages", async () => {

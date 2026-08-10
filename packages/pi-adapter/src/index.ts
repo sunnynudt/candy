@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 
@@ -331,6 +331,115 @@ function containsCredentialMaterial(value: string): boolean {
   );
 }
 
+export interface CandyWorkspaceToolOperations {
+  readonly readFile: (absolutePath: string) => Promise<Buffer>;
+  readonly access: (absolutePath: string) => Promise<void>;
+  readonly writeFile: (absolutePath: string, content: string) => Promise<void>;
+  readonly mkdir: (directory: string) => Promise<void>;
+}
+
+/**
+ * File operations shared by Pi's public read/edit/write definitions. Pi still
+ * owns tool schemas and rendering; Candy owns the workspace boundary.
+ */
+export function createCandyWorkspaceOperations(
+  workspaceRoot: string,
+): CandyWorkspaceToolOperations {
+  const root = path.resolve(workspaceRoot);
+  return {
+    readFile: async (absolutePath) => {
+      await assertWorkspacePath(root, absolutePath, false);
+      return readFile(absolutePath);
+    },
+    access: async (absolutePath) => {
+      await assertWorkspacePath(root, absolutePath, false);
+      await access(absolutePath);
+    },
+    writeFile: async (absolutePath, content) => {
+      await assertWorkspacePath(root, absolutePath, true);
+      await writeFile(absolutePath, content, "utf8");
+    },
+    mkdir: async (directory) => {
+      await assertWorkspacePath(root, directory, true);
+      await mkdir(directory, { recursive: true });
+      await assertWorkspacePath(root, directory, false);
+    },
+  };
+}
+
+function createCandyWorkspaceTools(workspaceRoot: string, approvalProfile: "read-only" | "auto") {
+  const operations = createCandyWorkspaceOperations(workspaceRoot);
+  const read = piSdk.createReadToolDefinition(workspaceRoot, {
+    operations: { readFile: operations.readFile, access: operations.access },
+  });
+  const tools: piSdk.ToolDefinition[] = [
+    {
+      ...read,
+      name: "candy_read",
+      label: "Read workspace file",
+      promptSnippet: "Read files inside the selected workspace",
+    } as unknown as piSdk.ToolDefinition,
+  ];
+  if (approvalProfile === "auto") {
+    const edit = piSdk.createEditToolDefinition(workspaceRoot, {
+      operations: {
+        readFile: operations.readFile,
+        writeFile: operations.writeFile,
+        access: operations.access,
+      },
+    });
+    const write = piSdk.createWriteToolDefinition(workspaceRoot, {
+      operations: { writeFile: operations.writeFile, mkdir: operations.mkdir },
+    });
+    tools.push(
+      {
+        ...edit,
+        name: "candy_edit",
+        label: "Edit workspace file",
+        promptSnippet: "Make precise edits inside the selected workspace",
+      } as unknown as piSdk.ToolDefinition,
+      {
+        ...write,
+        name: "candy_write",
+        label: "Write workspace file",
+        promptSnippet: "Create or overwrite files inside the selected workspace",
+      } as unknown as piSdk.ToolDefinition,
+    );
+  }
+  return tools;
+}
+
+async function assertWorkspacePath(
+  root: string,
+  candidate: string,
+  allowMissing: boolean,
+): Promise<void> {
+  if (!path.isAbsolute(candidate)) throw new Error("Workspace tool paths must be absolute.");
+  const absoluteRoot = path.resolve(root);
+  const absoluteCandidate = path.resolve(candidate);
+  const relative = path.relative(absoluteRoot, absoluteCandidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace tool path escaped the selected workspace.");
+  }
+  if ((await lstat(absoluteRoot)).isSymbolicLink())
+    throw new Error("The selected workspace cannot be a symbolic link.");
+  let current = absoluteRoot;
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink())
+        throw new Error("Symbolic links are not allowed in workspace tool paths.");
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT" && allowMissing) return;
+      throw error;
+    }
+  }
+}
+
+function isNodeError(value: unknown): value is NodeJS.ErrnoException {
+  return value instanceof Error && "code" in value;
+}
+
 export interface PiSessionHandle {
   readonly sessionFile: string;
   readonly sessionId: string;
@@ -435,6 +544,7 @@ export interface PiAgentEngineInput {
   readonly prompt: string;
   readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
   readonly cwd: string;
+  readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly PiImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
@@ -565,13 +675,19 @@ export class PiAgentEngine {
       const sessionManager = existing
         ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
         : piSdk.SessionManager.create(input.cwd, sessionDirectory);
+      const workspaceTools = createCandyWorkspaceTools(
+        input.cwd,
+        input.approvalProfile ?? "read-only",
+      );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
         agentDir: path.join(this.sessionRoot, "pi-agent"),
         modelRuntime,
         model,
         sessionManager,
-        tools: ["read"],
+        noTools: "builtin",
+        tools: workspaceTools.map((tool) => tool.name),
+        customTools: workspaceTools,
       });
       session = created.session;
       if (input.thinkingLevel !== undefined) {

@@ -63,7 +63,7 @@ npm run gate:live:deepseek
 npm run gate:live:minimax
 ```
 
-Run only the provider command whose Candy-owned environment variable was placed in the private trusted process. The runner requires `--confirm-live` internally, removes both Candy provider variables from its process environment before creating the Pi engine, uses a temporary fixture/session directory outside the repository, and writes only sanitized results to `out/acceptance/live/`. Missing credentials produce `Blocked` without a network request. The runner also keeps controlled error fixtures, entitlement-console confirmation, and any unavailable thinking/tool proof as `Blocked`; a successful HTTP turn alone is not a Gate pass.
+Run only the provider command after that provider is present in Candy's own Keychain account. The runner requires `--confirm-live` internally, reads only Candy's own Keychain adapter (with the documented temporary Candy environment variable as a private development fallback), removes both Candy provider variables from its process environment before creating the Pi engine, uses a temporary fixture/session directory outside the repository, and writes only sanitized results to `out/acceptance/live/`. Missing credentials produce `Blocked` without a network request. The runner also keeps controlled error fixtures, entitlement-console confirmation, and any unavailable thinking/tool proof as `Blocked`; a successful HTTP turn alone is not a Gate pass.
 
 ## Product workflow after the credential store exists
 

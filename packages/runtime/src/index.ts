@@ -8,6 +8,7 @@ export interface AgentTurnInput {
   readonly model?: CandyModelId;
   /** Selected Local Workspace used by the task's tools and session. */
   readonly cwd?: string;
+  readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly AgentImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
@@ -393,6 +394,9 @@ export {
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
   LongRunningControlError,
+  MacSandboxRunner,
+  MacSandboxRunnerUnavailableError,
+  MacSandboxValidator,
   ProviderConcurrencyGate,
   ProcessSupervisor,
   ProcessSupervisorUnavailableError,
@@ -416,6 +420,8 @@ export type {
   ValidatorResult,
   ProcessRequest,
   ProcessResult,
+  MacSandboxValidatorCommand,
+  SandboxRunRequest,
   GitWorktreePlan,
   GitChangeManifest,
   GitCommandRunner,

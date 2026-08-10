@@ -1,4 +1,5 @@
 import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
+import type { ValidatorSpec } from "@candy/protocol";
 
 export interface RendererTaskProjection {
   readonly taskId: string;
@@ -50,6 +51,7 @@ export interface DesktopPreloadApi {
       approvalProfile: "read-only" | "auto",
       model?: CandyModelId,
       attachmentIds?: readonly string[],
+      validator?: ValidatorSpec,
     ): Promise<RendererTaskProjection>;
     snapshot(taskId: string): Promise<RendererTaskProjection>;
     send(command: {
@@ -108,4 +110,22 @@ export function isAbsoluteWorkspacePath(workspacePath: string): boolean {
     workspacePath.startsWith("\\\\") ||
     /^[A-Za-z]:[\\/]/u.test(workspacePath)
   );
+}
+
+export function assertValidatorSpec(value: unknown): asserts value is ValidatorSpec {
+  if (typeof value !== "object" || value === null) throw new Error("Invalid validator.");
+  const executable = (value as { readonly executable?: unknown }).executable;
+  const args = (value as { readonly args?: unknown }).args;
+  if (typeof executable !== "string") throw new Error("Validator executable is invalid.");
+  assertWorkspacePath(executable);
+  if (
+    !Array.isArray(args) ||
+    args.some(
+      (arg) =>
+        typeof arg !== "string" ||
+        arg.includes("\0") ||
+        /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(arg),
+    )
+  )
+    throw new Error("Validator arguments are invalid.");
 }
