@@ -47,8 +47,8 @@
   待完成：MiniMax Windows Gate 与 Token Plan entitlement。Claude Code/OpenCode 配置均不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
 
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
-  已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`。
-  待完成：真实 Credential Manager set/replace/has/delete、Windows Desktop 二进制下载/启动、打包、签名、恢复和响应性矩阵。该开发态 smoke 不替代 Windows 打包、签名、恢复或完整 Desktop 验收。
+  已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；Candy 自有 Windows Credential Manager 适配器的合成 fixture 已完成 `absent -> present -> present -> absent`（set/replace/has/delete），未输出或读取 fixture 值；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`。
+  待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。另有 Windows Desktop 二进制下载/启动、打包、签名、恢复和响应性矩阵未完成。该开发态 smoke 不替代 Windows 打包、签名、恢复或完整 Desktop 验收。
 
 - ⬜ 重新生成当前提交的 Windows 验收证据；旧证据仍指向 `0710d00`，且不可替代本机 Windows 结果。
 

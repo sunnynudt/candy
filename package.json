@@ -21,6 +21,7 @@
     "check:toolchain": "node scripts/assert-toolchain.mjs",
     "check:windows-toolchain": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-toolchain.ps1",
     "check:native": "node scripts/check-native.mjs",
+    "smoke:credential-manager:windows": "npm run build && node scripts/smoke-credential-manager-windows.mjs",
     "smoke:native:windows": "npm run build && node scripts/smoke-native-windows.mjs",
     "acceptance:macos": "npm run build && node scripts/acceptance-macos.mjs",
     "gate:live:deepseek": "node scripts/live-provider-gate.mjs --provider deepseek --confirm-live",
