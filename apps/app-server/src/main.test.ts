@@ -22,7 +22,16 @@ function eventTypes(messages: readonly ProtocolMessage[]): string[] {
 }
 
 test("app-server creates, runs, streams and durably completes one task", async () => {
-  const controller = new AppServerController();
+  const controller = new AppServerController({
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return { available: false, tracked: [], untracked: [], patchText: "" };
+      },
+    },
+  });
   const background: ProtocolMessage[] = [];
   try {
     const created = await controller.dispatch(
@@ -40,8 +49,24 @@ test("app-server creates, runs, streams and durably completes one task", async (
       (message) => background.push(message),
     );
     assert.deepEqual(eventTypes(started), ["task.state_changed", "snapshot"]);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.deepEqual(eventTypes(background), ["assistant.delta", "task.state_changed", "snapshot"]);
+    for (
+      let attempt = 0;
+      attempt < 20 &&
+      !background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      attempt += 1
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(eventTypes(background), [
+      "assistant.delta",
+      "workspace.changes",
+      "task.state_changed",
+      "snapshot",
+    ]);
     const last = background.at(-1);
     assert.ok(last?.kind === "event");
     assert.equal(last.event.type, "snapshot");
@@ -65,7 +90,17 @@ test("app-server runs a task in its selected workspace instead of the child cwd"
       yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
     },
   };
-  const controller = new AppServerController({ engine });
+  const controller = new AppServerController({
+    engine,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return { available: false, tracked: [], untracked: [], patchText: "" };
+      },
+    },
+  });
   try {
     await controller.dispatch(
       command("task-workspace", "create-workspace", 0, {
@@ -148,6 +183,77 @@ test("app-server runs an explicit validator before marking edited work complete"
   } finally {
     controller.close();
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("app-server publishes the reviewed workspace changes before task completion", async () => {
+  const observed: Array<{ readonly workspace: string; readonly baseCommit?: string }> = [];
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline(workspace: string) {
+        observed.push({ workspace });
+        return "fixture-base";
+      },
+      async inspect(workspace: string, baseCommit?: string) {
+        observed.push(baseCommit === undefined ? { workspace } : { workspace, baseCommit });
+        return {
+          available: true,
+          tracked: ["src/value.ts"],
+          untracked: ["notes.txt"],
+          patchText: "diff --git a/src/value.ts b/src/value.ts\nfixture-secret\n",
+        };
+      },
+    },
+    activeSecrets: () => ["fixture-secret"],
+  });
+  const background: ProtocolMessage[] = [];
+  try {
+    await controller.dispatch(
+      command("task-changes", "create-changes", 0, {
+        type: "task.create",
+        prompt: "edit fixture",
+        approvalProfile: "auto",
+        workspacePath: process.cwd(),
+      }),
+    );
+    await controller.dispatch(
+      command("task-changes", "run-changes", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    for (
+      let attempt = 0;
+      attempt < 20 &&
+      !background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      attempt += 1
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const changes = background.find(
+      (message) => message.kind === "event" && message.event.type === "workspace.changes",
+    );
+    assert.ok(changes?.kind === "event" && changes.event.type === "workspace.changes");
+    if (changes?.kind === "event" && changes.event.type === "workspace.changes") {
+      assert.deepEqual(changes.event.tracked, ["src/value.ts"]);
+      assert.deepEqual(changes.event.untracked, ["notes.txt"]);
+      assert.match(changes.event.patchText, /^diff --git/u);
+      assert.equal(changes.event.patchText.includes("fixture-secret"), false);
+    }
+    assert.deepEqual(observed, [
+      { workspace: process.cwd() },
+      { workspace: process.cwd(), baseCommit: "fixture-base" },
+    ]);
+  } finally {
+    controller.close();
   }
 });
 
@@ -396,7 +502,17 @@ test("app-server limits starts to three active tasks and promotes queued FIFO wo
       yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
     },
   };
-  const controller = new AppServerController({ engine });
+  const controller = new AppServerController({
+    engine,
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return { available: false, tracked: [], untracked: [], patchText: "" };
+      },
+    },
+  });
   const background = new Map<string, ProtocolMessage[]>();
   try {
     for (let index = 1; index <= 4; index += 1) {

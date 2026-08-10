@@ -814,6 +814,22 @@ export interface GitChangeManifest {
   readonly untracked: readonly string[];
 }
 
+export interface WorkspaceChangeSnapshot {
+  readonly available: boolean;
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+  readonly patchText: string;
+}
+
+export interface WorkspaceChangeTracker {
+  captureBaseline(workspace: string): Promise<string | undefined>;
+  inspect(
+    workspace: string,
+    baseCommit?: string,
+    activeSecrets?: readonly string[],
+  ): Promise<WorkspaceChangeSnapshot>;
+}
+
 export interface GitCommandRunner {
   run(args: readonly string[], cwd: string, input?: string): Promise<string>;
 }
@@ -840,6 +856,55 @@ class NodeGitCommandRunner implements GitCommandRunner {
       });
       child.stdin.end(input);
     });
+  }
+}
+
+/** Reads a task workspace without mutating Git state or exposing command errors. */
+export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
+  readonly #runner: GitCommandRunner;
+
+  public constructor(runner: GitCommandRunner = new NodeGitCommandRunner()) {
+    this.#runner = runner;
+  }
+
+  public async captureBaseline(workspace: string): Promise<string | undefined> {
+    try {
+      const baseCommit = (await this.#runner.run(["rev-parse", "HEAD"], workspace)).trim();
+      return /^[0-9a-f]{7,64}$/u.test(baseCommit) ? baseCommit : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  public async inspect(
+    workspace: string,
+    baseCommit?: string,
+    activeSecrets: readonly string[] = [],
+  ): Promise<WorkspaceChangeSnapshot> {
+    if (baseCommit === undefined) return emptyWorkspaceChanges();
+    try {
+      const tracked = splitNull(
+        await this.#runner.run(
+          ["diff", "--name-only", "--no-ext-diff", "-z", baseCommit, "--"],
+          workspace,
+        ),
+      );
+      const untracked = splitNull(
+        await this.#runner.run(["ls-files", "--others", "--exclude-standard", "-z"], workspace),
+      );
+      const patchText = await this.#runner.run(
+        ["diff", "--binary", "--no-ext-diff", "--no-color", baseCommit, "--"],
+        workspace,
+      );
+      return {
+        available: true,
+        tracked: tracked.map(normalizeGitPath),
+        untracked: untracked.map(normalizeGitPath),
+        patchText: redactWorkspacePatch(patchText, activeSecrets),
+      };
+    } catch {
+      return emptyWorkspaceChanges();
+    }
   }
 }
 
@@ -1075,6 +1140,21 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
 
 function splitNull(value: string): string[] {
   return value.split("\0").filter((entry) => entry.length > 0);
+}
+
+function emptyWorkspaceChanges(): WorkspaceChangeSnapshot {
+  return { available: false, tracked: [], untracked: [], patchText: "" };
+}
+
+function normalizeGitPath(value: string): string {
+  return value.replaceAll("\\", "/");
+}
+
+function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): string {
+  return activeSecrets.reduce(
+    (result, secret) => (secret.length > 0 ? result.split(secret).join("[REDACTED]") : result),
+    value.slice(0, 1_048_576),
+  );
 }
 
 function uniqueRelativePaths(paths: readonly string[]): string[] {

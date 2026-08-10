@@ -99,3 +99,11 @@ Windows 11 x64 implementation and acceptance are scheduled for a later work pack
 - `npm run smoke:safe-edit` now exercises a local TypeScript fixture through read, edit, native validator, diff, and commit-invariance checks. The fixture is temporary, uses a Git baseline only for observation, and is removed after the run.
 - Local verification on macOS `26.5.2` arm64 covers the real native binary, workspace read/write/mkdir guards, Pi tool construction, validator execution, app-server validator ordering, protocol validation, and the full deterministic suite.
 - This checkpoint does not clear G2 native security review: the current Seatbelt profile keeps the default filesystem policy while Candy's TypeScript guard enforces selected-workspace file operations. A stronger workspace-only profile, cancellation/descendant evidence, packaged runner path, real DeepSeek gate, diff/Apply UI, restart recovery, and final acceptance evidence remain open.
+
+## 2026-08-10 workspace diff projection checkpoint
+
+- `GitWorkspaceChangeTracker` captures the selected Git workspace HEAD at task creation and reports tracked, untracked, and binary-safe patch data after the Pi turn without mutating the workspace.
+- The versioned protocol now carries `workspace.changes`; the app-server emits it before completion and refreshes it for an explicit task snapshot. Desktop projects it into real `changedFiles` and diff text instead of a placeholder file list.
+- Active DeepSeek and MiniMax credentials are leased only for diff redaction and released immediately; a canary test confirms the credential cannot enter the workspace-change event.
+- Deterministic verification passes: format, lint, typecheck, `npm test` (63 tests), boundary/version/lifecycle checks, native check, app-server JSONL smoke, safe-edit smoke, and Desktop smoke under Node `22.23.2`.
+- This checkpoint is review-only. It does not enable Apply Changes in Desktop, persist the baseline across app-server restart, close the dirty/base/conflict Apply matrix, or change the blocked live-provider, native-containment, signing, Windows, or final ACC-01..12 status.

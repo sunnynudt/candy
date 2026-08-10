@@ -17,6 +17,7 @@ export interface RendererTaskProjection {
   readonly model: CandyModelId;
   readonly workspacePath?: string;
   readonly changedFiles: readonly string[];
+  readonly diff: string;
   readonly transcript: readonly {
     readonly role: "user" | "assistant" | "tool";
     readonly text: string;

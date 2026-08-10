@@ -135,6 +135,7 @@ function emptyProjection(taskId: string): RendererTaskProjection {
     approvalProfile: "read-only",
     model: DEFAULT_CANDY_MODEL,
     changedFiles: [],
+    diff: "",
     transcript: [],
   };
 }
@@ -182,6 +183,14 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
         ...current.transcript,
         { role: "tool", text: `${event.event.tool}: ${event.event.ok ? "ok" : "error"}` },
       ],
+    };
+  }
+  if (event.event.type === "workspace.changes") {
+    return {
+      ...current,
+      revision: event.revision,
+      changedFiles: [...event.event.tracked, ...event.event.untracked],
+      diff: event.event.patchText,
     };
   }
   return current;
@@ -484,7 +493,9 @@ function desktopShellHtml(nonce: string): string {
     current = projection;
     taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision;
     transcript.textContent = projection.transcript.map((entry) => entry.role.toUpperCase() + ': ' + entry.text).join('\\n') || 'No transcript yet.';
-    diff.textContent = projection.changedFiles.join('\\n') || 'No diff yet.';
+    diff.textContent = projection.changedFiles.length > 0
+      ? 'Changed files:\\n' + projection.changedFiles.join('\\n') + '\\n\\nDiff:\\n' + (projection.diff || '(no tracked patch)')
+      : 'No diff yet.';
   };
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;

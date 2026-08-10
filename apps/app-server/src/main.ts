@@ -28,6 +28,7 @@ import {
 import {
   DeterministicAgentEngine,
   AttachmentStore,
+  GitWorkspaceChangeTracker,
   MacSandboxRunner,
   MacSandboxValidator,
   type AgentEngine,
@@ -35,6 +36,7 @@ import {
   type AgentTurnInput,
   type RecoverableAgentEngine,
   type MacSandboxValidatorCommand,
+  type WorkspaceChangeTracker,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -108,6 +110,8 @@ export interface AppServerControllerOptions {
   readonly ownerId?: string;
   readonly attachments?: AttachmentStore;
   readonly validatorRunner?: AppServerValidator;
+  readonly changeTracker?: WorkspaceChangeTracker;
+  readonly activeSecrets?: () => readonly string[];
 }
 
 interface AppServerValidator {
@@ -142,8 +146,11 @@ export class AppServerController {
   readonly #ownerId: string;
   readonly #attachments: AttachmentStore | undefined;
   readonly #validatorRunner: AppServerValidator | undefined;
+  readonly #changeTracker: WorkspaceChangeTracker;
+  readonly #activeSecrets: (() => readonly string[]) | undefined;
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
+  readonly #baselines = new Map<string, string | undefined>();
   readonly #active = new Map<string, ActiveTask>();
   readonly #pendingRuns: PendingRun[] = [];
   readonly #requestedRuns = new Set<string>();
@@ -157,6 +164,8 @@ export class AppServerController {
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
     this.#attachments = options.attachments;
     this.#validatorRunner = options.validatorRunner;
+    this.#changeTracker = options.changeTracker ?? new GitWorkspaceChangeTracker();
+    this.#activeSecrets = options.activeSecrets;
   }
 
   public get state(): AppServerState {
@@ -183,6 +192,10 @@ export class AppServerController {
         throw new Error("Task workspace must be an absolute path.");
       if (!(await stat(command.workspacePath)).isDirectory())
         throw new Error("Task workspace is not a directory.");
+      this.#baselines.set(
+        message.taskId,
+        await this.#changeTracker.captureBaseline(command.workspacePath),
+      );
       const metadata = this.#store.create(
         message.taskId,
         command.approvalProfile,
@@ -205,6 +218,9 @@ export class AppServerController {
     }
 
     if (command.type === "snapshot") {
+      if (existing) {
+        return [await this.workspaceChanges(existing), this.snapshot(existing)];
+      }
       return [
         this.snapshot(
           existing ?? {
@@ -332,6 +348,7 @@ export class AppServerController {
       }
       const metadata = this.#store.get(taskId);
       if (metadata?.state === "running") {
+        emit(await this.workspaceChanges(metadata));
         if (metadata.validator !== undefined) {
           if (this.#validatorRunner === undefined)
             throw new Error("Validator execution is unavailable on this installation.");
@@ -406,6 +423,22 @@ export class AppServerController {
     return this.#store.queued().reduce((max, item) => Math.max(max, item.queueOrder ?? 0), 0) + 1;
   }
 
+  private async workspaceChanges(metadata: TaskMetadata): Promise<EventEnvelope> {
+    const activeSecrets = this.#activeSecrets?.() ?? [];
+    const changes = await this.#changeTracker.inspect(
+      metadata.workspacePath,
+      this.#baselines.get(metadata.taskId),
+      activeSecrets,
+    );
+    return this.event(metadata.taskId, metadata.revision, {
+      type: "workspace.changes",
+      available: changes.available,
+      tracked: changes.tracked,
+      untracked: changes.untracked,
+      patchText: redactWorkspacePatch(changes.patchText, activeSecrets),
+    });
+  }
+
   private snapshot(metadata: TaskMetadata | TaskSnapshot): EventEnvelope {
     return this.event(metadata.taskId, metadata.revision, {
       type: "snapshot",
@@ -471,6 +504,13 @@ function taskErrorCode(
   return "runtime_error";
 }
 
+function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): string {
+  return activeSecrets.reduce(
+    (result, secret) => (secret.length > 0 ? result.split(secret).join("[REDACTED]") : result),
+    value.slice(0, 1_048_576),
+  );
+}
+
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const sandboxRunner = resolveSandboxRunner();
@@ -492,6 +532,7 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       ),
     ),
     ownerId: `app-server:${process.pid}`,
+    activeSecrets: resolveActiveProviderSecrets,
     ...(sandboxRunner === undefined
       ? {}
       : {
@@ -521,6 +562,17 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       controller.close();
     }
   })();
+}
+
+function resolveActiveProviderSecrets(): readonly string[] {
+  const secrets: string[] = [];
+  for (const name of ["deepseek", "minimax-cn"] as const) {
+    const lease = resolveCredential(name);
+    if (!lease) continue;
+    secrets.push(lease.value);
+    lease.release();
+  }
+  return secrets;
 }
 
 function resolveSandboxRunner(): string | undefined {

@@ -143,6 +143,33 @@ test("assistant thinking deltas remain typed and secret-free", () => {
   assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
 });
 
+test("workspace changes remain typed, relative, and secret-free", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-changes",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "workspace.changes",
+      available: true,
+      tracked: ["src/value.ts"],
+      untracked: ["notes.txt"],
+      patchText: "diff --git a/src/value.ts b/src/value.ts\n",
+    },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: { ...event.event, tracked: ["../outside.ts"] },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
 test("event sequencing and snapshot identity fail closed", () => {
   const ledger = new EventLedger();
   ledger.accept(snapshotEventFixture);

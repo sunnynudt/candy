@@ -110,6 +110,14 @@ export interface TaskErrorEvent {
   readonly code: "cancelled" | "needs_credentials" | "provider_error" | "runtime_error";
 }
 
+export interface WorkspaceChangesEvent {
+  readonly type: "workspace.changes";
+  readonly available: boolean;
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+  readonly patchText: string;
+}
+
 export type RuntimeEvent =
   | SnapshotEvent
   | TaskStateChangedEvent
@@ -118,7 +126,8 @@ export type RuntimeEvent =
   | AssistantDeltaEvent
   | ToolStartedEvent
   | ToolCompletedEvent
-  | TaskErrorEvent;
+  | TaskErrorEvent
+  | WorkspaceChangesEvent;
 
 export interface EventEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -360,7 +369,35 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
     }
     return;
   }
+  if (value.type === "workspace.changes") {
+    if (typeof value.available !== "boolean" || typeof value.patchText !== "string") {
+      throw new ProtocolValidationError("invalid_message", "workspace changes are invalid.");
+    }
+    assertRelativePaths(value.tracked, "event.tracked");
+    assertRelativePaths(value.untracked, "event.untracked");
+    return;
+  }
   throw new ProtocolValidationError("invalid_message", "Unsupported event payload.");
+}
+
+function assertRelativePaths(value: unknown, name: string): asserts value is readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.includes("\0") ||
+        entry.includes("\\") ||
+        entry === "." ||
+        entry.startsWith("/") ||
+        entry.startsWith("../") ||
+        entry.includes("/../") ||
+        entry.endsWith("/.."),
+    )
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name} must contain relative paths.`);
+  }
 }
 
 function assertAttachmentIds(value: unknown): asserts value is readonly string[] {

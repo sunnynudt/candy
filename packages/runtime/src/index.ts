@@ -390,6 +390,7 @@ export {
   BrowserControlError,
   BrowserRevisionError,
   FixedValidator,
+  GitWorkspaceChangeTracker,
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
@@ -425,6 +426,8 @@ export type {
   GitWorktreePlan,
   GitChangeManifest,
   GitCommandRunner,
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeTracker,
 } from "./v1.js";
 
 function throwIfAborted(signal: AbortSignal): void {

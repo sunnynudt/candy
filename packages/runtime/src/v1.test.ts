@@ -14,6 +14,7 @@ import {
   BrowserControlError,
   BrowserRevisionError,
   FixedValidator,
+  GitWorkspaceChangeTracker,
   LongRunningControlError,
   MacSandboxRunner,
   MacSandboxValidator,
@@ -424,9 +425,15 @@ test("Git changes are reviewed and applied without changing the target index", a
     const plan = planGitWorktree(repository, worktree, "task-apply", baseCommit);
     const manager = new GitWorktreeManager(worktreeRoot);
     await manager.create(plan);
-    writeFileSync(path.join(worktree, "README.md"), "changed\n");
+    writeFileSync(path.join(worktree, "README.md"), "changed fixture-secret\n");
     writeFileSync(path.join(worktree, "binary.bin"), Buffer.from([0, 1, 3]));
     writeFileSync(path.join(worktree, "new.txt"), "untracked\n");
+    const tracker = new GitWorkspaceChangeTracker();
+    assert.equal(await tracker.captureBaseline(worktree), baseCommit);
+    const reviewed = await tracker.inspect(worktree, baseCommit, ["fixture-secret"]);
+    assert.equal(reviewed.available, true);
+    assert.equal(reviewed.patchText.includes("fixture-secret"), false);
+    assert.match(reviewed.patchText, /\[REDACTED\]/u);
     const changes = await manager.changes(plan);
     assert.deepEqual(changes.tracked, ["README.md", "binary.bin"]);
     assert.deepEqual(changes.untracked, ["new.txt"]);
@@ -444,7 +451,10 @@ test("Git changes are reviewed and applied without changing the target index", a
       }),
       "applied",
     );
-    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed\n");
+    assert.equal(
+      await readFile(path.join(repository, "README.md"), "utf8"),
+      "changed fixture-secret\n",
+    );
     assert.deepEqual([...(await readFile(path.join(repository, "binary.bin")))], [0, 1, 3]);
     assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked\n");
     assert.equal(git(["diff", "--cached", "--quiet"], repository), "");
