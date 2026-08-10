@@ -21,6 +21,7 @@ export interface TaskSnapshot {
   readonly approvalProfile?: "read-only" | "auto";
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
+  readonly workspacePath?: string;
   readonly ownerId?: string;
 }
 
@@ -32,6 +33,7 @@ export interface CreateTaskCommand {
   readonly type: "task.create";
   readonly prompt: string;
   readonly approvalProfile: "read-only" | "auto";
+  readonly workspacePath: string;
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
 }
@@ -238,6 +240,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     return;
   if (value.type === "task.create") {
     assertString(value.prompt, "command.prompt");
+    assertWorkspacePath(value.workspacePath, "command.workspacePath");
     if (value.approvalProfile !== "read-only" && value.approvalProfile !== "auto") {
       throw new ProtocolValidationError(
         "invalid_message",
@@ -263,6 +266,22 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     return;
   }
   throw new ProtocolValidationError("invalid_message", "Unsupported command payload.");
+}
+
+function assertWorkspacePath(value: unknown, name: string): asserts value is string {
+  assertString(value, name);
+  if (
+    !pathLikeIsAbsolute(value) ||
+    value.includes("\0") ||
+    value.includes("\r") ||
+    value.includes("\n")
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name} must be an absolute path.`);
+  }
+}
+
+function pathLikeIsAbsolute(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("\\\\") || /^[A-Za-z]:[\\/]/u.test(value);
 }
 
 function validateEvent(value: unknown): asserts value is RuntimeEvent {

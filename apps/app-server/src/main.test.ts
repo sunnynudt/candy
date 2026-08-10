@@ -30,6 +30,7 @@ test("app-server creates, runs, streams and durably completes one task", async (
         type: "task.create",
         prompt: "inspect fixture",
         approvalProfile: "read-only",
+        workspacePath: process.cwd(),
       }),
     );
     assert.deepEqual(eventTypes(created), ["task.created", "snapshot"]);
@@ -55,6 +56,35 @@ test("app-server creates, runs, streams and durably completes one task", async (
   }
 });
 
+test("app-server runs a task in its selected workspace instead of the child cwd", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-selected-workspace-"));
+  const received: string[] = [];
+  const engine = {
+    async *runTurn(input: AgentTurnInput) {
+      received.push(input.cwd ?? "");
+      yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+    },
+  };
+  const controller = new AppServerController({ engine });
+  try {
+    await controller.dispatch(
+      command("task-workspace", "create-workspace", 0, {
+        type: "task.create",
+        prompt: "inspect workspace",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+      }),
+    );
+    await controller.dispatch(command("task-workspace", "run-workspace", 0, { type: "task.run" }));
+    for (let attempt = 0; attempt < 10 && received.length === 0; attempt += 1)
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(received, [workspace]);
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("app-server rejects a secret before it can become an event", async () => {
   const controller = new AppServerController();
   try {
@@ -64,6 +94,7 @@ test("app-server rejects a secret before it can become an event", async () => {
           type: "task.create",
           prompt: "Bearer fixture-secret",
           approvalProfile: "read-only",
+          workspacePath: process.cwd(),
         }),
       ),
       /secret/iu,
@@ -90,6 +121,7 @@ test("app-server Pi bridge preserves image input for the selected provider", asy
       taskId: "task-image-bridge",
       prompt: "describe",
       model: "MiniMax-M3",
+      cwd: "/tmp/candy-workspace",
       images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
     },
     new AbortController().signal,
@@ -97,6 +129,7 @@ test("app-server Pi bridge preserves image input for the selected provider", asy
     assert.equal(observation.type, "turn.completed");
   }
   assert.deepEqual(received[0]?.images, [{ mimeType: "image/png", data: "aW1hZ2U=" }]);
+  assert.equal(received[0]?.cwd, "/tmp/candy-workspace");
 });
 
 test("app-server preserves actionable provider error codes without exposing messages", async () => {
@@ -117,6 +150,7 @@ test("app-server preserves actionable provider error codes without exposing mess
         type: "task.create",
         prompt: "run provider",
         approvalProfile: "read-only",
+        workspacePath: process.cwd(),
       }),
     );
     await controller.dispatch(
@@ -171,6 +205,7 @@ test("app-server keeps a running task read-only to a second owner", async () => 
         type: "task.create",
         prompt: "owned task",
         approvalProfile: "read-only",
+        workspacePath: root,
       }),
     );
     await first.dispatch(command("task-owned", "run-owned", 0, { type: "task.run" }), (message) => {
@@ -228,6 +263,7 @@ test("app-server resolves Candy-owned image attachments into the selected MiniMa
         type: "task.create",
         prompt: "describe image",
         approvalProfile: "read-only",
+        workspacePath: root,
         model: "MiniMax-M3",
         attachmentIds: [attachment.id],
       }),
@@ -303,6 +339,7 @@ test("app-server limits starts to three active tasks and promotes queued FIFO wo
           type: "task.create",
           prompt: taskId,
           approvalProfile: "read-only",
+          workspacePath: process.cwd(),
         }),
       );
       await controller.dispatch(

@@ -12,6 +12,16 @@ const api: DesktopPreloadApi = {
         Awaited<ReturnType<DesktopPreloadApi["credentials"]["has"]>>
       >,
   },
+  workspace: {
+    choose: () =>
+      ipcRenderer.invoke("workspace.choose") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["workspace"]["choose"]>>
+      >,
+    current: () =>
+      ipcRenderer.invoke("workspace.current") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["workspace"]["current"]>>
+      >,
+  },
   attachments: {
     pickImage: () => ipcRenderer.invoke("attachment.pick-image") as Promise<string | undefined>,
   },

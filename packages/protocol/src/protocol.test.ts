@@ -97,7 +97,12 @@ test("task lifecycle commands and state events remain versioned and secret-free"
     commandId: "create-1",
     taskId: "task-1",
     expectedRevision: 0,
-    command: { type: "task.create", prompt: "inspect fixture", approvalProfile: "read-only" },
+    command: {
+      type: "task.create",
+      prompt: "inspect fixture",
+      approvalProfile: "read-only",
+      workspacePath: process.cwd(),
+    },
   } as const;
   const event = {
     v: 1,
@@ -113,7 +118,12 @@ test("task lifecycle commands and state events remain versioned and secret-free"
     () =>
       validateProtocolMessage({
         ...command,
-        command: { type: "task.create", prompt: "Bearer canary", approvalProfile: "read-only" },
+        command: {
+          type: "task.create",
+          prompt: "Bearer canary",
+          approvalProfile: "read-only",
+          workspacePath: process.cwd(),
+        },
       }),
     (error: unknown) =>
       error instanceof ProtocolValidationError && error.code === "secret_forbidden",

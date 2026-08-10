@@ -84,3 +84,9 @@ Windows 11 x64 implementation and acceptance are scheduled for a later work pack
 - The no-credential DeepSeek run was exercised and correctly produced `Blocked` without a network request or credential-shaped output.
 - The Pi adapter now accepts an explicit thinking level and forwards public Pi `thinking_delta` events as typed `assistant.thinking.delta` observations through Runtime and app-server protocol layers. The new protocol and adapter fixtures pass; Desktop visual presentation is intentionally deferred.
 - Live DeepSeek/MiniMax credentials, Token Plan console evidence, exact error-condition fixtures, and final provider Gate status remain Blocked.
+
+## 2026-08-10 workspace and credential-entry checkpoint
+
+- Desktop now provides a real folder picker, persists the selected Local Workspace under Candy app data, and requires that selection before creating a task. The task protocol and SQLite metadata carry the absolute workspace path; app-server validates the directory and passes it to Pi instead of using the child process cwd.
+- Desktop Settings now exposes DeepSeek and MiniMax credential replace/delete/presence operations through the existing Main-process Keychain bridge. The renderer only receives `present`/`absent` and never receives a stored credential value.
+- Deterministic verification passes: typecheck, lint, format, full 56-test suite, protocol boundary checks, exact Pi graph check, and lifecycle-script policy. This checkpoint does not enable live DeepSeek, mutable Pi tools, Shell, native containment, or Apply Changes in the real Desktop task path.

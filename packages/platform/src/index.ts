@@ -63,6 +63,7 @@ export interface TaskMetadata {
   readonly ownerId?: string;
   readonly model: CandyModelId;
   readonly attachmentIds: readonly string[];
+  readonly workspacePath: string;
 }
 
 export type PersistedRunStopReason =
@@ -121,7 +122,8 @@ export class SQLiteTaskStore {
         queue_order INTEGER,
         owner_id TEXT,
         model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
-        attachment_ids TEXT NOT NULL DEFAULT '[]'
+        attachment_ids TEXT NOT NULL DEFAULT '[]',
+        workspace_path TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -131,12 +133,13 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 4;
+      PRAGMA user_version = 5;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -145,20 +148,27 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 4;
+        PRAGMA user_version = 5;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash';
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
-        PRAGMA user_version = 4;
+        ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
+        PRAGMA user_version = 5;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
-        PRAGMA user_version = 4;
+        ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
+        PRAGMA user_version = 5;
       `);
-    } else if (schemaVersion !== 4) {
+    } else if (schemaVersion === 4) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
+        PRAGMA user_version = 5;
+      `);
+    } else if (schemaVersion !== 5) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -169,21 +179,29 @@ export class SQLiteTaskStore {
     queueOrder?: number,
     model: CandyModelId = DEFAULT_CANDY_MODEL,
     attachmentIds: readonly string[] = [],
+    workspacePath = process.cwd(),
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids) VALUES (?, 0, 'queued', ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?)",
       )
-      .run(taskId, approvalProfile, queueOrder ?? null, model, JSON.stringify(attachmentIds));
+      .run(
+        taskId,
+        approvalProfile,
+        queueOrder ?? null,
+        model,
+        JSON.stringify(attachmentIds),
+        assertWorkspacePath(workspacePath),
+      );
     return this.require(taskId);
   }
 
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -192,7 +210,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -201,7 +219,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -317,6 +335,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     approvalProfile: String(row.approval_profile) as "read-only" | "auto",
     model: String(row.model_id ?? DEFAULT_CANDY_MODEL) as CandyModelId,
     attachmentIds: parseAttachmentIds(row.attachment_ids),
+    workspacePath: String(row.workspace_path ?? ""),
   };
   return {
     ...metadata,
@@ -332,6 +351,23 @@ function assertTaskId(taskId: string): void {
 function assertAttachmentIds(ids: readonly string[]): void {
   if (ids.some((id) => !/^att_[a-f0-9]{64}$/u.test(id)))
     throw new Error("Attachment id is invalid.");
+}
+
+function assertWorkspacePath(workspacePath: string): string {
+  if (
+    workspacePath.length === 0 ||
+    workspacePath.includes("\0") ||
+    workspacePath.includes("\r") ||
+    workspacePath.includes("\n") ||
+    !(
+      workspacePath.startsWith("/") ||
+      workspacePath.startsWith("\\\\") ||
+      /^[A-Za-z]:[\\/]/u.test(workspacePath)
+    )
+  ) {
+    throw new Error("Workspace path must be absolute.");
+  }
+  return workspacePath;
 }
 
 function parseAttachmentIds(value: unknown): readonly string[] {

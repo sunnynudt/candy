@@ -6,6 +6,8 @@ export interface AgentTurnInput {
   readonly taskId: string;
   readonly prompt: string;
   readonly model?: CandyModelId;
+  /** Selected Local Workspace used by the task's tools and session. */
+  readonly cwd?: string;
   readonly images?: readonly AgentImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }

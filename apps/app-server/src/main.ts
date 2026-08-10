@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import path from "node:path";
+import { stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   resolveAppPaths,
@@ -52,7 +53,7 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       taskId: input.taskId,
       prompt: input.prompt,
       model,
-      cwd: process.cwd(),
+      cwd: input.cwd ?? process.cwd(),
       ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
       ...(input.images === undefined ? {} : { images: input.images }),
     };
@@ -162,12 +163,17 @@ export class AppServerController {
 
     if (command.type === "task.create") {
       if (existing) throw new Error(`Task ${message.taskId} already exists.`);
+      if (!path.isAbsolute(command.workspacePath))
+        throw new Error("Task workspace must be an absolute path.");
+      if (!(await stat(command.workspacePath)).isDirectory())
+        throw new Error("Task workspace is not a directory.");
       const metadata = this.#store.create(
         message.taskId,
         command.approvalProfile,
         this.nextQueueOrder(),
         command.model ?? DEFAULT_CANDY_MODEL,
         command.attachmentIds ?? [],
+        command.workspacePath,
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
@@ -190,6 +196,7 @@ export class AppServerController {
             state: "queued",
             approvalProfile: "read-only",
             model: DEFAULT_CANDY_MODEL,
+            workspacePath: "",
           },
         ),
       ];
@@ -272,11 +279,14 @@ export class AppServerController {
 
   private async runTask(taskId: string, active: ActiveTask, emit: Emit): Promise<void> {
     try {
-      const prompt =
-        this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, process.cwd()));
-      if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       const current = this.#store.get(taskId);
       if (!current) throw new Error("Task metadata is unavailable.");
+      if (!path.isAbsolute(current.workspacePath))
+        throw new Error("Task workspace is unavailable after restart.");
+      const prompt =
+        this.#prompts.get(taskId) ??
+        (await this.#engine.recoverPrompt?.(taskId, current.workspacePath));
+      if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       const images =
         current.attachmentIds.length === 0
           ? undefined
@@ -288,7 +298,13 @@ export class AppServerController {
                 throw new Error("Attachment storage is unavailable after restart.");
               })();
       for await (const observation of this.#engine.runTurn(
-        { taskId, prompt, model: current.model, ...(images === undefined ? {} : { images }) },
+        {
+          taskId,
+          prompt,
+          model: current.model,
+          cwd: current.workspacePath,
+          ...(images === undefined ? {} : { images }),
+        },
         active.abort.signal,
       )) {
         const metadata = this.#store.get(taskId);
@@ -366,6 +382,7 @@ export class AppServerController {
           : { approvalProfile: metadata.approvalProfile }),
         ...(metadata.model === undefined ? {} : { model: metadata.model }),
         ...(metadata.attachmentIds === undefined ? {} : { attachmentIds: metadata.attachmentIds }),
+        ...(metadata.workspacePath === undefined ? {} : { workspacePath: metadata.workspacePath }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
       },
     });

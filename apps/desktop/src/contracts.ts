@@ -14,6 +14,7 @@ export interface RendererTaskProjection {
   readonly revision: number;
   readonly approvalProfile: "read-only" | "auto";
   readonly model: CandyModelId;
+  readonly workspacePath?: string;
   readonly changedFiles: readonly string[];
   readonly transcript: readonly {
     readonly role: "user" | "assistant" | "tool";
@@ -28,8 +29,18 @@ export interface CredentialBridge {
   has(name: CredentialName): Promise<CredentialPresence>;
 }
 
+export interface WorkspaceSelection {
+  readonly path: string;
+}
+
+export interface WorkspaceBridge {
+  choose(): Promise<WorkspaceSelection | undefined>;
+  current(): Promise<WorkspaceSelection | undefined>;
+}
+
 export interface DesktopPreloadApi {
   readonly credentials: CredentialBridge;
+  readonly workspace: WorkspaceBridge;
   readonly attachments: {
     pickImage(): Promise<string | undefined>;
   };
@@ -78,4 +89,23 @@ export function assertCredentialName(name: string): asserts name is "deepseek" |
 
 export function assertTaskId(taskId: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(taskId)) throw new Error("Invalid task id.");
+}
+
+export function assertWorkspacePath(workspacePath: string): void {
+  if (
+    workspacePath.length === 0 ||
+    workspacePath.includes("\0") ||
+    workspacePath.includes("\r") ||
+    workspacePath.includes("\n") ||
+    !isAbsoluteWorkspacePath(workspacePath)
+  )
+    throw new Error("Workspace path must be absolute.");
+}
+
+export function isAbsoluteWorkspacePath(workspacePath: string): boolean {
+  return (
+    workspacePath.startsWith("/") ||
+    workspacePath.startsWith("\\\\") ||
+    /^[A-Za-z]:[\\/]/u.test(workspacePath)
+  );
 }
