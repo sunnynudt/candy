@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MiniMaxPiAgentEngine, PiAgentEngine } from "@candy/pi-adapter";
+import {
+  DeepSeekClient,
+  MiniMaxPiAgentEngine,
+  PiAgentEngine,
+  ProviderContractError,
+} from "@candy/pi-adapter";
 import { KeyringCredentialStore } from "@candy/platform";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -137,12 +142,7 @@ async function runGate(selectedProvider) {
           (outcome) => outcome.errorClass === "cancelled" && !hasCompleted(outcome),
         ),
       );
-      results.push({
-        id: "LIVE-DS-04-error-contracts",
-        status: "blocked",
-        durationMs: 0,
-        summary: "controlled_401_429_timeout_fixture_required",
-      });
+      results.push(await runControlledDeepSeekErrorContracts(secret));
     } else {
       results.push(
         await runScenario(
@@ -276,6 +276,103 @@ async function runCancelledTurn(engine, input) {
   } finally {
     globalThis.clearTimeout(timer);
   }
+}
+
+async function runControlledDeepSeekErrorContracts(secret) {
+  const started = Date.now();
+  const fixtures = [
+    { name: "401", status: 401, reason: "unauthorized" },
+    { name: "429", status: 429, reason: "rate_limited" },
+    { name: "timeout", status: undefined, reason: "timeout" },
+  ];
+  const outcomes = [];
+  for (const fixture of fixtures) {
+    let failure = true;
+    let leaseReleases = 0;
+    let authorizationHeaderMissing = false;
+    const client = new DeepSeekClient(
+      async () => ({
+        secret,
+        release: () => {
+          leaseReleases += 1;
+        },
+      }),
+      async (_input, init) => {
+        if (!new globalThis.Headers(init.headers).has("authorization")) {
+          authorizationHeaderMissing = true;
+        }
+        if (failure) {
+          if (fixture.status !== undefined) {
+            return new globalThis.Response(null, { status: fixture.status });
+          }
+          const error = new Error("controlled provider timeout fixture");
+          error.name = "TimeoutError";
+          throw error;
+        }
+        return new globalThis.Response(
+          'data: {"choices":[{"delta":{"content":"recovered"}}]}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    );
+
+    let firstError;
+    try {
+      for await (const delta of client.stream(
+        {
+          model: "deepseek-v4-flash",
+          messages: [{ role: "user", content: "fixture" }],
+          stream: true,
+        },
+        new globalThis.AbortController().signal,
+      )) {
+        // The fixture must fail before a provider delta is exposed.
+        void delta;
+      }
+    } catch (error) {
+      firstError = error;
+    }
+
+    const firstPass =
+      firstError instanceof ProviderContractError &&
+      firstError.code === "provider_error" &&
+      firstError.reason === fixture.reason &&
+      !firstError.message.includes(secret);
+    failure = false;
+    let recovered = false;
+    try {
+      const deltas = [];
+      for await (const delta of client.stream(
+        {
+          model: "deepseek-v4-flash",
+          messages: [{ role: "user", content: "recovery" }],
+          stream: true,
+        },
+        new globalThis.AbortController().signal,
+      )) {
+        deltas.push(delta);
+      }
+      recovered = deltas.some((delta) => delta.text === "recovered");
+    } catch {
+      // The failed recovery attempt is reflected by the default false value.
+    }
+    outcomes.push({
+      name: fixture.name,
+      pass: firstPass && recovered && !authorizationHeaderMissing && leaseReleases === 2,
+      recovered,
+    });
+  }
+
+  const summary = outcomes
+    .map((outcome) => `${outcome.name}=${outcome.pass ? "pass" : "fail"}`)
+    .join(",");
+  const recovery = outcomes.every((outcome) => outcome.recovered) ? "verified" : "failed";
+  return {
+    id: "LIVE-DS-04-error-contracts",
+    status: outcomes.every((outcome) => outcome.pass) ? "pass" : "fail",
+    durationMs: Date.now() - started,
+    summary: `${summary}; recovery=${recovery}; credential=not_in_error_or_fixture`,
+  };
 }
 
 function hasCompleted(outcome) {

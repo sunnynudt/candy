@@ -15,6 +15,7 @@ import {
   PiAgentEngine,
   parseMiniMaxSseLine,
   parseDeepSeekSseLine,
+  ProviderContractError,
 } from "./index.js";
 
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
@@ -67,6 +68,59 @@ test("DeepSeek client uses only the approved endpoint and releases a secret leas
   );
   assert.deepEqual(chunks, [{ text: "ok", done: false }, { done: true }]);
   assert.equal(released, true);
+});
+
+test("DeepSeek controlled provider failures expose only sanitized reasons", async () => {
+  const cases = [
+    {
+      status: 401,
+      reason: "unauthorized",
+      transport: async () => new Response(null, { status: 401 }),
+    },
+    {
+      status: 429,
+      reason: "rate_limited",
+      transport: async () => new Response(null, { status: 429 }),
+    },
+    {
+      status: 0,
+      reason: "timeout",
+      transport: async () => {
+        const error = new Error("fixture timeout with secret fixture-secret");
+        error.name = "TimeoutError";
+        throw error;
+      },
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    let released = false;
+    const client = new DeepSeekClient(
+      async () => ({ secret: "fixture-secret", release: () => (released = true) }),
+      fixture.transport,
+    );
+    let caught: unknown;
+    try {
+      for await (const _delta of client.stream(
+        {
+          model: "deepseek-v4-flash",
+          messages: [{ role: "user", content: "fixture" }],
+          stream: true,
+        },
+        new AbortController().signal,
+      )) {
+        // The controlled error must happen before a provider delta is exposed.
+        void _delta;
+      }
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof ProviderContractError);
+    assert.equal(caught.code, "provider_error");
+    assert.equal(caught.reason, fixture.reason);
+    assert.doesNotMatch(caught.message, /fixture-secret/u);
+    assert.equal(released, true);
+  }
 });
 
 test("MiniMax parser and client remain domestic-only and release the secret lease", async () => {
@@ -159,6 +213,41 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     assert.ok(autoObservations.some((observation) => observation.type === "turn.completed"));
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Pi agent sanitizes provider failures before exposing them to Runtime", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-provider-error-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 401 });
+  try {
+    let caught: unknown;
+    try {
+      for await (const _observation of new PiAgentEngine(root, async () => ({
+        secret: "fixture-secret",
+        release: () => undefined,
+      })).runTurn(
+        {
+          taskId: "task-provider-error",
+          prompt: "trigger controlled provider error",
+          model: "deepseek-v4-flash",
+          cwd: process.cwd(),
+        },
+        new AbortController().signal,
+      )) {
+        // The provider failure must not become a Runtime observation.
+        void _observation;
+      }
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof ProviderContractError);
+    assert.equal(caught.code, "provider_error");
+    assert.equal(caught.reason, "unauthorized");
+    assert.doesNotMatch(caught.message, /fixture-secret|401/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
   }
 });
 

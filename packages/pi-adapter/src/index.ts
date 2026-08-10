@@ -21,6 +21,9 @@ export interface ModelCatalogEntry {
   readonly gate: "live-provider" | "static-contract";
 }
 
+export type ProviderErrorReason =
+  "unauthorized" | "rate_limited" | "timeout" | "http_error" | "network_error";
+
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   {
     label: "DeepSeek V4 Flash",
@@ -56,6 +59,7 @@ export class ProviderContractError extends Error {
     message: string,
     public readonly code:
       "needs_credentials" | "unapproved_endpoint" | "malformed_stream" | "provider_error",
+    public readonly reason: ProviderErrorReason | undefined = undefined,
   ) {
     super(message);
     this.name = "ProviderContractError";
@@ -164,14 +168,30 @@ export class DeepSeekClient {
         body: JSON.stringify(request),
         signal,
       });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new ProviderContractError(
+        "DeepSeek provider request failed.",
+        "provider_error",
+        classifyTransportError(error),
+      );
     } finally {
       lease.release();
     }
 
     if (!response.ok || !response.body) {
       throw new ProviderContractError(
-        `DeepSeek request failed with HTTP ${response.status}.`,
+        response.status === 401
+          ? "DeepSeek provider rejected the credential."
+          : response.status === 429
+            ? "DeepSeek provider rate limit reached."
+            : "DeepSeek provider returned an invalid response.",
         "provider_error",
+        response.status === 401
+          ? "unauthorized"
+          : response.status === 429
+            ? "rate_limited"
+            : "http_error",
       );
     }
 
@@ -231,13 +251,29 @@ export class MiniMaxClient {
         body: JSON.stringify(request),
         signal,
       });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new ProviderContractError(
+        "MiniMax provider request failed.",
+        "provider_error",
+        classifyTransportError(error),
+      );
     } finally {
       lease.release();
     }
     if (!response.ok || !response.body) {
       throw new ProviderContractError(
-        `MiniMax request failed with HTTP ${response.status}.`,
+        response.status === 401
+          ? "MiniMax provider rejected the credential."
+          : response.status === 429
+            ? "MiniMax provider rate limit reached."
+            : "MiniMax provider returned an invalid response.",
         "provider_error",
+        response.status === 401
+          ? "unauthorized"
+          : response.status === 429
+            ? "rate_limited"
+            : "http_error",
       );
     }
 
@@ -697,7 +733,7 @@ export class PiAgentEngine {
       const unsubscribe = session.subscribe((event) => events.push(event));
       const abort = (): void => session?.agent.abort();
       signal.addEventListener("abort", abort, { once: true });
-      let promptError: unknown;
+      let promptError: Error | undefined;
       const promptPromise = session
         .prompt(
           input.prompt,
@@ -712,8 +748,10 @@ export class PiAgentEngine {
             : undefined,
         )
         .catch((error: unknown) => {
-          promptError = error;
-          events.fail(new Error("Pi agent turn failed."));
+          promptError = signal.aborted
+            ? new Error("Pi agent turn cancelled.")
+            : sanitizePiProviderError(error);
+          events.fail(promptError);
         });
       let started = false;
       try {
@@ -750,9 +788,17 @@ export class PiAgentEngine {
               tool: event.value.toolName,
               ok: !event.value.isError,
             };
+          } else if (
+            event.value.type === "message_end" &&
+            event.value.message.role === "assistant" &&
+            event.value.message.stopReason === "error"
+          ) {
+            promptError ??= sanitizePiProviderError(
+              new Error(event.value.message.errorMessage ?? "Provider request failed."),
+            );
           } else if (event.value.type === "agent_end") {
             await promptPromise;
-            if (promptError !== undefined) throw new Error("Pi agent turn failed.");
+            if (promptError !== undefined) throw promptError;
             break;
           }
         }
@@ -851,4 +897,38 @@ class AsyncEventQueue<T> {
     if (this.#ended) return Promise.resolve({ done: true, value: undefined });
     return new Promise((resolve) => this.#waiters.push(resolve));
   }
+}
+
+function classifyTransportError(error: unknown): ProviderErrorReason {
+  if (!(error instanceof Error)) return "network_error";
+  if (
+    error.name === "TimeoutError" ||
+    /timed? ?out|timeout|headers_timeout/iu.test(error.message)
+  ) {
+    return "timeout";
+  }
+  return "network_error";
+}
+
+function sanitizePiProviderError(error: unknown): ProviderContractError {
+  if (error instanceof ProviderContractError) return error;
+  const status = isRecord(error) && typeof error.status === "number" ? error.status : undefined;
+  const message = error instanceof Error ? error.message : "";
+  const reason: ProviderErrorReason =
+    status === 401 || /\b401\b|unauthorized|invalid api key/iu.test(message)
+      ? "unauthorized"
+      : status === 429 || /\b429\b|rate.?limit|too many requests/iu.test(message)
+        ? "rate_limited"
+        : classifyTransportError(error);
+  return new ProviderContractError(
+    reason === "unauthorized"
+      ? "Provider rejected the credential."
+      : reason === "rate_limited"
+        ? "Provider rate limit reached."
+        : reason === "timeout"
+          ? "Provider request timed out."
+          : "Provider request failed.",
+    "provider_error",
+    reason,
+  );
 }
