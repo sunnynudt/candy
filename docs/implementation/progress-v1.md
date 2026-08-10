@@ -105,9 +105,14 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - Added `npm run smoke:desktop:packaged:handoff:windows`. Two separately spawned packaged Windows app-server processes share a Candy-owned SQLite database: the first owner pauses during a running validator, reaches `paused` revision `2` with no owner and no migrated validator; the second process restores that state, resumes at revision `2`, owns revision `3`, and produces the second sequential validator invocation before cancellation at revision `4`.
 - This proves the packaged sequential pause/resume handoff and owner fencing seam without moving an in-flight tool between processes. It does not prove signed installation, complete Browser/G2 security, or the full Desktop/ACC acceptance matrix.
 
+## 2026-08-11 Windows Browser hostile-selector boundary checkpoint
+
+- The Desktop Browser action contract now rejects NUL-containing targets at the trusted bridge and the packaged fixture rejects an invalid CSS selector before any page action can proceed. Existing URL, action, selector, stale-revision, owner, confirmation, redirect, popup, permission, and download fail-closed checks remain passing.
+- This narrows the deterministic hostile-input boundary only. Reliable physical input-origin detection, broader hostile-page behavior, and complete Browser/ACC-09/ACC-12 acceptance remain open.
+
 ## 2026-08-11 Windows 19-step deterministic acceptance runner checkpoint
 
-- On clean source revision `979301275a71696b1c949f27f6e00443ee9b26f3`, `npm run acceptance:windows` passed all 19 deterministic steps on Windows 11 Pro x64 with Node `22.23.2` and verified Electron `43.2.0`. The run includes user-cancellation cleanup, packaged restart recovery, packaged sequential cross-client handoff, Browser boundary fixture, Credential Manager fixture, bounded concurrency, and the ten-run responsiveness subset; p95 values are TUI `1173 ms` and Desktop `1396 ms`.
+- On clean source revision `7c2eb877b0a9262735623aa83016916bf0fcc997`, `npm run acceptance:windows` passed all 19 deterministic steps on Windows 11 Pro x64 with Node `22.23.2` and verified Electron `43.2.0`. The run includes user-cancellation cleanup, packaged restart recovery, packaged sequential cross-client handoff, Browser hostile-selector boundary fixture, Credential Manager fixture, bounded concurrency, and the ten-run responsiveness subset; p95 values are TUI `1185 ms` and Desktop `1432 ms`.
 - The sanitized reports remain ignored at `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md`. They keep signed installation, complete Browser/G2/security evidence, live MiniMax/entitlement, remaining ACC-01..12, macOS, and product-owner acceptance open; this is not a release or complete cross-platform acceptance report.
 
 ## 2026-08-11 Windows 17-step deterministic acceptance runner checkpoint

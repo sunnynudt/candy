@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`979301275a71696b1c949f27f6e00443ee9b26f3`
+当前基线提交：`7c2eb877b0a9262735623aa83016916bf0fcc997`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -29,7 +29,7 @@
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
-  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1173 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1396 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除，source revision 为 `979301275a71696b1c949f27f6e00443ee9b26f3`。
+  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1185 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1432 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除，source revision 为 `7c2eb877b0a9262735623aa83016916bf0fcc997`。
   待完成：Runtime event 到 UI、取消、Browser Take Control、三任务并发冻结/丢事件等 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
 
 - ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
@@ -38,7 +38,7 @@
 
 - ◐ 验收 Windows Browser Workspace：打包 Electron 中的 `WebContentsView`、站点授权、观察版本、防陈旧操作、Take Control、下载和对抗性页面测试。
   已完成：packaged Windows fixture 通过 allowlist 后加载本机页面，阻止不允许的 redirect、popup、permission 和 download，并验证显式 Take Control/return-to-agent revision；对凭据 URL、非 loopback HTTP、script URL、未授权 host、畸形 structured action、缺失 selector 和错误 target 做 fail-closed 检查；Browser profile 使用 Candy-owned persistent partition，页面没有 Candy preload 或 provider credential。
-  已完成：packaged fixture 通过窄桥接执行 selector-scoped click/type/confirmed-submit，拒绝未确认 submit、stale revision 和 Take Control 后的 user-owned action；截图写入 Candy AttachmentStore，snapshot 只返回不透明 `att_...` id。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
+  已完成：packaged fixture 通过窄桥接执行 selector-scoped click/type/confirmed-submit，拒绝未确认 submit、stale revision、NUL/非法 CSS selector 和 Take Control 后的 user-owned action；截图写入 Candy AttachmentStore，snapshot 只返回不透明 `att_...` id。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
   待完成：可靠的物理输入来源识别与更多对抗性页面；完整 ACC-09/ACC-12 Browser 指标仍未完成。
 
 - ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。
@@ -56,8 +56,8 @@
   待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名和完整响应性矩阵仍未完成；active validator interruption、用户取消、owner crash interruption、non-owner read-only fencing、attachment restart recovery、bounded three-slot concurrency、packaged active-owner/tool recovery 和 packaged sequential cross-client handoff 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `979301275a71696b1c949f27f6e00443ee9b26f3` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1173 ms`、Desktop `1396 ms`；并发槽位/FIFO 和 packaged sequential handoff 子集通过，但完整 ACC-12 指标仍未完成。
+  已完成：在干净提交 `7c2eb877b0a9262735623aa83016916bf0fcc997` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1185 ms`、Desktop `1432 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 ## 明天执行：macOS `26.5.2` Apple Silicon
