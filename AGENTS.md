@@ -66,6 +66,7 @@ V1 does not include:
 - After each coherent, verified V1 checkpoint, inspect the staged scope, scan it for credential material, commit it, push it to `origin/codex/candy-v1-foundation`, and verify that the remote branch resolves to the same commit before starting the next work packet.
 - Never force-push or rewrite published V1 branch history. If a checkpoint push still fails after bounded retries, stop before accumulating further local-only work and report the synchronization blocker.
 - Treat the exact Pi release as the compatibility anchor for the agent runtime. Node.js must stay on a Pi-tested major line, TypeScript must match the pinned Pi release, and npm must remain compatible with Pi's lockfile/install workflow.
+- Before running npm or node commands, activate the pinned baseline from `.nvmrc` (`nvm use` at the repository root) whenever the active Node is not `v22.23.2`. Never change a machine's global nvm default or other projects' Node versions for Candy work.
 - Pin direct dependencies and the complete `@earendil-works/pi-*` package family to exact accepted versions through the root lockfile and install assertions. Do not allow a mixed Pi package graph.
 - Do not upgrade Pi, the agent-runtime Node major, the npm major, or the TypeScript minor/major independently. Upgrade them as one compatibility change and rerun the Pi Adapter matrix on macOS and Windows.
 - Use Electron's embedded Node only for Desktop responsibilities. Run the Desktop app-server that imports Pi under the same packaged Node runtime as the TUI baseline.
