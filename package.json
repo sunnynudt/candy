@@ -23,6 +23,7 @@
     "check:native": "node scripts/check-native.mjs",
     "smoke:credential-manager:windows": "npm run build && node scripts/smoke-credential-manager-windows.mjs",
     "smoke:native:windows": "npm run build && node scripts/smoke-native-windows.mjs",
+    "smoke:recovery:windows": "npm run build && node scripts/smoke-recovery-windows.mjs",
     "measure:windows:responsiveness": "npm run build && node scripts/measure-windows-responsiveness.mjs",
     "acceptance:windows": "npm run build && node scripts/acceptance-windows.mjs",
     "acceptance:macos": "npm run build && node scripts/acceptance-macos.mjs",

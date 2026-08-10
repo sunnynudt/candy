@@ -31,6 +31,7 @@ const steps = [
   "smoke:credential-manager:windows",
   "smoke:tui-task",
   "smoke:app-server",
+  "smoke:recovery:windows",
   "smoke:desktop",
   "measure:windows:responsiveness",
 ];
