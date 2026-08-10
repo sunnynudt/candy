@@ -40,6 +40,10 @@ const api: DesktopPreloadApi = {
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["snapshot"]>>
       >,
     send: (command) => ipcRenderer.invoke("task.send", command) as Promise<void>,
+    apply: (input) =>
+      ipcRenderer.invoke("task.apply", input) as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["tasks"]["apply"]>>
+      >,
     onUpdate: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

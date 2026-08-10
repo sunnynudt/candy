@@ -16,8 +16,12 @@ export interface RendererTaskProjection {
   readonly approvalProfile: "read-only" | "auto";
   readonly model: CandyModelId;
   readonly workspacePath?: string;
+  readonly workspaceBaseline?: string;
   readonly changedFiles: readonly string[];
+  readonly trackedFiles: readonly string[];
+  readonly untrackedFiles: readonly string[];
   readonly diff: string;
+  readonly diffTruncated: boolean;
   readonly transcript: readonly {
     readonly role: "user" | "assistant" | "tool";
     readonly text: string;
@@ -60,6 +64,13 @@ export interface DesktopPreloadApi {
       readonly expectedRevision: number;
       readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
     }): Promise<void>;
+    apply(input: {
+      readonly taskId: string;
+      readonly expectedRevision: number;
+      readonly expectedBase: string;
+      readonly tracked: readonly string[];
+      readonly untracked: readonly string[];
+    }): Promise<RendererTaskProjection>;
     onUpdate(listener: (projection: RendererTaskProjection) => void): () => void;
   };
 }
@@ -129,4 +140,23 @@ export function assertValidatorSpec(value: unknown): asserts value is ValidatorS
     )
   )
     throw new Error("Validator arguments are invalid.");
+}
+
+export function assertApplyPaths(value: unknown): asserts value is readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.includes("\0") ||
+        entry.includes("\\") ||
+        entry === "." ||
+        entry.startsWith("/") ||
+        entry.startsWith("../") ||
+        entry.includes("/../") ||
+        entry.endsWith("/.."),
+    )
+  )
+    throw new Error("Apply paths must be relative.");
 }

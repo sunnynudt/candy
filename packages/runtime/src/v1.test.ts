@@ -432,6 +432,7 @@ test("Git changes are reviewed and applied without changing the target index", a
     assert.equal(await tracker.captureBaseline(worktree), baseCommit);
     const reviewed = await tracker.inspect(worktree, baseCommit, ["fixture-secret"]);
     assert.equal(reviewed.available, true);
+    assert.equal(reviewed.patchTruncated, false);
     assert.equal(reviewed.patchText.includes("fixture-secret"), false);
     assert.match(reviewed.patchText, /\[REDACTED\]/u);
     const changes = await manager.changes(plan);
@@ -457,6 +458,74 @@ test("Git changes are reviewed and applied without changing the target index", a
     );
     assert.deepEqual([...(await readFile(path.join(repository, "binary.bin")))], [0, 1, 3]);
     assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked\n");
+    assert.equal(git(["diff", "--cached", "--quiet"], repository), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("same-root Apply verifies the reviewed diff and untracked manifest without touching the index", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-same-root-apply-"));
+  const repository = path.join(root, "repo");
+  mkdirSync(repository);
+  const git = (args: readonly string[], cwd: string): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    git(["init", "-q"], repository);
+    writeFileSync(path.join(repository, "README.md"), "base\n");
+    git(["add", "README.md"], repository);
+    git(
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      repository,
+    );
+    const baseCommit = git(["rev-parse", "HEAD"], repository).trim();
+    writeFileSync(path.join(repository, "README.md"), "reviewed\n");
+    writeFileSync(path.join(repository, "new.txt"), "untracked\n");
+    const tracker = new GitWorkspaceChangeTracker();
+    const reviewed = await tracker.inspect(repository, baseCommit, []);
+    assert.equal(reviewed.available, true);
+    assert.equal(reviewed.patchTruncated, false);
+
+    const service = new ApplyChangesService(repository);
+    assert.equal(
+      await service.apply(repository, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: baseCommit,
+        actualBase: baseCommit,
+        paths: [...reviewed.tracked, ...reviewed.untracked],
+        untrackedPaths: reviewed.untracked,
+        patchText: reviewed.patchText,
+        activeSecrets: [],
+      }),
+      "applied",
+    );
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "reviewed\n");
+    assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked\n");
+    assert.equal(git(["diff", "--cached", "--quiet"], repository), "");
+
+    writeFileSync(path.join(repository, "README.md"), "changed after review\n");
+    await assert.rejects(
+      service.apply(repository, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: baseCommit,
+        actualBase: baseCommit,
+        paths: [...reviewed.tracked, ...reviewed.untracked],
+        untrackedPaths: reviewed.untracked,
+        patchText: reviewed.patchText,
+        activeSecrets: [],
+      }),
+      /changed before Apply/u,
+    );
     assert.equal(git(["diff", "--cached", "--quiet"], repository), "");
   } finally {
     rmSync(root, { recursive: true, force: true });

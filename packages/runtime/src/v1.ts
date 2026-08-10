@@ -4,6 +4,8 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import path from "node:path";
 import { cleanChildEnvironment } from "@candy/platform";
 
+const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
+
 export type ActionKind =
   | "workspace.read"
   | "workspace.write"
@@ -787,6 +789,7 @@ export interface ApplyChangesInput {
   readonly expectedBase: string;
   readonly actualBase: string;
   readonly paths: readonly string[];
+  readonly untrackedPaths?: readonly string[];
   readonly patchText: string;
   readonly activeSecrets: readonly string[];
 }
@@ -819,6 +822,7 @@ export interface WorkspaceChangeSnapshot {
   readonly tracked: readonly string[];
   readonly untracked: readonly string[];
   readonly patchText: string;
+  readonly patchTruncated: boolean;
 }
 
 export interface WorkspaceChangeTracker {
@@ -901,6 +905,7 @@ export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
         tracked: tracked.map(normalizeGitPath),
         untracked: untracked.map(normalizeGitPath),
         patchText: redactWorkspacePatch(patchText, activeSecrets),
+        patchTruncated: Buffer.byteLength(patchText, "utf8") >= MAX_WORKSPACE_PATCH_BYTES,
       };
     } catch {
       return emptyWorkspaceChanges();
@@ -994,6 +999,8 @@ export class ApplyChangesService {
 
   public async apply(sourceRoot: string, input: ApplyChangesInput): Promise<"applied"> {
     const targetRoot = path.resolve(this.targetRoot);
+    const source = path.resolve(sourceRoot);
+    const sameRoot = source === targetRoot;
     let actualBase: string;
     let targetStatus: string;
     try {
@@ -1005,19 +1012,22 @@ export class ApplyChangesService {
     const effective = {
       ...input,
       targetIsGit: true,
-      targetClean: targetStatus.length === 0,
+      targetClean: sameRoot || targetStatus.length === 0,
       actualBase,
     };
     if (this.#guard.check(effective) === "blocked") throw new ApplyChangesBlockedError();
 
     const paths = uniqueRelativePaths(input.paths);
-    const source = path.resolve(sourceRoot);
     for (const requested of paths) {
       await assertSafePath(source, requested, true);
       await assertSafePath(targetRoot, requested, false);
     }
-    const untrackedPaths: string[] = [];
-    for (const requested of paths) {
+    const explicitUntrackedPaths = input.untrackedPaths !== undefined;
+    const untrackedPaths = explicitUntrackedPaths ? uniqueRelativePaths(input.untrackedPaths!) : [];
+    const reviewedUntrackedCandidates = explicitUntrackedPaths
+      ? untrackedPaths
+      : uniqueRelativePaths(input.paths);
+    for (const requested of reviewedUntrackedCandidates) {
       const isUntracked = Boolean(
         (
           await this.#runner.run(
@@ -1026,8 +1036,13 @@ export class ApplyChangesService {
           )
         ).trim(),
       );
-      if (!isUntracked) continue;
-      untrackedPaths.push(requested);
+      if (!isUntracked) {
+        if (explicitUntrackedPaths)
+          throw new ApplyChangesBlockedError("Reviewed untracked manifest changed before Apply.");
+        continue;
+      }
+      if (!explicitUntrackedPaths) untrackedPaths.push(requested);
+      if (sameRoot) continue;
       try {
         await lstat(path.resolve(targetRoot, requested));
         throw new ApplyChangesBlockedError(
@@ -1038,24 +1053,42 @@ export class ApplyChangesService {
       }
     }
     if (input.patchText.length > 0) {
-      try {
-        await this.#runner.run(
-          ["apply", "--check", "--binary", "--whitespace=nowarn", "--"],
-          targetRoot,
-          input.patchText,
-        );
-        await this.#runner.run(
-          ["apply", "--binary", "--whitespace=nowarn", "--"],
-          targetRoot,
-          input.patchText,
-        );
-      } catch (error) {
-        throw new ApplyChangesBlockedError(
-          `Git refused the reviewed patch: ${error instanceof Error ? error.message : "unknown error"}`,
-        );
+      if (sameRoot) {
+        try {
+          const currentPatch = await this.#runner.run(
+            ["diff", "--binary", "--no-ext-diff", "--no-color", input.expectedBase, "--"],
+            source,
+          );
+          if (currentPatch !== input.patchText) {
+            throw new ApplyChangesBlockedError("Reviewed diff changed before Apply.");
+          }
+        } catch (error) {
+          if (error instanceof ApplyChangesBlockedError) throw error;
+          throw new ApplyChangesBlockedError(
+            `Git refused the reviewed patch: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+        }
+      } else {
+        try {
+          await this.#runner.run(
+            ["apply", "--check", "--binary", "--whitespace=nowarn", "--"],
+            targetRoot,
+            input.patchText,
+          );
+          await this.#runner.run(
+            ["apply", "--binary", "--whitespace=nowarn", "--"],
+            targetRoot,
+            input.patchText,
+          );
+        } catch (error) {
+          throw new ApplyChangesBlockedError(
+            `Git refused the reviewed patch: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
+        }
       }
     }
     for (const requested of untrackedPaths) {
+      if (sameRoot) continue;
       const sourcePath = path.resolve(source, requested);
       const targetPath = path.resolve(targetRoot, requested);
       await mkdir(path.dirname(targetPath), { recursive: true });
@@ -1143,7 +1176,7 @@ function splitNull(value: string): string[] {
 }
 
 function emptyWorkspaceChanges(): WorkspaceChangeSnapshot {
-  return { available: false, tracked: [], untracked: [], patchText: "" };
+  return { available: false, tracked: [], untracked: [], patchText: "", patchTruncated: false };
 }
 
 function normalizeGitPath(value: string): string {
@@ -1153,7 +1186,7 @@ function normalizeGitPath(value: string): string {
 function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): string {
   return activeSecrets.reduce(
     (result, secret) => (secret.length > 0 ? result.split(secret).join("[REDACTED]") : result),
-    value.slice(0, 1_048_576),
+    value.slice(0, MAX_WORKSPACE_PATCH_BYTES),
   );
 }
 

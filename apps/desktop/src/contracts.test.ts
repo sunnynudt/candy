@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertApplyPaths,
   assertWorkspacePath,
   assertValidatorSpec,
   classifyWindowClose,
@@ -32,4 +33,11 @@ test("desktop validator contract accepts an explicit absolute executable without
     () => assertValidatorSpec({ executable: "/usr/bin/env", args: ["Bearer sk-fixture-secret"] }),
     /invalid/u,
   );
+});
+
+test("desktop Apply path contract accepts only relative reviewed paths", () => {
+  assert.doesNotThrow(() => assertApplyPaths(["src/value.ts", "notes.txt"]));
+  assert.throws(() => assertApplyPaths(["../outside.ts"]), /relative/u);
+  assert.throws(() => assertApplyPaths(["C:\\outside.ts"]), /relative/u);
+  assert.throws(() => assertApplyPaths(["/tmp/outside.ts"]), /relative/u);
 });

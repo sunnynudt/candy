@@ -22,6 +22,7 @@ export interface TaskSnapshot {
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
   readonly workspacePath?: string;
+  readonly workspaceBaseline?: string;
   readonly ownerId?: string;
 }
 
@@ -48,6 +49,13 @@ export interface TaskActionCommand {
   readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
 }
 
+export interface WorkspaceApplyCommand {
+  readonly type: "workspace.apply";
+  readonly expectedBase: string;
+  readonly tracked: readonly string[];
+  readonly untracked: readonly string[];
+}
+
 export interface ApprovalCommand {
   readonly type: "approval.respond";
   readonly approvalId: string;
@@ -55,7 +63,7 @@ export interface ApprovalCommand {
 }
 
 export type RuntimeCommand =
-  SnapshotCommand | CreateTaskCommand | TaskActionCommand | ApprovalCommand;
+  SnapshotCommand | CreateTaskCommand | TaskActionCommand | WorkspaceApplyCommand | ApprovalCommand;
 
 export interface CommandEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -116,6 +124,7 @@ export interface WorkspaceChangesEvent {
   readonly tracked: readonly string[];
   readonly untracked: readonly string[];
   readonly patchText: string;
+  readonly patchTruncated: boolean;
 }
 
 export type RuntimeEvent =
@@ -239,6 +248,8 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   ) {
     throw new ProtocolValidationError("invalid_message", "model is unsupported.");
   }
+  if (value.workspaceBaseline !== undefined)
+    assertBaseCommit(value.workspaceBaseline, "snapshot.workspaceBaseline");
 }
 
 function validateCommand(value: unknown): asserts value is RuntimeCommand {
@@ -272,6 +283,12 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
       throw new ProtocolValidationError("invalid_message", "command.model is unsupported.");
     }
     if (value.attachmentIds !== undefined) assertAttachmentIds(value.attachmentIds);
+    return;
+  }
+  if (value.type === "workspace.apply") {
+    assertBaseCommit(value.expectedBase, "command.expectedBase");
+    assertRelativePaths(value.tracked, "command.tracked");
+    assertRelativePaths(value.untracked, "command.untracked");
     return;
   }
   if (value.type === "approval.respond") {
@@ -370,7 +387,11 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
     return;
   }
   if (value.type === "workspace.changes") {
-    if (typeof value.available !== "boolean" || typeof value.patchText !== "string") {
+    if (
+      typeof value.available !== "boolean" ||
+      typeof value.patchText !== "string" ||
+      typeof value.patchTruncated !== "boolean"
+    ) {
       throw new ProtocolValidationError("invalid_message", "workspace changes are invalid.");
     }
     assertRelativePaths(value.tracked, "event.tracked");
@@ -406,6 +427,12 @@ function assertAttachmentIds(value: unknown): asserts value is readonly string[]
     value.some((id) => typeof id !== "string" || !/^att_[a-f0-9]{64}$/u.test(id))
   ) {
     throw new ProtocolValidationError("invalid_message", "attachmentIds are invalid.");
+  }
+}
+
+function assertBaseCommit(value: unknown, name: string): asserts value is string {
+  if (typeof value !== "string" || !/^[0-9a-f]{7,64}$/u.test(value)) {
+    throw new ProtocolValidationError("invalid_message", `${name} must be a Git commit id.`);
   }
 }
 

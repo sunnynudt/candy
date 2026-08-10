@@ -26,6 +26,8 @@ import {
   type TaskSnapshot,
 } from "@candy/protocol";
 import {
+  ApplyChangesBlockedError,
+  ApplyChangesService,
   DeterministicAgentEngine,
   AttachmentStore,
   GitWorkspaceChangeTracker,
@@ -34,6 +36,7 @@ import {
   type AgentEngine,
   type AgentObservation,
   type AgentTurnInput,
+  type ApplyChangesInput,
   type RecoverableAgentEngine,
   type MacSandboxValidatorCommand,
   type WorkspaceChangeTracker,
@@ -112,6 +115,7 @@ export interface AppServerControllerOptions {
   readonly validatorRunner?: AppServerValidator;
   readonly changeTracker?: WorkspaceChangeTracker;
   readonly activeSecrets?: () => readonly string[];
+  readonly applyChanges?: ApplyChangesRunner;
 }
 
 interface AppServerValidator {
@@ -120,6 +124,10 @@ interface AppServerValidator {
     workspace: string,
     signal: AbortSignal,
   ): Promise<{ readonly ok: boolean }>;
+}
+
+interface ApplyChangesRunner {
+  apply(sourceRoot: string, input: ApplyChangesInput): Promise<"applied">;
 }
 
 type Emit = (message: ProtocolMessage) => void;
@@ -148,9 +156,9 @@ export class AppServerController {
   readonly #validatorRunner: AppServerValidator | undefined;
   readonly #changeTracker: WorkspaceChangeTracker;
   readonly #activeSecrets: (() => readonly string[]) | undefined;
+  readonly #applyChanges: ApplyChangesRunner | undefined;
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
-  readonly #baselines = new Map<string, string | undefined>();
   readonly #active = new Map<string, ActiveTask>();
   readonly #pendingRuns: PendingRun[] = [];
   readonly #requestedRuns = new Set<string>();
@@ -166,6 +174,7 @@ export class AppServerController {
     this.#validatorRunner = options.validatorRunner;
     this.#changeTracker = options.changeTracker ?? new GitWorkspaceChangeTracker();
     this.#activeSecrets = options.activeSecrets;
+    this.#applyChanges = options.applyChanges;
   }
 
   public get state(): AppServerState {
@@ -192,10 +201,7 @@ export class AppServerController {
         throw new Error("Task workspace must be an absolute path.");
       if (!(await stat(command.workspacePath)).isDirectory())
         throw new Error("Task workspace is not a directory.");
-      this.#baselines.set(
-        message.taskId,
-        await this.#changeTracker.captureBaseline(command.workspacePath),
-      );
+      const workspaceBaseline = await this.#changeTracker.captureBaseline(command.workspacePath);
       const metadata = this.#store.create(
         message.taskId,
         command.approvalProfile,
@@ -204,6 +210,7 @@ export class AppServerController {
         command.attachmentIds ?? [],
         command.workspacePath,
         command.validator,
+        workspaceBaseline,
       );
       this.#prompts.set(message.taskId, command.prompt);
       return [
@@ -219,7 +226,8 @@ export class AppServerController {
 
     if (command.type === "snapshot") {
       if (existing) {
-        return [await this.workspaceChanges(existing), this.snapshot(existing)];
+        const current = await this.ensureBaseline(existing);
+        return [await this.workspaceChanges(current), this.snapshot(current)];
       }
       return [
         this.snapshot(
@@ -285,6 +293,40 @@ export class AppServerController {
       const nextState = command.type === "task.pause" ? "paused" : "cancelled";
       const updated = this.#store.transition(message.taskId, message.expectedRevision, nextState);
       return [this.stateChanged(updated, "user"), this.snapshot(updated)];
+    }
+
+    if (command.type === "workspace.apply") {
+      if (existing.state !== "completed")
+        throw new Error("Apply Changes requires a completed task.");
+      if (existing.ownerId !== undefined)
+        throw new Error("Apply Changes requires released task ownership.");
+      if (existing.workspaceBaseline === undefined)
+        throw new Error("Apply Changes baseline is unavailable.");
+      const reviewed = await this.#changeTracker.inspect(
+        existing.workspacePath,
+        existing.workspaceBaseline,
+        [],
+      );
+      if (!reviewed.available || reviewed.patchTruncated)
+        throw new ApplyChangesBlockedError("Apply Changes requires a complete reviewed diff.");
+      if (
+        !samePathList(command.tracked, reviewed.tracked) ||
+        !samePathList(command.untracked, reviewed.untracked)
+      ) {
+        throw new ApplyChangesBlockedError("Reviewed workspace changed before Apply.");
+      }
+      const runner = this.#applyChanges ?? new ApplyChangesService(existing.workspacePath);
+      await runner.apply(existing.workspacePath, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: existing.workspaceBaseline,
+        actualBase: existing.workspaceBaseline,
+        paths: [...command.tracked, ...command.untracked],
+        untrackedPaths: command.untracked,
+        patchText: reviewed.patchText,
+        activeSecrets: this.#activeSecrets?.() ?? [],
+      });
+      return [this.snapshot(existing)];
     }
 
     if (command.type === "approval.respond") {
@@ -427,7 +469,7 @@ export class AppServerController {
     const activeSecrets = this.#activeSecrets?.() ?? [];
     const changes = await this.#changeTracker.inspect(
       metadata.workspacePath,
-      this.#baselines.get(metadata.taskId),
+      metadata.workspaceBaseline,
       activeSecrets,
     );
     return this.event(metadata.taskId, metadata.revision, {
@@ -436,7 +478,14 @@ export class AppServerController {
       tracked: changes.tracked,
       untracked: changes.untracked,
       patchText: redactWorkspacePatch(changes.patchText, activeSecrets),
+      patchTruncated: changes.patchTruncated,
     });
+  }
+
+  private async ensureBaseline(metadata: TaskMetadata): Promise<TaskMetadata> {
+    if (metadata.workspaceBaseline !== undefined) return metadata;
+    const baseline = await this.#changeTracker.captureBaseline(metadata.workspacePath);
+    return this.#store.updateBaseline(metadata.taskId, baseline);
   }
 
   private snapshot(metadata: TaskMetadata | TaskSnapshot): EventEnvelope {
@@ -452,6 +501,9 @@ export class AppServerController {
         ...(metadata.model === undefined ? {} : { model: metadata.model }),
         ...(metadata.attachmentIds === undefined ? {} : { attachmentIds: metadata.attachmentIds }),
         ...(metadata.workspacePath === undefined ? {} : { workspacePath: metadata.workspacePath }),
+        ...(metadata.workspaceBaseline === undefined
+          ? {}
+          : { workspaceBaseline: metadata.workspaceBaseline }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
       },
     });
@@ -509,6 +561,13 @@ function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): 
     (result, secret) => (secret.length > 0 ? result.split(secret).join("[REDACTED]") : result),
     value.slice(0, 1_048_576),
   );
+}
+
+function samePathList(left: readonly string[], right: readonly string[]): boolean {
+  const sort = (paths: readonly string[]): string[] => [...paths].sort();
+  const a = sort(left);
+  const b = sort(right);
+  return a.length === b.length && a.every((entry, index) => entry === b[index]);
 }
 
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {

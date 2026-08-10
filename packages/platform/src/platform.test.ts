@@ -127,3 +127,36 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("sqlite task metadata persists the workspace baseline and never overwrites it", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-baseline-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const first = new SQLiteTaskStore(databasePath);
+    first.create(
+      "task-baseline",
+      "auto",
+      1,
+      "deepseek-v4-flash",
+      [],
+      process.cwd(),
+      undefined,
+      "0123456789abcdef",
+    );
+    assert.equal(first.get("task-baseline")?.workspaceBaseline, "0123456789abcdef");
+    first.updateBaseline("task-baseline", "fedcba9876543210");
+    assert.equal(first.get("task-baseline")?.workspaceBaseline, "0123456789abcdef");
+    first.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.get("task-baseline")?.workspaceBaseline, "0123456789abcdef");
+    assert.equal(reopened.updateBaseline("task-baseline").workspaceBaseline, "0123456789abcdef");
+    assert.throws(
+      () => reopened.create("task-baseline", "auto", 2, "deepseek-v4-flash", [], process.cwd()),
+      /UNIQUE constraint|already exists/u,
+    );
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

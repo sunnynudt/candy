@@ -156,6 +156,7 @@ test("workspace changes remain typed, relative, and secret-free", () => {
       tracked: ["src/value.ts"],
       untracked: ["notes.txt"],
       patchText: "diff --git a/src/value.ts b/src/value.ts\n",
+      patchTruncated: false,
     },
   } as const;
   assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
@@ -164,6 +165,70 @@ test("workspace changes remain typed, relative, and secret-free", () => {
       validateProtocolMessage({
         ...event,
         event: { ...event.event, tracked: ["../outside.ts"] },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
+test("workspace apply commands carry only relative reviewed paths and a Git base", () => {
+  const command = {
+    v: 1,
+    kind: "command",
+    commandId: "apply-1",
+    taskId: "task-apply",
+    expectedRevision: 3,
+    command: {
+      type: "workspace.apply",
+      expectedBase: "0123456789abcdef",
+      tracked: ["src/value.ts", "binary.bin"],
+      untracked: ["notes.txt"],
+    },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(command)), command);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...command,
+        command: { ...command.command, expectedBase: "not-a-commit" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...command,
+        command: { ...command.command, untracked: ["../outside.ts"] },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
+test("snapshots carry an optional validated workspace baseline", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-baseline",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "snapshot",
+      snapshot: {
+        taskId: "task-baseline",
+        revision: 2,
+        state: "completed",
+        workspaceBaseline: "0123456789abcdef",
+      },
+    },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: { ...event.event, snapshot: { ...event.event.snapshot, workspaceBaseline: "x" } },
       }),
     (error: unknown) =>
       error instanceof ProtocolValidationError && error.code === "invalid_message",

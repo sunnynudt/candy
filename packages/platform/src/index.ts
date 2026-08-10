@@ -65,6 +65,7 @@ export interface TaskMetadata {
   readonly attachmentIds: readonly string[];
   readonly workspacePath: string;
   readonly validator?: TaskValidatorSpec;
+  readonly workspaceBaseline?: string;
 }
 
 export interface TaskValidatorSpec {
@@ -130,7 +131,8 @@ export class SQLiteTaskStore {
         model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
         attachment_ids TEXT NOT NULL DEFAULT '[]',
         workspace_path TEXT NOT NULL DEFAULT '',
-        validator_json TEXT
+        validator_json TEXT,
+        workspace_baseline TEXT
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -140,7 +142,7 @@ export class SQLiteTaskStore {
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT
       );
-      PRAGMA user_version = 6;
+      PRAGMA user_version = 7;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
@@ -148,6 +150,7 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         CREATE TABLE IF NOT EXISTS task_runs (
           task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
           rounds INTEGER NOT NULL,
@@ -156,7 +159,7 @@ export class SQLiteTaskStore {
           stop_reason TEXT NOT NULL,
           last_fingerprint_hash TEXT
         );
-        PRAGMA user_version = 6;
+        PRAGMA user_version = 7;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
@@ -164,27 +167,36 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
-        PRAGMA user_version = 6;
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        PRAGMA user_version = 7;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
-        PRAGMA user_version = 6;
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        PRAGMA user_version = 7;
       `);
     } else if (schemaVersion === 4) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
-        PRAGMA user_version = 6;
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        PRAGMA user_version = 7;
       `);
     } else if (schemaVersion === 5) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
-        PRAGMA user_version = 6;
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        PRAGMA user_version = 7;
       `);
-    } else if (schemaVersion !== 6) {
+    } else if (schemaVersion === 6) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
+        PRAGMA user_version = 7;
+      `);
+    } else if (schemaVersion !== 7) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -197,12 +209,15 @@ export class SQLiteTaskStore {
     attachmentIds: readonly string[] = [],
     workspacePath = process.cwd(),
     validator?: TaskValidatorSpec,
+    workspaceBaseline?: string,
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
+    if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
+      throw new Error("Workspace baseline is invalid.");
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -212,14 +227,28 @@ export class SQLiteTaskStore {
         JSON.stringify(attachmentIds),
         assertWorkspacePath(workspacePath),
         serializeValidator(validator),
+        workspaceBaseline ?? null,
       );
+    return this.require(taskId);
+  }
+
+  /** Persist a captured Git baseline without bumping the task revision. */
+  public updateBaseline(taskId: string, baseline?: string): TaskMetadata {
+    assertTaskId(taskId);
+    if (baseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(baseline))
+      throw new Error("Workspace baseline is invalid.");
+    this.#database
+      .prepare(
+        "UPDATE task_metadata SET workspace_baseline = COALESCE(workspace_baseline, ?) WHERE task_id = ? AND workspace_baseline IS NULL",
+      )
+      .run(baseline ?? null, taskId);
     return this.require(taskId);
   }
 
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -228,7 +257,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -237,7 +266,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -361,6 +390,9 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     ...metadata,
     ...(row.queue_order !== null ? { queueOrder: Number(row.queue_order) } : {}),
     ...(row.owner_id !== null ? { ownerId: String(row.owner_id) } : {}),
+    ...(row.workspace_baseline !== null
+      ? { workspaceBaseline: String(row.workspace_baseline) }
+      : {}),
   };
 }
 

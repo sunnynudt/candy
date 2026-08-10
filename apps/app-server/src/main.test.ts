@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { PiAgentEngineInput } from "@candy/pi-adapter";
 import { type CommandEnvelope, type ProtocolMessage } from "@candy/protocol";
-import { AttachmentStore, type AgentTurnInput } from "@candy/runtime";
+import { AttachmentStore, type AgentTurnInput, type ApplyChangesInput } from "@candy/runtime";
 import { AppServerController, PiAppServerEngine } from "./main.js";
 
 function command(
@@ -28,7 +28,13 @@ test("app-server creates, runs, streams and durably completes one task", async (
         return undefined;
       },
       async inspect() {
-        return { available: false, tracked: [], untracked: [], patchText: "" };
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
       },
     },
   });
@@ -97,7 +103,13 @@ test("app-server runs a task in its selected workspace instead of the child cwd"
         return undefined;
       },
       async inspect() {
-        return { available: false, tracked: [], untracked: [], patchText: "" };
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
       },
     },
   });
@@ -197,7 +209,7 @@ test("app-server publishes the reviewed workspace changes before task completion
     changeTracker: {
       async captureBaseline(workspace: string) {
         observed.push({ workspace });
-        return "fixture-base";
+        return "0123456789abcdef";
       },
       async inspect(workspace: string, baseCommit?: string) {
         observed.push(baseCommit === undefined ? { workspace } : { workspace, baseCommit });
@@ -206,6 +218,7 @@ test("app-server publishes the reviewed workspace changes before task completion
           tracked: ["src/value.ts"],
           untracked: ["notes.txt"],
           patchText: "diff --git a/src/value.ts b/src/value.ts\nfixture-secret\n",
+          patchTruncated: false,
         };
       },
     },
@@ -247,13 +260,225 @@ test("app-server publishes the reviewed workspace changes before task completion
       assert.deepEqual(changes.event.untracked, ["notes.txt"]);
       assert.match(changes.event.patchText, /^diff --git/u);
       assert.equal(changes.event.patchText.includes("fixture-secret"), false);
+      assert.equal(changes.event.patchTruncated, false);
     }
     assert.deepEqual(observed, [
       { workspace: process.cwd() },
-      { workspace: process.cwd(), baseCommit: "fixture-base" },
+      { workspace: process.cwd(), baseCommit: "0123456789abcdef" },
     ]);
   } finally {
     controller.close();
+  }
+});
+
+test("app-server applies reviewed changes through the reviewed command seam", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-app-server-apply-"));
+  const applyCalls: Array<{
+    readonly sourceRoot: string;
+    readonly input: ApplyChangesInput;
+  }> = [];
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline() {
+        return "0123456789abcdef";
+      },
+      async inspect() {
+        return {
+          available: true,
+          tracked: ["src/value.ts"],
+          untracked: ["new.txt"],
+          patchText: "diff --git a/src/value.ts b/src/value.ts\n",
+          patchTruncated: false,
+        };
+      },
+    },
+    applyChanges: {
+      async apply(sourceRoot: string, input: ApplyChangesInput) {
+        applyCalls.push({ sourceRoot, input });
+        return "applied";
+      },
+    },
+  });
+  const background: ProtocolMessage[] = [];
+  try {
+    await controller.dispatch(
+      command("task-apply", "create-apply", 0, {
+        type: "task.create",
+        prompt: "review then apply",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+      }),
+    );
+    await assert.rejects(
+      controller.dispatch(
+        command("task-apply", "apply-early", 0, {
+          type: "workspace.apply",
+          expectedBase: "0123456789abcdef",
+          tracked: ["src/value.ts"],
+          untracked: ["new.txt"],
+        }),
+      ),
+      /completed task/u,
+    );
+    await controller.dispatch(
+      command("task-apply", "run-apply", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    for (
+      let attempt = 0;
+      attempt < 20 &&
+      !background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      attempt += 1
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    const responses = await controller.dispatch(
+      command("task-apply", "apply-1", 2, {
+        type: "workspace.apply",
+        expectedBase: "0123456789abcdef",
+        tracked: ["src/value.ts"],
+        untracked: ["new.txt"],
+      }),
+    );
+    const snapshot = responses.at(-1);
+    assert.ok(snapshot?.kind === "event" && snapshot.event.type === "snapshot");
+    if (snapshot?.kind === "event" && snapshot.event.type === "snapshot") {
+      assert.equal(snapshot.event.snapshot.state, "completed");
+      assert.equal(snapshot.event.snapshot.workspaceBaseline, "0123456789abcdef");
+    }
+    assert.equal(applyCalls.length, 1);
+    assert.equal(applyCalls[0]?.sourceRoot, workspace);
+    assert.deepEqual(applyCalls[0]?.input.paths, ["src/value.ts", "new.txt"]);
+    assert.deepEqual(applyCalls[0]?.input.untrackedPaths, ["new.txt"]);
+    assert.equal(applyCalls[0]?.input.expectedBase, "0123456789abcdef");
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("app-server blocks Apply when the reviewed manifest changed after review", async () => {
+  let inspections = 0;
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline() {
+        return "0123456789abcdef";
+      },
+      async inspect() {
+        inspections += 1;
+        return {
+          available: true,
+          tracked: inspections === 1 ? ["src/value.ts"] : ["src/other.ts"],
+          untracked: ["new.txt"],
+          patchText: "diff --git a/src/value.ts b/src/value.ts\n",
+          patchTruncated: false,
+        };
+      },
+    },
+  });
+  const background: ProtocolMessage[] = [];
+  try {
+    await controller.dispatch(
+      command("task-apply-stale", "create-apply-stale", 0, {
+        type: "task.create",
+        prompt: "review then apply",
+        approvalProfile: "auto",
+        workspacePath: process.cwd(),
+      }),
+    );
+    await controller.dispatch(
+      command("task-apply-stale", "run-apply-stale", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    for (
+      let attempt = 0;
+      attempt < 20 &&
+      !background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      attempt += 1
+    )
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    await assert.rejects(
+      controller.dispatch(
+        command("task-apply-stale", "apply-stale", 2, {
+          type: "workspace.apply",
+          expectedBase: "0123456789abcdef",
+          tracked: ["src/value.ts"],
+          untracked: ["new.txt"],
+        }),
+      ),
+      /changed before Apply/u,
+    );
+  } finally {
+    controller.close();
+  }
+});
+
+test("app-server persists the workspace baseline and restores it after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-baseline-"));
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const observed: string[] = [];
+  const changeTracker = {
+    async captureBaseline() {
+      return "0123456789abcdef";
+    },
+    async inspect(_workspace: string, baseCommit?: string) {
+      observed.push(baseCommit ?? "");
+      return {
+        available: false,
+        tracked: [],
+        untracked: [],
+        patchText: "",
+        patchTruncated: false,
+      };
+    },
+  };
+  const first = new AppServerController({ databasePath, changeTracker });
+  try {
+    await first.dispatch(
+      command("task-restart", "create-restart", 0, {
+        type: "task.create",
+        prompt: "persist baseline",
+        approvalProfile: "read-only",
+        workspacePath: root,
+      }),
+    );
+  } finally {
+    first.close();
+  }
+
+  const second = new AppServerController({ databasePath, changeTracker });
+  try {
+    const responses = await second.dispatch(
+      command("task-restart", "snapshot-restart", 0, { type: "snapshot" }),
+    );
+    const snapshot = responses.at(-1);
+    assert.ok(snapshot?.kind === "event" && snapshot.event.type === "snapshot");
+    if (snapshot?.kind === "event" && snapshot.event.type === "snapshot") {
+      assert.equal(snapshot.event.snapshot.workspaceBaseline, "0123456789abcdef");
+    }
+    assert.deepEqual(observed, ["0123456789abcdef"]);
+  } finally {
+    second.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -509,7 +734,13 @@ test("app-server limits starts to three active tasks and promotes queued FIFO wo
         return undefined;
       },
       async inspect() {
-        return { available: false, tracked: [], untracked: [], patchText: "" };
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
       },
     },
   });

@@ -408,6 +408,7 @@ export {
 export type {
   ActionKind,
   ActionRequest,
+  ApplyChangesInput,
   AttachmentMetadata,
   ImageAttachmentPayload,
   BrowserAction,

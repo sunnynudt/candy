@@ -107,3 +107,13 @@ Windows 11 x64 implementation and acceptance are scheduled for a later work pack
 - Active DeepSeek and MiniMax credentials are leased only for diff redaction and released immediately; a canary test confirms the credential cannot enter the workspace-change event.
 - Deterministic verification passes: format, lint, typecheck, `npm test` (63 tests), boundary/version/lifecycle checks, native check, app-server JSONL smoke, safe-edit smoke, and Desktop smoke under Node `22.23.2`.
 - This checkpoint is review-only. It does not enable Apply Changes in Desktop, persist the baseline across app-server restart, close the dirty/base/conflict Apply matrix, or change the blocked live-provider, native-containment, signing, Windows, or final ACC-01..12 status.
+
+## 2026-08-10 Desktop Apply and persisted baseline checkpoint
+
+- SQLite task metadata schema 7 now persists the captured Git workspace baseline (`workspace_baseline`) per task. The app-server stores the baseline at creation and restores it after restart; snapshots carry the validated `workspaceBaseline` through the protocol.
+- The versioned protocol adds a `workspace.apply` command carrying the expected base and explicit tracked/untracked relative path manifests. The app-server re-inspects the workspace before Apply, requires a completed task with released ownership, and blocks when the reviewed manifest, base, or complete-patch condition changed.
+- `ApplyChangesService` now supports the reviewed same-root Local Workspace path by verifying the reviewed diff still matches instead of re-applying or touching the index, and it treats an explicit untracked manifest as authoritative. Cross-worktree transfer continues to use `git apply --check`, binary-safe apply, and index-free untracked copying.
+- Workspace change events now carry `patchTruncated`; Desktop hides/disables Apply for truncated diffs and the app-server rejects Apply without a complete reviewed patch. This prevents a bounded review display from becoming a partial write.
+- Desktop now exposes an Apply Changes button on completed tasks with reviewed changes, sends the persisted baseline and tracked/untracked manifests through the trusted IPC bridge, and reports the result in the task shell.
+- Local verification passed: format, lint, typecheck, 71 tests, boundary/version/lifecycle checks, native check, app-server JSONL smoke, safe-edit smoke, Desktop smoke, and packaged macOS Desktop/Keychain smoke under Node `22.23.2`.
+- This checkpoint does not yet wire Task Worktree handoff into the Desktop task path, does not close the dirty target/changed-base/conflict and Windows path matrix, and does not change the blocked live-provider, native-containment review, signing, Browser, or final ACC-01..12 status.

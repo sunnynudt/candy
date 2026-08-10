@@ -30,6 +30,7 @@ import {
   type ProtocolMessage,
 } from "@candy/protocol";
 import {
+  assertApplyPaths,
   assertCredentialName,
   assertTaskId,
   assertValidatorSpec,
@@ -135,7 +136,10 @@ function emptyProjection(taskId: string): RendererTaskProjection {
     approvalProfile: "read-only",
     model: DEFAULT_CANDY_MODEL,
     changedFiles: [],
+    trackedFiles: [],
+    untrackedFiles: [],
     diff: "",
+    diffTruncated: false,
     transcript: [],
   };
 }
@@ -154,6 +158,9 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...(event.event.snapshot.workspacePath === undefined
         ? {}
         : { workspacePath: event.event.snapshot.workspacePath }),
+      ...(event.event.snapshot.workspaceBaseline === undefined
+        ? {}
+        : { workspaceBaseline: event.event.snapshot.workspaceBaseline }),
     };
   }
   if (event.event.type === "task.created")
@@ -190,7 +197,10 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...current,
       revision: event.revision,
       changedFiles: [...event.event.tracked, ...event.event.untracked],
+      trackedFiles: [...event.event.tracked],
+      untrackedFiles: [...event.event.untracked],
       diff: event.event.patchText,
+      diffTruncated: event.event.patchTruncated,
     };
   }
   return current;
@@ -384,6 +394,37 @@ function registerIpcHandlers(): void {
       });
     },
   );
+  ipcMain.handle(
+    "task.apply",
+    async (
+      event,
+      input: DesktopPreloadApi["tasks"] extends { apply: (value: infer T) => unknown } ? T : never,
+    ) => {
+      assertTrustedRenderer(event);
+      assertTaskId(input.taskId);
+      if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0)
+        throw new Error("Invalid task revision.");
+      if (typeof input.expectedBase !== "string" || !/^[0-9a-f]{7,64}$/u.test(input.expectedBase))
+        throw new Error("Invalid workspace baseline.");
+      assertApplyPaths(input.tracked);
+      assertApplyPaths(input.untracked);
+      if (!appServer) throw new AppServerUnavailableError();
+      await appServer.send({
+        v: 1,
+        kind: "command",
+        commandId: randomUUID(),
+        taskId: input.taskId,
+        expectedRevision: input.expectedRevision,
+        command: {
+          type: "workspace.apply",
+          expectedBase: input.expectedBase,
+          tracked: input.tracked,
+          untracked: input.untracked,
+        },
+      });
+      return projections.get(input.taskId) ?? emptyProjection(input.taskId);
+    },
+  );
 }
 
 function resolveAppServerLaunch(): AppServerLaunchSpec | undefined {
@@ -456,7 +497,7 @@ function desktopShellHtml(nonce: string): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
 <style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff;overflow:auto}section{padding:20px;overflow:auto}textarea,input{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px}textarea{height:140px}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}.card{border:1px solid #ddd;border-radius:6px;padding:10px;margin:14px 0}.status{font-size:12px}</style></head>
-<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
+<body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in macOS Keychain"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskActions"></div><button id="applyChanges" disabled>Apply changes</button></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
 <script nonce="${nonce}">
 (() => {
   const prompt = document.getElementById('prompt');
@@ -473,6 +514,7 @@ function desktopShellHtml(nonce: string): string {
   const create = document.getElementById('create');
   const taskStatus = document.getElementById('taskStatus');
   const taskActions = document.getElementById('taskActions');
+  const applyChanges = document.getElementById('applyChanges');
   const transcript = document.getElementById('transcript');
   const diff = document.getElementById('diff');
   let current;
@@ -494,8 +536,9 @@ function desktopShellHtml(nonce: string): string {
     taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision;
     transcript.textContent = projection.transcript.map((entry) => entry.role.toUpperCase() + ': ' + entry.text).join('\\n') || 'No transcript yet.';
     diff.textContent = projection.changedFiles.length > 0
-      ? 'Changed files:\\n' + projection.changedFiles.join('\\n') + '\\n\\nDiff:\\n' + (projection.diff || '(no tracked patch)')
+      ? 'Changed files:\\n' + projection.changedFiles.join('\\n') + '\\n\\nDiff:\\n' + (projection.diff || '(no tracked patch)') + (projection.diffTruncated ? '\\n\\nDiff is truncated; Apply is unavailable until the workspace is reviewed in smaller changes.' : '')
       : 'No diff yet.';
+    applyChanges.disabled = !(projection.state === 'completed' && projection.changedFiles.length > 0 && projection.workspaceBaseline && !projection.diffTruncated);
   };
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;
@@ -505,6 +548,13 @@ function desktopShellHtml(nonce: string): string {
   attach.addEventListener('click', async () => { const id = await window.candy.attachments.pickImage(); if (id) { attachmentIds.push(id); attachments.textContent = attachmentIds.length + ' image attached'; } });
   const send = (type) => current && window.candy.tasks.send({ taskId: current.taskId, expectedRevision: current.revision, type }).catch((error) => { taskStatus.textContent = error.message; });
   for (const type of ['task.run','task.pause','task.resume','task.cancel']) { const button = document.createElement('button'); button.textContent = type.replace('task.',''); button.addEventListener('click', () => send(type)); taskActions.appendChild(button); }
+  applyChanges.addEventListener('click', async () => {
+    if (!current) return;
+    try {
+      render(await window.candy.tasks.apply({ taskId: current.taskId, expectedRevision: current.revision, expectedBase: current.workspaceBaseline, tracked: current.trackedFiles, untracked: current.untrackedFiles }));
+      taskStatus.textContent = 'Apply changes ok.';
+    } catch (error) { taskStatus.textContent = 'Apply failed: ' + error.message; }
+  });
   window.candy.tasks.onUpdate(render);
 })();
 </script></body></html>`;
