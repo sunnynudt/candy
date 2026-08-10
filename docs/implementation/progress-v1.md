@@ -59,8 +59,8 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 ## 2026-08-11 Windows active-task recovery checkpoint
 
-- Extended the real Windows app-server child-process smoke to create a queued task and an active task, stop the owner process, restart it, and verify queued metadata survives while the active task becomes `interrupted` with revision `+1` and bounded `crash_interrupted` progress.
-- `npm run smoke:recovery:windows` passed without provider credentials. This proves deterministic app-server owner-crash recovery only; active tool interruption, attachments, cross-client handoff, and packaged signed recovery remain open.
+- Extended the real Windows app-server child-process smoke to create a queued task and an active Auto task with a Windows Job Object validator, interrupt the validator while it is running, verify its delayed marker is never written, stop the owner process, restart it, and verify queued metadata survives while the active task becomes `interrupted` with revision `+1` and bounded `crash_interrupted` progress.
+- `npm run smoke:recovery:windows` passed without provider credentials. This proves Windows active validator interruption plus deterministic app-server owner-crash recovery; attachments, cross-client handoff, and packaged signed recovery remain open.
 
 ## 2026-08-11 Windows packaged Browser Workspace checkpoint
 
@@ -75,7 +75,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 ## 2026-08-11 Windows deterministic acceptance runner checkpoint
 
-- `npm run acceptance:windows` ran on clean source revision `ff14e3ecdbd87ecc8b4de4b27078f888b6b6fccf` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 13 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, queued/active process-restart recovery smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser action/security fixture smoke, packaged Credential Manager fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1202 ms` and Desktop `1416 ms`.
+- `npm run acceptance:windows` ran on clean source revision `ff14e3ecdbd87ecc8b4de4b27078f888b6b6fccf` with Node `22.23.2`, verified Electron `43.2.0`, and the current Windows x64 host. All 13 deterministic steps passed: toolchain, full TypeScript check (93 tests), native check, Windows Job Object smoke, Credential Manager fixture, TUI task smoke, app-server smoke, active validator interruption plus queued/active process-restart recovery smoke, development Desktop smoke, unsigned packaged Desktop smoke, packaged Browser action/security fixture smoke, packaged Credential Manager fixture smoke, and the ten-run responsiveness subset. The latest p95 values are TUI `1202 ms` and Desktop `1416 ms`.
 - The sanitized reports are `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md`; both remain ignored. They explicitly list signed installation, Browser, complete G2 OS containment/security review, active-owner/tool interruption recovery, live provider/entitlement, remaining ACC-01..12, and product-owner acceptance as open; this is not a release or complete acceptance report.
 
 ## 2026-08-10 Windows 11 live DeepSeek checkpoint

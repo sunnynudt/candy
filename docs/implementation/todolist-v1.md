@@ -53,10 +53,10 @@
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
   已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；Candy 自有 Windows Credential Manager 适配器的合成 fixture 已完成 `absent -> present -> present -> absent`（set/replace/has/delete），未输出或读取 fixture 值；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`；真实 app-server 子进程重启后 queued metadata 与 active owner crash interruption 快照恢复 smoke 通过。
   已完成：从已验证的 Electron `43.2.0` Windows x64 目录生成 `out/windows/Candy` 未签名开发包，嵌入 Node `v22.23.2`、app-server 和 Windows native runner；`npm run smoke:desktop:packaged:windows` 通过，输出 `packaged unsigned Windows Desktop app-server JSONL smoke ok`；随后使用包内 `resources/node/node.exe` 和 bundled keyring addon 完成 packaged Credential Manager synthetic lifecycle smoke，DeepSeek presence 保持不变。
-  待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、active-owner/工具中断恢复和完整响应性矩阵仍未完成。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
+  待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名、cross-client recovery 和完整响应性矩阵仍未完成；active validator interruption 与 owner crash interruption 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ◐ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `ff14e3ecdbd87ecc8b4de4b27078f888b6b6fccf` 上执行 `npm run acceptance:windows`，13/13 个确定性步骤通过，包含 queued/active crash recovery、未签名 packaged Desktop、Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  已完成：在干净提交 `ff14e3ecdbd87ecc8b4de4b27078f888b6b6fccf` 上执行 `npm run acceptance:windows`，13/13 个确定性步骤通过，包含 queued/active crash recovery、active validator interruption、未签名 packaged Desktop、Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、active-owner/工具中断恢复、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 ## 明天执行：macOS `26.5.2` Apple Silicon

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +20,7 @@ const workspace = path.join(fixtureRoot, "workspace");
 await mkdir(workspace);
 const queuedTaskId = "windows-recovery-fixture";
 const activeTaskId = "windows-active-recovery";
+const validatorMarker = path.join(fixtureRoot, "validator-survived.txt");
 
 function command(taskId, commandId, expectedRevision, value) {
   return {
@@ -35,6 +37,7 @@ async function startServer() {
   const environment = cleanChildEnvironment(process.env);
   environment.LOCALAPPDATA = path.join(fixtureRoot, "local-app-data");
   environment.APPDATA = environment.LOCALAPPDATA;
+  environment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
   const child = spawn(process.execPath, [appServer], {
     cwd: root,
     env: environment,
@@ -66,6 +69,28 @@ async function sendAndReadSnapshot(server, message) {
   });
   server.child.stdin.write(`${JSON.stringify(message)}\n`);
   return snapshot;
+}
+
+async function waitForEvent(server, taskId, type) {
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      server.lines.off("line", onLine);
+      reject(new Error(`Windows recovery did not emit ${type}.`));
+    }, 10_000);
+    const onLine = (line) => {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.kind === "event" && parsed.taskId === taskId && parsed.event?.type === type) {
+          globalThis.clearTimeout(timeout);
+          server.lines.off("line", onLine);
+          resolve(parsed.event);
+        }
+      } catch {
+        // Ignore unrelated child diagnostics; the protocol smoke remains JSONL-only.
+      }
+    };
+    server.lines.on("line", onLine);
+  });
 }
 
 async function stopServer(server) {
@@ -104,19 +129,35 @@ try {
     command(activeTaskId, "active-recovery-create", 0, {
       type: "task.create",
       prompt: "Windows active recovery fixture",
-      approvalProfile: "read-only",
+      approvalProfile: "auto",
       workspacePath: workspace,
       model: "deepseek-v4-flash",
       attachmentIds: [],
+      validator: {
+        executable: process.execPath,
+        args: [
+          "-e",
+          "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'validator-survived'), 2500); setTimeout(() => {}, 10000);",
+          validatorMarker,
+        ],
+      },
     }),
   );
+  const validatorStarted = waitForEvent(first, activeTaskId, "tool.started");
   const activeRunning = await sendAndReadSnapshot(
     first,
     command(activeTaskId, "active-recovery-run", activeCreated.revision, { type: "task.run" }),
   );
   assert.equal(activeRunning.taskId, activeTaskId);
   assert.equal(activeRunning.state, "running");
+  await validatorStarted;
   await stopServer(first);
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 3_000));
+  assert.equal(
+    existsSync(validatorMarker),
+    false,
+    "Windows validator descendant survived interruption",
+  );
 
   const second = await startServer();
   const restored = await sendAndReadSnapshot(
@@ -139,7 +180,7 @@ try {
   assert.equal(activeRestored.progress?.stopReason, "crash_interrupted");
   await stopServer(second);
   console.log(
-    "Windows app-server recovery smoke passed: queued metadata and active owner crash interruption survived process restart",
+    "Windows app-server recovery smoke passed: queued metadata, active validator interruption, and owner crash interruption survived process restart",
   );
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });

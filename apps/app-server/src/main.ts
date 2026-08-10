@@ -895,25 +895,28 @@ function samePathList(left: readonly string[], right: readonly string[]): boolea
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const sandboxRunner = resolveSandboxRunner();
+  const deterministicRecoverySmoke = process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE === "1";
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments),
-    engine: new PiAppServerEngine(
-      new PiAgentEngine(paths.sessions, async () => {
-        const lease = resolveCredential("deepseek");
-        return lease ? { secret: lease.value, release: lease.release } : undefined;
-      }),
-      new PiAgentEngine(
-        paths.sessions,
-        async () => {
-          const lease = resolveCredential("minimax-cn");
-          return lease ? { secret: lease.value, release: lease.release } : undefined;
-        },
-        "minimax-cn",
-      ),
-    ),
+    engine: deterministicRecoverySmoke
+      ? new DeterministicAgentEngine(new SystemClock(), "Candy deterministic recovery fixture")
+      : new PiAppServerEngine(
+          new PiAgentEngine(paths.sessions, async () => {
+            const lease = resolveCredential("deepseek");
+            return lease ? { secret: lease.value, release: lease.release } : undefined;
+          }),
+          new PiAgentEngine(
+            paths.sessions,
+            async () => {
+              const lease = resolveCredential("minimax-cn");
+              return lease ? { secret: lease.value, release: lease.release } : undefined;
+            },
+            "minimax-cn",
+          ),
+        ),
     ownerId: `app-server:${process.pid}`,
-    activeSecrets: resolveActiveProviderSecrets,
+    ...(deterministicRecoverySmoke ? {} : { activeSecrets: resolveActiveProviderSecrets }),
     worktreeRoot: paths.worktrees,
     ...(sandboxRunner === undefined
       ? {}
