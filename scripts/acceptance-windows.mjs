@@ -37,6 +37,7 @@ const steps = [
   "smoke:concurrency:windows",
   "smoke:desktop",
   "smoke:desktop:packaged:windows",
+  "smoke:desktop:packaged:recovery:windows",
   "smoke:browser:windows",
   "smoke:credential-manager:packaged:windows",
   "measure:windows:responsiveness",
