@@ -73,7 +73,7 @@
 
 - ◐ macOS packaged Browser 本机 fixture 已通过 allowlist、redirect/popup/permission/download default-deny、typed action/selector/stale/confirmation rejection、截图 attachment id 和显式 Take Control；物理输入归属、更广对抗性页面和完整 ACC-09/ACC-12 矩阵仍待完成。
 
-- ◐ 补齐 macOS ACC-12 可测确定性指标：`measure:macos:responsiveness` 已执行十轮真实 Desktop event/projection、用户取消到 validator 父子进程树终止、显式 Take Control 后 agent action 禁止，以及三任务并发 frame-gap/event delivery。`out/acceptance/macos/responsiveness-latest.md` 记录 p95 `1/12/3/19 ms`，三任务十轮均 `9/9/9=>9/9/9` 且无 event loss；TUI/Desktop cold p95 为 `844/1555 ms`，完整 `acceptance:macos` 为 15/15。Provider stream stop、完整 UI/recovery/Windows parity 和完整 ACC-12 仍 Blocked，Shell Auto 与 Shell Auto Debug 保持 disabled。
+- ◐ 补齐 macOS ACC-12 可测确定性指标：`measure:macos:responsiveness` 已执行十轮真实 Desktop event/projection、用户取消到 validator 父子进程树终止、显式 Take Control 后 agent action 禁止，以及三任务并发 frame-gap/event delivery。已发布 source revision `d9a0fe2` 的 `out/acceptance/macos/responsiveness-latest.md` 记录 p95 `2/12/2/19 ms`，三任务十轮均 `9/9/9=>9/9/9` 且无 event loss；TUI/Desktop cold p95 为 `983/2053 ms`，完整 `acceptance:macos` 为 15/15。Provider stream stop、完整 UI/recovery/Windows parity 和完整 ACC-12 仍 Blocked，Shell Auto 与 Shell Auto Debug 保持 disabled。
 
 - ⬜ 在同一套 Candy 自有凭据路径下重跑 macOS 的 DeepSeek/MiniMax Live Provider Gate；不得以 Windows 结果替代 macOS 证据。
 
