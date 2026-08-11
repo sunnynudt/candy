@@ -61,6 +61,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 - Added `CANDY_DESKTOP_CREDENTIAL_SMOKE` to the Desktop main process and `smoke:desktop:packaged:credential-isolation:windows`. The packaged Windows app runs under an isolated Candy-owned app-data root; the trusted main process writes a fixture value into the empty `minimax-cn` Credential Manager account, then the sandboxed renderer attempts `has`, key enumeration, and property-name enumeration over `window.candy.credentials`. None of the read attempts can observe the complete value, and the main process deletes the fixture afterwards and asserts `absent`.
 - The fixture value is asserted absent from the packaged process stdout/stderr, and the smoke passed on Windows 11 Pro x64. This closes the packaged Windows renderer readback gap for ACC-02 as deterministic evidence; the signed Desktop path, the user-authorized DeepSeek account mutation window, and the live MiniMax Gate remain Blocked.
+- `npm run acceptance:windows` now passes 21/21 deterministic steps at source revision `4f080bf` with a clean worktree, including the new packaged credential-isolation step and the packaged long-running approval/steering step. Sanitized report: `out/acceptance/windows/latest.md`.
 
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
