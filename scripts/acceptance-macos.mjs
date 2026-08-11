@@ -43,6 +43,7 @@ const steps = [
   "smoke:desktop",
   "smoke:desktop:packaged",
   "smoke:desktop:packaged:recovery:macos",
+  "measure:macos:responsiveness",
 ];
 const results = [];
 
@@ -66,7 +67,7 @@ const report = [
   `- Node: \`${process.version}\``,
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  `This is a deterministic and packaged smoke run for the macOS ${requiredMacosVersion} arm64 acceptance baseline. It does not run live providers, inspect other tool credentials, or claim signing, sandbox, Browser, recovery, or final ACC acceptance.`,
+  `This is a deterministic and packaged smoke run for the macOS ${requiredMacosVersion} arm64 acceptance baseline. It does not run live providers, inspect other tool credentials, or claim signing, full sandbox, Browser, full recovery, full ACC-12, or final V1 acceptance.`,
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",
@@ -83,6 +84,7 @@ const report = [
   "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
   "- macOS native containment security review; Shell and Auto Debug remain gated.",
   "- Apple signing/notarization and packaged Browser adversarial evidence.",
+  "- Complete ACC-12 metrics beyond the ten-run TUI/Desktop cold-start subset.",
   "",
 ].join("\n");
 
