@@ -51,6 +51,12 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The Windows native smoke now also proves: a missing absolute executable is rejected with `invalid_path` before launch, and a child that writes 2 MiB to stdout is terminated/captured with output bounded at 1 MiB. Existing Job Object ownership, descendant cancellation, protocol network rejection, workspace escape rejection, and junction reparse rejection remain passing.
 - `cargo test --locked` passes 3/3, `npm run check:native` passes, `npm run smoke:native:windows` passes, and the full `npm run check` passes 98 tests on Windows 11 Pro x64. This closes the pre-resume launch TOCTOU window and adds reproducible negative fixtures. OS-level no-network containment for arbitrary commands, runtime reparse/race protection after the process resumes, packaged/signed runner evidence, and the independent security review remain Blocked; Shell Auto and Shell Auto Debug stay disabled.
 
+## 2026-08-11 Windows packaged long-running approval/steering checkpoint
+
+- Added `scripts/smoke-desktop-packaged-long-running-windows.mjs` and `smoke:desktop:packaged:long-running:windows`, and added the step to `npm run acceptance:windows`. The packaged Windows app runs under an isolated Candy-owned app-data root with the packaged Node and native runner; the deterministic engine raises `approval_required`, the smoke waits for `waiting_approval`, sends `task.steer` (`steer-next-turn`), approves with the snapshot `approvalId`, and the validator-only loop completes with `validator-pass`.
+- The fixture asserts the completed snapshot carries the final `evidenceSummary` containing `validator-pass`, the renderer projects the completed status, final evidence, and the steered transcript, and the validator marker records exactly two invocations (first fails, second passes). The step passed on Windows 11 Pro x64.
+- `npm run acceptance:windows` now passes 20/20 deterministic steps. Remaining F items are the real-Provider stream-stop latency, signed-package evidence, OS-level containment, and independent security review; those remain Blocked and Shell Auto / Shell Auto Debug stay disabled.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.
