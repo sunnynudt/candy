@@ -45,7 +45,7 @@
 
 - ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。
   已完成：有界 Auto 执行、用户 `task.cancel`、停止原因、持久化进度、暂停/恢复、崩溃中断和 Desktop 进度投影的确定性覆盖；Windows Job Object validator 已接入 app-server，独立 Windows smoke 验证用户取消会终止 validator 及其后代进程，延迟 marker 未写入。
-  已完成：新增 `smoke:desktop:packaged:long-running:windows`，packaged Windows Desktop 现通过真实 approval 等待（`waiting_approval` + 正确 approvalId）、steering 下一轮、validator-only 完成、最终证据摘要（`validator-pass`）与 renderer 投影；该步骤已接入 `npm run acceptance:windows`（20 步）。
+  已完成：新增 `smoke:desktop:packaged:long-running:windows`，packaged Windows Desktop 现通过真实 approval 等待（`waiting_approval` + 正确 approvalId）、steering 下一轮、validator-only 完成、最终证据摘要（`validator-pass`）与 renderer 投影；该步骤已接入 `npm run acceptance:windows`。
   待完成：OS 级命令 containment、安全评审、签名后打包证据与真实 Provider 取消延迟。
 
 - ◐ 补齐 Windows ACC-03 核心编码旅程与重开 transcript。  已完成：SQLite schema v10 新增 `task_transcripts`，app-server 持久化 user/assistant/tool 有界 transcript 并在 snapshot 中恢复；修复 Desktop app-server 重启时旧进程 exit handler 清空新 child 的竞态；新增 packaged Windows coding-journey smoke（create → 流式 → 编辑 → validator → diff 审查 → Apply → 重启后完整 transcript 恢复），验证本地变更未提交、Git index 未动、无 commit。  待完成：真实 DeepSeek/MiniMax 驱动的 ACC-03/04 live 旅程与签名 Desktop 复验。
