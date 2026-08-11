@@ -8,11 +8,11 @@
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-当前执行范围：今晚仅在 Windows 11 Pro x64 主机执行和验证 Windows 项。macOS 项仅作为明天 MacBook Pro 会话的待办；跨平台项在两侧证据完成前不得标记为完成。
+当前接力规则：白天在 MacBook Pro 上只实现、测试和记录 macOS `26.5.2` Apple Silicon 能力；晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
-## 今晚执行：Windows 11 x64
+## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
 
-执行顺序：先恢复本机确定性/原生检查和路径防逃逸，再完成 Windows 本地可用链路；需要凭据、Developer Mode、签名身份或外部服务时记录阻塞，继续推进其他 Windows 项。
+执行顺序：在 Windows PC 上先恢复本机确定性/原生检查和路径防逃逸，再完成 Windows 本地可用链路；需要凭据、Developer Mode、签名身份或外部服务时记录阻塞，继续推进其他 Windows 项。不得在 macOS 上执行或以 macOS 结果更新本节证据。
 
 - ☑️ 修复平台路径适配：应用数据根路径根据传入的目标平台选择 `path.win32` 或 `path.posix` 语义，并覆盖跨宿主的 macOS/Windows 模拟测试。
   证据：Windows 11 确定性检查通过；提交 `d4d38e489c5ded8d29a866f7034a06afce54a525`。
@@ -60,9 +60,11 @@
   ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1185 ms`、Desktop `1432 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
-## 明天执行：macOS `26.5.2` Apple Silicon
+## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
 
-- ⬜ 执行 macOS 工具链、TUI、Desktop App Server、Runtime/session-remap、Worktree/Apply 和 ACC-12 响应性矩阵，并生成新的 macOS 脱敏证据。
+- ⬜ 先修复 macOS Git Task Worktree 关联校验：`npm run acceptance:macos` 在 `a43012511448a04f6269ec5e1244ee69d6d8a10b` 上有 8/9 步通过，但 `npm run check` 为 86/93；临时目录的 `/var` 与 Git 报告的 `/private/var` 未作真实路径规范化，另有 Windows 路径 fixture 在 macOS 上误用宿主 POSIX 路径语义。修复必须保持 Worktree 根目录与锁定原因的 fail-closed 校验，并增加 macOS 与跨宿主回归覆盖。
+
+- ⬜ 在 Worktree 基线恢复后，执行 macOS 工具链、TUI、Desktop App Server、Runtime/session-remap、Worktree/Apply 和 ACC-12 响应性矩阵，并生成新的 macOS 脱敏证据。
 
 - ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
 

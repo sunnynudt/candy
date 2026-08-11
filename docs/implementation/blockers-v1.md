@@ -20,7 +20,13 @@ Updated: 2026-08-11
 | G4-WORKTREE       | Implementation agent                     | In progress | Reviewed Apply Changes acceptance                          | Desktop Apply runs through a real Task Worktree handoff with persisted association, explicit discard, and patch-truncation/manifest-change guards; dirty target, changed base, conflict, untracked collision, real Windows Git worktree/Apply/restart fixtures, and junction escape rejection pass. Broader Windows reparse-point evidence and security review remain under G0-WIN/G2. |
 | G5-PERSISTED-AUTO | Implementation agent                     | In progress | Long-running product acceptance                            | Auto tasks now alternate bounded normal turns and the same validator, persist run progress/stop reasons, expose Desktop progress, mark restart uncertainty as `crash_interrupted`, and pass a Windows `task.cancel` descendant-cleanup smoke; complete user steering/approval integration, final evidence summary, native shell validator, and packaged/platform evidence. |
 
-## Windows 11 active work
+## Daily platform handoff boundary
+
+- **MacBook Pro daytime:** implement and verify macOS `26.5.2` Apple Silicon only. The first active repair is the macOS Git Task Worktree canonical-path failure recorded by the current acceptance run; Windows-only code and validation do not belong in this session.
+- **Windows 11 PC evening:** implement and verify Windows-only code, reparse-point, Job Object, packaged Windows, Credential Manager, Browser, and Windows responsiveness work. macOS results must not be copied into those gates.
+- Shared TypeScript changes may be authored on macOS when they are needed for the macOS slice, but Windows acceptance remains deferred until the Windows handoff.
+
+## Windows 11 night handoff list (deferred from macOS sessions)
 
 Windows work now continues on the current Windows 11 Pro x64 host. The passing deterministic worktree and junction checks are an implementation checkpoint, not acceptance evidence: GitHub-hosted CI and local fixtures do not substitute for the complete Windows 11 x64 matrix.
 
