@@ -230,7 +230,24 @@ function assertBrowserAction(value: unknown): asserts value is BrowserAction {
 async function captureBrowserScreenshot(): Promise<BrowserTabSnapshot> {
   if (!browserView || !browserTab || !browserAttachments)
     throw new Error("Browser Workspace has no open tab.");
-  const image = await browserView.webContents.capturePage();
+  mainWindow?.showInactive();
+  browserView.setVisible(true);
+  const capture =
+    process.platform === "darwin" && mainWindow
+      ? () => mainWindow!.capturePage({ x: 360, y: 0, width: 840, height: 800 })
+      : () => browserView!.webContents.capturePage();
+  let image;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      image = await capture();
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/display surface/u.test(message) || attempt === 9) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+    }
+  }
+  if (!image) throw new Error("Browser screenshot surface is unavailable.");
   const metadata = await browserAttachments.put("image", "image/png", image.toPNG());
   browserTab = {
     ...browserTab,
@@ -953,6 +970,7 @@ async function runDesktopSmoke(): Promise<void> {
 async function runBrowserSmoke(): Promise<void> {
   const fixtureUrl = process.env.CANDY_BROWSER_FIXTURE_URL;
   if (!fixtureUrl || !browserView) throw new Error("Browser smoke fixture is unavailable.");
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 500));
   const fixture = parseCandyBrowserUrl(fixtureUrl);
   const expectBrowserRejection = async (
     operation: () => unknown | Promise<unknown>,
@@ -1122,8 +1140,9 @@ async function runBrowserSmoke(): Promise<void> {
     throw new Error(
       `Browser security or explicit Take Control smoke failed: navigation=${browserNavigationDenied}, popup=${browserPopupDenied}, permission=${browserPermissionDenied}, download=${browserDownloadPrevented}, user=${user.control}, agent=${agent.control}`,
     );
+  const platformLabel = process.platform === "darwin" ? "macOS" : "Windows";
   console.log(
-    "packaged Windows Browser Workspace smoke ok: allowlist, typed actions, adversarial rejection, navigation, popup, permission, download, and Take Control",
+    `packaged ${platformLabel} Browser Workspace smoke ok: allowlist, typed actions, adversarial rejection, navigation, popup, permission, download, and Take Control`,
   );
   app.quit();
 }

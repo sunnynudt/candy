@@ -43,6 +43,7 @@ const steps = [
   "smoke:desktop",
   "smoke:desktop:packaged",
   "smoke:desktop:packaged:recovery:macos",
+  "smoke:browser:macos",
   "measure:macos:responsiveness",
 ];
 const results = [];
@@ -83,7 +84,7 @@ const report = [
   `- Completion of the full macOS ${requiredMacosVersion} Apple Silicon acceptance matrix.`,
   "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
   "- macOS native containment security review; Shell and Auto Debug remain gated.",
-  "- Apple signing/notarization and packaged Browser adversarial evidence.",
+  "- Apple signing/notarization and complete packaged Browser adversarial/input-origin evidence.",
   "- Complete ACC-12 metrics beyond the ten-run TUI/Desktop cold-start subset.",
   "",
 ].join("\n");
