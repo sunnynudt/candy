@@ -43,6 +43,7 @@ const steps = [
   "smoke:desktop",
   "smoke:desktop:packaged",
   "smoke:desktop:packaged:recovery:macos",
+  "smoke:desktop:packaged:handoff:macos",
   "smoke:browser:macos",
   "measure:macos:responsiveness",
 ];
