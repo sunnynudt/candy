@@ -21,6 +21,12 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The ten-run Windows cold-start subset is complete, but the full ACC-12 matrix and the macOS `26.5.2` Apple Silicon measurement are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
+## 2026-08-11 Windows release packaging pipeline checkpoint
+
+- Added `package:desktop:windows:release` (`scripts/package-desktop-windows-release.mjs`) and `verify:desktop:windows:release` (`scripts/verify-windows-release.mjs`). The packaging path builds the unsigned bundle, embeds the release `candy-sandbox-runner.exe`, writes an MSIX layout with identity `Candy.V1`, `AppxManifest.xml`, and PNG assets, signs every `.exe`/`.dll` with `signtool /fd SHA256 /sha1`, packs and signs the MSIX, verifies with `signtool verify /pa /all`, and writes `release-metadata.json` (version, publisher, thumbprint, source revision, lockfile SHA-256, signed file list). The verify path drives install -> upgrade -> rollback -> uninstall while preserving an app-data marker across every phase, with authenticode validation and `Candy.exe` startup checks. Both scripts fail closed without the verified Electron override and the approved `CANDY_SIGN_CERT_THUMBPRINT`.
+- `node --check`, Prettier, and `git diff --check` pass on Windows 11 Pro x64. Signed packaging remains Blocked: no certificate with the Code Signing EKU and a private key exists in the current-user or local-machine stores, and no PFX, signing env var, or Azure Trusted Signing configuration is available on this host; the release script therefore stops before producing a package.
+- The MiniMax gate re-ran at source revision `07ed455` with the Token Plan entitlement confirmed by the product owner, but the Candy-owned `minimax-token-plan` credential is absent from Windows Credential Manager and no temporary env credential is set, so `LIVE-MM-01..05` remain Blocked (0 ms, no network request). The sanitized report is `out/acceptance/live/minimax-cn-latest.md`.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

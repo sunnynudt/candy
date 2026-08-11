@@ -60,6 +60,8 @@
   ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1185 ms`、Desktop `1432 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
+- ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
+
 ## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。

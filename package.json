@@ -49,6 +49,8 @@
     "smoke:desktop": "npm run build && node scripts/smoke-desktop.mjs",
     "package:desktop:macos": "npm run build && node scripts/package-desktop-macos.mjs",
     "package:desktop:windows": "npm run build && node scripts/package-desktop-windows.mjs",
+    "package:desktop:windows:release": "npm run build && node scripts/package-desktop-windows-release.mjs",
+    "verify:desktop:windows:release": "node scripts/verify-windows-release.mjs",
     "smoke:desktop:packaged": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged.mjs && node scripts/smoke-packaged-keychain.mjs",
     "smoke:desktop:packaged:recovery:macos": "npm run package:desktop:macos && node scripts/smoke-recovery-macos.mjs --packaged",
     "smoke:desktop:packaged:handoff:macos": "npm run package:desktop:macos && node scripts/smoke-desktop-packaged-handoff-macos.mjs",
