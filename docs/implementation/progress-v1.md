@@ -27,6 +27,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - `node --check`, Prettier, and `git diff --check` pass on Windows 11 Pro x64. Signed packaging remains Blocked: no certificate with the Code Signing EKU and a private key exists in the current-user or local-machine stores, and no PFX, signing env var, or Azure Trusted Signing configuration is available on this host; the release script therefore stops before producing a package.
 - The MiniMax gate re-ran at source revision `07ed455` with the Token Plan entitlement confirmed by the product owner, but the Candy-owned `minimax-token-plan` credential is absent from Windows Credential Manager and no temporary env credential is set, so `LIVE-MM-01..05` remain Blocked (0 ms, no network request). The sanitized report is `out/acceptance/live/minimax-cn-latest.md`.
 
+## 2026-08-11 Windows acceptance regeneration checkpoint
+
+- `npm run acceptance:windows` passed 19/19 deterministic steps on clean revision `b1c88f7a9628c56f081382d054e00b49bb4cd3cc` with Node `v22.23.2`, Electron `43.2.0` (verified local Windows x64 distribution), and the pinned lockfile. Sanitized reports: `out/acceptance/windows/latest.md` and `out/acceptance/windows/responsiveness-latest.md` (both gitignored). TUI cold start p95 is `803 ms` (target `<= 2000 ms`) and Desktop cold start p95 is `1004 ms` (target `<= 5000 ms`).
+- This is a deterministic regeneration, not a live-provider, signed-install, Browser physical-input, G2 OS-containment, complete ACC-01..12, or product-owner acceptance run. Those gates remain Blocked/In progress exactly as recorded in `blockers-v1.md`.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

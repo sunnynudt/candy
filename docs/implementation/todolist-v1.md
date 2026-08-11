@@ -56,8 +56,8 @@
   待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名和完整响应性矩阵仍未完成；active validator interruption、用户取消、owner crash interruption、non-owner read-only fencing、attachment restart recovery、bounded three-slot concurrency、packaged active-owner/tool recovery 和 packaged sequential cross-client handoff 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `7c2eb877b0a9262735623aa83016916bf0fcc997` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `1185 ms`、Desktop `1432 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
+  已完成：在干净提交 `b1c88f7a9628c56f081382d054e00b49bb4cd3cc` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `803 ms`、Desktop `1004 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 - ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
