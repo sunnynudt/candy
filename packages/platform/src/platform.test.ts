@@ -211,6 +211,37 @@ test("sqlite task run persists a bounded final evidence summary", () => {
   }
 });
 
+test("sqlite task transcript persists across reopen and rejects invalid entries", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-transcript-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    store.create("task-transcript", "auto");
+    store.appendTranscript("task-transcript", [
+      { role: "user", text: "Fix the failing test." },
+      { role: "assistant", text: "I will inspect the workspace." },
+      { role: "tool", text: "validator: ok" },
+    ]);
+    assert.deepEqual(store.transcript("task-transcript"), [
+      { role: "user", text: "Fix the failing test." },
+      { role: "assistant", text: "I will inspect the workspace." },
+      { role: "tool", text: "validator: ok" },
+    ]);
+    assert.throws(
+      () => store.appendTranscript("task-transcript", [{ role: "assistant", text: "a\0b" }]),
+      /Transcript entry is invalid/u,
+    );
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.transcript("task-transcript")?.length, 3);
+    assert.equal(reopened.transcript("task-transcript")?.at(-1)?.text, "validator: ok");
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task metadata persists the workspace baseline and never overwrites it", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-baseline-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");

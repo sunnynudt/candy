@@ -220,6 +220,80 @@ test("app-server runs a task in its selected workspace instead of the child cwd"
   }
 });
 
+test("app-server persists a task transcript across controller restart", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-transcript-restart-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "candy-transcript-store-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  const options = {
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        yield { type: "assistant.delta" as const, text: "inspecting the fixture" };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+  } as const;
+  try {
+    const first = new AppServerController({ ...options, databasePath });
+    await first.dispatch(
+      command("task-transcript-restart", "create-transcript", 0, {
+        type: "task.create",
+        prompt: "fix the failing test",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+      }),
+    );
+    const events: ProtocolMessage[] = [];
+    await first.dispatch(
+      command("task-transcript-restart", "run-transcript", 0, { type: "task.run" }),
+      (message) => events.push(message),
+    );
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const completed = events.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "completed",
+      );
+      if (completed) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    first.close();
+
+    const second = new AppServerController({ ...options, databasePath });
+    const restoredMessages = await second.dispatch(
+      command("task-transcript-restart", "snapshot-transcript", 2, { type: "snapshot" }),
+    );
+    const snapshotMessage = restoredMessages.find(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    );
+    if (snapshotMessage === undefined) throw new Error("Snapshot unavailable after restart.");
+    assert.equal(snapshotMessage.event.snapshot.state, "completed");
+    assert.deepEqual(snapshotMessage.event.snapshot.transcript, [
+      { role: "user", text: "fix the failing test" },
+      { role: "assistant", text: "inspecting the fixture" },
+    ]);
+    second.close();
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+});
+
 test("app-server runs an explicit validator before marking edited work complete", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-validator-workspace-"));
   const validatorCalls: string[] = [];

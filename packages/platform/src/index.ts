@@ -105,6 +105,11 @@ export interface TaskRunMetadata {
   readonly evidenceSummary?: string;
 }
 
+export interface TranscriptEntry {
+  readonly role: "user" | "assistant" | "tool";
+  readonly text: string;
+}
+
 /**
  * Candy-owned durable task metadata. Session content and credentials are intentionally
  * not part of this schema; Pi session storage remains behind the adapter boundary.
@@ -154,7 +159,11 @@ export class SQLiteTaskStore {
         last_fingerprint_hash TEXT,
         evidence_summary TEXT
       );
-      PRAGMA user_version = 9;
+      CREATE TABLE IF NOT EXISTS task_transcripts (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+        transcript_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
@@ -173,7 +182,11 @@ export class SQLiteTaskStore {
           last_fingerprint_hash TEXT,
           evidence_summary TEXT
         );
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
@@ -184,7 +197,11 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
@@ -194,7 +211,11 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 4) {
       this.#database.exec(`
@@ -203,7 +224,11 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 5) {
       this.#database.exec(`
@@ -211,14 +236,22 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 6) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
-        PRAGMA user_version = 9;
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
       `);
     } else if (schemaVersion === 7) {
       this.#database.exec(`
@@ -231,7 +264,15 @@ export class SQLiteTaskStore {
         ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
         PRAGMA user_version = 9;
       `);
-    } else if (schemaVersion !== 9) {
+    } else if (schemaVersion === 9) {
+      this.#database.exec(`
+        CREATE TABLE IF NOT EXISTS task_transcripts (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          transcript_json TEXT NOT NULL
+        );
+        PRAGMA user_version = 10;
+      `);
+    } else if (schemaVersion !== 10) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -455,6 +496,48 @@ export class SQLiteTaskStore {
         ? {}
         : { evidenceSummary: String(row.evidence_summary) }),
     };
+  }
+
+  public transcript(taskId: string): readonly TranscriptEntry[] | undefined {
+    assertTaskId(taskId);
+    const row = this.#database
+      .prepare("SELECT transcript_json FROM task_transcripts WHERE task_id = ?")
+      .get(taskId) as { transcript_json: string } | undefined;
+    if (row === undefined) return undefined;
+    try {
+      const parsed = JSON.parse(row.transcript_json) as unknown;
+      if (
+        !Array.isArray(parsed) ||
+        parsed.some(
+          (entry) =>
+            typeof entry !== "object" ||
+            entry === null ||
+            (entry.role !== "user" && entry.role !== "assistant" && entry.role !== "tool") ||
+            typeof entry.text !== "string",
+        )
+      )
+        return undefined;
+      return parsed as TranscriptEntry[];
+    } catch {
+      return undefined;
+    }
+  }
+
+  public appendTranscript(taskId: string, entries: readonly TranscriptEntry[]): void {
+    assertTaskId(taskId);
+    if (entries.length === 0) return;
+    const existing = this.transcript(taskId) ?? [];
+    const next = [...existing, ...entries].slice(-1_024);
+    for (const entry of next) {
+      if (entry.text.length > 4_096 || entry.text.includes("\0"))
+        throw new Error("Transcript entry is invalid.");
+    }
+    this.#database
+      .prepare(
+        `INSERT INTO task_transcripts (task_id, transcript_json) VALUES (?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET transcript_json = excluded.transcript_json`,
+      )
+      .run(taskId, JSON.stringify(next));
   }
 
   public close(): void {

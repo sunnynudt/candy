@@ -371,6 +371,58 @@ test("snapshots carry bounded long-running progress without evidence text", () =
   );
 });
 
+test("snapshots carry a validated bounded transcript", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "task-transcript",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "snapshot",
+      snapshot: {
+        taskId: "task-transcript",
+        revision: 2,
+        state: "completed",
+        transcript: [
+          { role: "user", text: "Fix the failing test." },
+          { role: "assistant", text: "I will inspect the workspace." },
+          { role: "tool", text: "validator: ok" },
+        ],
+      },
+    },
+  } as const;
+  validateProtocolMessage(event);
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(event)), event);
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: {
+            ...event.event.snapshot,
+            transcript: [{ role: "assistant", text: "contains\0nul" }],
+          },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: { ...event.event.snapshot, transcript: "not-an-array" },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
 test("task steering is bounded and round-trips without adding an execution command", () => {
   const command = {
     v: 1,

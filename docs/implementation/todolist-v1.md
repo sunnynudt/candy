@@ -48,6 +48,8 @@
   已完成：新增 `smoke:desktop:packaged:long-running:windows`，packaged Windows Desktop 现通过真实 approval 等待（`waiting_approval` + 正确 approvalId）、steering 下一轮、validator-only 完成、最终证据摘要（`validator-pass`）与 renderer 投影；该步骤已接入 `npm run acceptance:windows`（20 步）。
   待完成：OS 级命令 containment、安全评审、签名后打包证据与真实 Provider 取消延迟。
 
+- ◐ 补齐 Windows ACC-03 核心编码旅程与重开 transcript。  已完成：SQLite schema v10 新增 `task_transcripts`，app-server 持久化 user/assistant/tool 有界 transcript 并在 snapshot 中恢复；修复 Desktop app-server 重启时旧进程 exit handler 清空新 child 的竞态；新增 packaged Windows coding-journey smoke（create → 流式 → 编辑 → validator → diff 审查 → Apply → 重启后完整 transcript 恢复），验证本地变更未提交、Git index 未动、无 commit。  待完成：真实 DeepSeek/MiniMax 驱动的 ACC-03/04 live 旅程与签名 Desktop 复验。
+
 - ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
   已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。
   已完成：经用户授权的脱敏读取确认 Claude Code 已声明 MiniMax，配置模型标识为 `MiniMax-M3[1M]`，认证信息存在，且端点为 `https://api.minimaxi.com`；未读取或复制 Token。此项仅为发现证据，Candy 没有 Claude Code → MiniMax 自动导入器。

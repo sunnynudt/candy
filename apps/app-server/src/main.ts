@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   resolveAppPaths,
@@ -259,6 +259,7 @@ export class AppServerController {
         worktreePath,
       );
       this.#prompts.set(message.taskId, command.prompt);
+      this.#store.appendTranscript(message.taskId, [{ role: "user", text: command.prompt }]);
       return [
         this.event(message.taskId, metadata.revision, {
           type: "task.created",
@@ -317,6 +318,7 @@ export class AppServerController {
         return [this.snapshot(existing)];
       const queued = this.#steering.get(message.taskId) ?? [];
       this.#steering.set(message.taskId, [...queued, command.text]);
+      this.#store.appendTranscript(message.taskId, [{ role: "user", text: command.text }]);
       return [this.snapshot(existing)];
     }
     if (command.type === "task.run" || command.type === "task.resume") {
@@ -650,7 +652,11 @@ export class AppServerController {
       const current = this.#store.get(taskId);
       if (!current || current.state !== "running") break;
       const event = observationToEvent(taskId, current.revision, observation);
-      if (event) emit(this.event(taskId, current.revision, event));
+      if (event) {
+        if (event.type === "assistant.delta")
+          this.#store.appendTranscript(taskId, [{ role: "assistant", text: event.text }]);
+        emit(this.event(taskId, current.revision, event));
+      }
     }
   }
 
@@ -670,6 +676,9 @@ export class AppServerController {
       throw new Error("Validator execution is unavailable on this installation.");
     emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
     const result = await this.#validatorRunner.run(metadata.validator, executionPath, signal);
+    this.#store.appendTranscript(taskId, [
+      { role: "tool", text: `validator: ${result.ok ? "ok" : "error"}` },
+    ]);
     emit(
       this.event(taskId, metadata.revision, {
         type: "tool.completed",
@@ -837,6 +846,7 @@ export class AppServerController {
   private snapshot(metadata: TaskMetadata | TaskSnapshot): EventEnvelope {
     const worktreePath = "worktreePath" in metadata ? metadata.worktreePath : undefined;
     const progress = "taskId" in metadata ? this.#store.getRun(metadata.taskId) : undefined;
+    const transcript = "taskId" in metadata ? this.#store.transcript(metadata.taskId) : undefined;
     return this.event(metadata.taskId, metadata.revision, {
       type: "snapshot",
       snapshot: {
@@ -859,6 +869,7 @@ export class AppServerController {
           ? { approvalId: approvalIdFor(metadata.taskId, metadata.revision) }
           : {}),
         ...(progress === undefined ? {} : { progress: toTaskProgress(progress) }),
+        ...(transcript === undefined ? {} : { transcript }),
       },
     });
   }
@@ -1028,36 +1039,52 @@ function createLongRunningSmokeEngine(): RecoverableAgentEngine {
   };
 }
 
+function createCodingJourneyEngine(): RecoverableAgentEngine {
+  return {
+    async *runTurn(input: AgentTurnInput) {
+      yield { type: "assistant.delta" as const, text: "inspecting and editing the fixture" };
+      if (input.cwd !== undefined) {
+        await writeFile(path.join(input.cwd, "README.md"), "changed by task\n");
+        await writeFile(path.join(input.cwd, "new.txt"), "untracked by task\n");
+      }
+      yield { type: "turn.completed", taskId: input.taskId, at: Date.now() };
+    },
+    recoverPrompt: async () => "Candy packaged coding-journey fixture",
+  };
+}
+
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const sandboxRunner = resolveSandboxRunner();
   const deterministicRecoverySmoke = process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE === "1";
   const longRunningSmoke = process.env.CANDY_LONG_RUNNING_SMOKE === "1";
+  const codingJourneySmoke = process.env.CANDY_CODING_JOURNEY_SMOKE === "1";
+  const smokeEngine = longRunningSmoke || codingJourneySmoke || deterministicRecoverySmoke;
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments),
-    engine: longRunningSmoke
-      ? createLongRunningSmokeEngine()
-      : deterministicRecoverySmoke
-        ? createDeterministicRecoveryEngine()
-        : new PiAppServerEngine(
-            new PiAgentEngine(paths.sessions, async () => {
-              const lease = resolveCredential("deepseek");
-              return lease ? { secret: lease.value, release: lease.release } : undefined;
-            }),
-            new PiAgentEngine(
-              paths.sessions,
-              async () => {
-                const lease = resolveCredential("minimax-cn");
+    engine: codingJourneySmoke
+      ? createCodingJourneyEngine()
+      : longRunningSmoke
+        ? createLongRunningSmokeEngine()
+        : deterministicRecoverySmoke
+          ? createDeterministicRecoveryEngine()
+          : new PiAppServerEngine(
+              new PiAgentEngine(paths.sessions, async () => {
+                const lease = resolveCredential("deepseek");
                 return lease ? { secret: lease.value, release: lease.release } : undefined;
-              },
-              "minimax-cn",
+              }),
+              new PiAgentEngine(
+                paths.sessions,
+                async () => {
+                  const lease = resolveCredential("minimax-cn");
+                  return lease ? { secret: lease.value, release: lease.release } : undefined;
+                },
+                "minimax-cn",
+              ),
             ),
-          ),
     ownerId: `app-server:${process.pid}`,
-    ...(deterministicRecoverySmoke || longRunningSmoke
-      ? {}
-      : { activeSecrets: resolveActiveProviderSecrets }),
+    ...(smokeEngine ? {} : { activeSecrets: resolveActiveProviderSecrets }),
     worktreeRoot: paths.worktrees,
     ...(sandboxRunner === undefined
       ? {}

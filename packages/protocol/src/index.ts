@@ -50,6 +50,10 @@ export interface TaskSnapshot {
   readonly ownerId?: string;
   readonly approvalId?: string;
   readonly progress?: TaskProgress;
+  readonly transcript?: readonly {
+    readonly role: "user" | "assistant" | "tool";
+    readonly text: string;
+  }[];
 }
 
 export interface SnapshotCommand {
@@ -308,6 +312,24 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
     assertWorkspacePath(value.worktreePath, "snapshot.worktreePath");
   if (value.approvalId !== undefined) assertString(value.approvalId, "snapshot.approvalId");
   if (value.progress !== undefined) validateTaskProgress(value.progress);
+  if (value.transcript !== undefined) {
+    if (
+      !Array.isArray(value.transcript) ||
+      value.transcript.length > 1_024 ||
+      value.transcript.some(
+        (entry) =>
+          typeof entry !== "object" ||
+          entry === null ||
+          (entry.role !== "user" && entry.role !== "assistant" && entry.role !== "tool") ||
+          typeof entry.text !== "string" ||
+          entry.text.length === 0 ||
+          entry.text.length > 4_096 ||
+          entry.text.includes("\0"),
+      )
+    ) {
+      throw new ProtocolValidationError("invalid_message", "snapshot.transcript is invalid.");
+    }
+  }
 }
 
 function validateTaskProgress(value: unknown): asserts value is TaskProgress {

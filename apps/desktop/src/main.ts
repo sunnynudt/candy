@@ -103,6 +103,12 @@ class AppServerClient {
       if (validatorArgs !== undefined && validatorArgs.length <= 100_000)
         environment.CANDY_LONG_RUNNING_VALIDATOR_ARGS = validatorArgs;
     }
+    if (process.env.CANDY_DESKTOP_CODING_JOURNEY_SMOKE === "1") {
+      environment.CANDY_CODING_JOURNEY_SMOKE = "1";
+      const nativeRunner = process.env.CANDY_SANDBOX_RUNNER;
+      if (nativeRunner !== undefined && isAbsolute(nativeRunner))
+        environment.CANDY_SANDBOX_RUNNER = nativeRunner;
+    }
     const child = spawn(spec.runtimeExecutable, [spec.entrypoint], {
       cwd: dirname(spec.entrypoint),
       env: environment,
@@ -130,6 +136,7 @@ class AppServerClient {
       }
     });
     child.once("exit", () => {
+      if (this.#child !== child) return;
       this.#child = undefined;
       for (const pending of this.#pending.values()) pending.reject(new AppServerUnavailableError());
       this.#pending.clear();
@@ -518,6 +525,9 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...(event.event.snapshot.progress === undefined
         ? {}
         : { progress: event.event.snapshot.progress }),
+      ...(event.event.snapshot.transcript === undefined
+        ? {}
+        : { transcript: event.event.snapshot.transcript }),
     };
   }
   if (event.event.type === "task.created")
@@ -977,10 +987,12 @@ export function createDesktopWindow(): BrowserWindow {
           nonce,
           process.env.CANDY_DESKTOP_RESPONSIVENESS === "1" ||
             process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1" ||
-            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1",
+            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1" ||
+            process.env.CANDY_DESKTOP_CODING_JOURNEY_SMOKE === "1",
           process.env.CANDY_DESKTOP_SMOKE === "1" ||
             process.env.CANDY_DESKTOP_RESPONSIVENESS === "1" ||
-            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1",
+            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1" ||
+            process.env.CANDY_DESKTOP_CODING_JOURNEY_SMOKE === "1",
         ),
       ),
   );
@@ -1218,6 +1230,13 @@ export function startDesktop(): void {
         console.error(error instanceof Error ? error.message : "Desktop credential smoke failed.");
         app.exit(1);
       });
+    if (process.env.CANDY_DESKTOP_CODING_JOURNEY_SMOKE === "1")
+      void runDesktopCodingJourneySmoke().catch((error: unknown) => {
+        console.error(
+          error instanceof Error ? error.message : "Desktop coding-journey smoke failed.",
+        );
+        app.exit(1);
+      });
     if (process.env.CANDY_BROWSER_SMOKE === "1")
       void runBrowserSmoke().catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : "Browser smoke failed.");
@@ -1287,6 +1306,128 @@ async function runDesktopCredentialSmoke(): Promise<void> {
     throw new Error("Desktop credential smoke fixture was not deleted.");
   console.log(
     "Desktop credential smoke passed: renderer set/presence/delete only; complete value never observable",
+  );
+  app.quit();
+}
+
+async function runDesktopCodingJourneySmoke(): Promise<void> {
+  if (!appServer || !mainWindow)
+    throw new Error("Desktop coding-journey smoke requires the app-server and visible window.");
+  const workspace = process.env.CANDY_CODING_JOURNEY_WORKSPACE;
+  const validatorExecutable = process.env.CANDY_CODING_JOURNEY_VALIDATOR_EXECUTABLE;
+  if (workspace === undefined || !isAbsolute(workspace))
+    throw new Error("Desktop coding-journey workspace is unavailable.");
+  if (validatorExecutable === undefined || !isAbsolute(validatorExecutable))
+    throw new Error("Desktop coding-journey validator executable is unavailable.");
+  assertWorkspacePath(workspace);
+  selectedWorkspacePath = workspace;
+  await waitForDesktopRenderer();
+
+  const validatorScript = [
+    "const fs = require('node:fs');",
+    "const readme = fs.readFileSync(require('node:path').join(process.cwd(), 'README.md'), 'utf8');",
+    "process.stdout.write(readme.includes('changed by task') ? 'validator-pass' : 'validator-fail');",
+    "process.exit(readme.includes('changed by task') ? 0 : 1);",
+  ].join(" ");
+  const validator = { executable: validatorExecutable, args: ["-e", validatorScript] };
+  assertValidatorSpec(validator);
+  const taskId = "desktop-coding-journey-smoke";
+  const created = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.state === "queued",
+  );
+  await appServer.send(
+    desktopCommand(taskId, "coding-journey-create", 0, {
+      type: "task.create",
+      prompt: "Fix the failing fixture test and add an untracked note.",
+      approvalProfile: "auto",
+      workspacePath: workspace,
+      model: DEFAULT_CANDY_MODEL,
+      attachmentIds: [],
+      validator,
+    }),
+  );
+  await created;
+  const completed = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.state === "completed",
+  );
+  await appServer.send(desktopCommand(taskId, "coding-journey-run", 0, { type: "task.run" }));
+  const completedObservation = await completed;
+  if (completedObservation.event.event.type !== "snapshot")
+    throw new Error("Coding-journey completion snapshot is unavailable.");
+  const completedSnapshot = completedObservation.event.event.snapshot;
+  if (completedSnapshot.workspaceBaseline === undefined)
+    throw new Error("Coding-journey workspace baseline is unavailable.");
+  const journeyProjection = projections.get(taskId) ?? emptyProjection(taskId);
+  if (
+    !journeyProjection.trackedFiles.includes("README.md") ||
+    !journeyProjection.untrackedFiles.includes("new.txt") ||
+    !journeyProjection.diff.includes("changed by task")
+  )
+    throw new Error("Coding-journey changed files or diff were not projected.");
+
+  const applied = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.workspaceState === "local",
+  );
+  await appServer.send(
+    desktopCommand(taskId, "coding-journey-apply", completedSnapshot.revision, {
+      type: "workspace.apply",
+      expectedBase: completedSnapshot.workspaceBaseline,
+      tracked: journeyProjection.trackedFiles,
+      untracked: journeyProjection.untrackedFiles,
+    }),
+  );
+  await applied;
+  const localReadme = await readFile(join(workspace, "README.md"), "utf8");
+  if (!localReadme.includes("changed by task"))
+    throw new Error("Coding-journey Apply did not transfer the reviewed change to Local.");
+
+  const launch = resolveAppServerLaunch();
+  if (!launch) throw new Error("Coding-journey app-server launch is unavailable.");
+  appServer.stop();
+  appServer.start(launch);
+  const reopened = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.state === "completed",
+  );
+  await appServer.send(
+    desktopCommand(taskId, "coding-journey-reopen", completedSnapshot.revision, {
+      type: "snapshot",
+    }),
+  );
+  const reopenedObservation = await reopened;
+  if (reopenedObservation.event.event.type !== "snapshot")
+    throw new Error("Coding-journey reopened snapshot is unavailable.");
+  const reopenedSnapshot = reopenedObservation.event.event.snapshot;
+  const transcript = reopenedSnapshot.transcript ?? [];
+  if (
+    !transcript.some(
+      (entry) => entry.role === "user" && entry.text.includes("Fix the failing fixture"),
+    ) ||
+    !transcript.some(
+      (entry) => entry.role === "assistant" && entry.text.includes("inspecting and editing"),
+    ) ||
+    !transcript.some((entry) => entry.role === "tool" && entry.text.includes("validator: ok"))
+  )
+    throw new Error("Coding-journey reopened transcript did not preserve the full conversation.");
+  console.log(
+    `CANDY_CODING_JOURNEY_RESULT ${JSON.stringify({
+      state: reopenedSnapshot.state,
+      changedFiles: journeyProjection.trackedFiles.length + journeyProjection.untrackedFiles.length,
+      applied: localReadme.includes("changed by task"),
+      transcriptEntries: transcript.length,
+      reopened: true,
+    })}`,
   );
   app.quit();
 }
