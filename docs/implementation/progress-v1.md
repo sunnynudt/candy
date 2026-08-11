@@ -40,7 +40,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 
 - `GitWorktreeManager` now uses a native `realpath` canonicalization seam for association checks, so macOS Git output under `/private/var` matches Candy paths created through `/var`. The lexical Candy-owned Worktree root containment check and exact `candy:<task-id>` lock-reason comparison remain fail-closed and unchanged in policy.
 - Cross-host Windows association fixtures now inject `path.win32` into the same seam, including case normalization, so they do not accidentally exercise the macOS host's POSIX path rules. A macOS-only alias regression and the real Git create/discard/apply fixtures cover both boundaries.
-- The pinned macOS runner on `26.5.2` arm64 completed 9/9 steps: `check:toolchain`, `check`, `check:native`, safe-edit, TUI, TUI task, app-server, Electron, and packaged Desktop/Keychain smoke. The deterministic suite passed 94 tests; no live provider command or external-tool credential was read.
+- The pinned macOS runner on `26.5.2` arm64 completed 9/9 steps on clean published revision `91f4f12d3d6b92d2d657d341ff14c14ef3482369`: `check:toolchain`, `check`, `check:native`, safe-edit, TUI, TUI task, app-server, Electron, and packaged Desktop/Keychain smoke. The deterministic suite passed 94 tests; no live provider command or external-tool credential was read.
 - This restores the deterministic macOS Worktree baseline but does not close Runtime/session-remap, ACC-12 ten-run responsiveness, full recovery, Browser adversarial, Apple signing/notarization, live-provider, native containment/security-review, or final ACC-01..12 gates. Shell Auto and Shell Auto Debug remain disabled.
 
 ## 2026-08-11 Windows Credential Manager checkpoint

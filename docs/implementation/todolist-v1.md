@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-当前基线提交：`7c2eb877b0a9262735623aa83016916bf0fcc997`
+当前基线提交：`91f4f12d3d6b92d2d657d341ff14c14ef3482369`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -62,7 +62,7 @@
 
 ## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
 
-- ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。`npm run check` 通过（94/94 tests），`npm run acceptance:macos` 通过（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
+- ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
 - ◐ 在 Worktree 基线恢复后，工具链、TUI、Desktop App Server、Worktree/Apply 的确定性 macOS 基线和打包 smoke 已通过，并生成了新的 macOS 脱敏证据；Runtime/session-remap 专项、ACC-12 十轮响应性矩阵和完整 macOS 接受矩阵仍待完成。
 
