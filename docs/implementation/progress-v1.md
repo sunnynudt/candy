@@ -280,3 +280,9 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The active task uses the real macOS Sandbox Runner validator path. The smoke confirms that owner shutdown cancels the validator process group and the delayed validator marker is not written. This is local deterministic descendant-cleanup evidence, not an OS containment or independent security-review result.
 - Published commit `327b0e529f403a207941e0d9f28a3c2ba45c83d3` adds the source app-server and embedded packaged Node/app-server recovery commands to `npm run acceptance:macos`. On clean macOS `26.5.2` arm64 with Node `22.23.2`, the runner passed 12/12 steps and 94/94 tests; the sanitized report is `out/acceptance/macos/latest.md`.
 - No provider credential, other tool configuration, live provider request, Apple signing identity, or notarization path was used. The report continues to classify full recovery/UI, Browser, native-security, signing, live-provider, and final ACC evidence as open.
+
+## 2026-08-11 macOS ACC-12 cold-start measurement checkpoint
+
+- Added `measure:macos:responsiveness`, a ten-run deterministic measurement for TUI cold start to the usable smoke prompt and Desktop cold start to the task-list smoke. It uses the pinned Node 22 runtime, local Electron 43.2.0, no provider request, and Candy's minimal child environment.
+- On clean revision `a9237399ba103c77c345bcf1cfb2fc064a7fde09` and macOS `26.5.2` arm64, TUI p95 is `1199 ms` against the `2000 ms` target and Desktop p95 is `2064 ms` against the `5000 ms` target. The full macOS acceptance runner passed 13/13 steps with 94/94 tests.
+- Sanitized reports are `out/acceptance/macos/latest.md` and `out/acceptance/macos/responsiveness-latest.md`. The measurement deliberately leaves Runtime-event-to-UI, cancellation, task-owned process-tree timing, Browser Take Control, and three-task freeze/event-loss metrics unmeasured; this is not complete ACC-12 or final V1 acceptance.

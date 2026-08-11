@@ -64,7 +64,7 @@
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
-- ◐ 在 Worktree 基线恢复后，已发布提交 `327b0e529f403a207941e0d9f28a3c2ba45c83d3` 的工具链、Runtime/session-remap、TUI、Desktop App Server、Worktree/Apply、源 app-server 恢复和 packaged Node/app-server 恢复确定性 smoke 通过；干净 macOS acceptance 为 12/12，报告 source revision 为该提交。恢复证据覆盖 queued 元数据、owner interruption、`crash_interrupted` 快照和 macOS validator 后代清理；ACC-12 十轮响应性矩阵、完整 UI/跨客户端恢复、Browser 矩阵、签名和完整 macOS 接受矩阵仍待完成。
+- ◐ 在 Worktree 基线恢复后，已发布提交 `a9237399ba103c77c345bcf1cfb2fc064a7fde09` 的工具链、Runtime/session-remap、TUI、Desktop App Server、Worktree/Apply、源 app-server 恢复、packaged Node/app-server 恢复和 ACC-12 cold-start 子集确定性 smoke 通过；干净 macOS acceptance 为 13/13，TUI p95 `1199 ms`、Desktop p95 `2064 ms`，报告 source revision 为该提交。恢复证据覆盖 queued 元数据、owner interruption、`crash_interrupted` 快照和 macOS validator 后代清理；ACC-12 其余指标、完整 UI/跨客户端恢复、Browser 矩阵、签名和完整 macOS 接受矩阵仍待完成。
 
 - ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；当前仅有确定性 validator 后代清理和协议/本地 smoke 证据，在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
 
