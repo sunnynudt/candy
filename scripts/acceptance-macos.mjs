@@ -35,12 +35,14 @@ const steps = [
   "check",
   "check:native",
   "smoke:runtime-session-remap",
+  "smoke:recovery:macos",
   "smoke:safe-edit",
   "smoke:tui",
   "smoke:tui-task",
   "smoke:app-server",
   "smoke:desktop",
   "smoke:desktop:packaged",
+  "smoke:desktop:packaged:recovery:macos",
 ];
 const results = [];
 
