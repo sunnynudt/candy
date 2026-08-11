@@ -1,5 +1,9 @@
-import { contextBridge, ipcRenderer } from "electron";
+// Sandboxed Electron preloads must remain CommonJS; ESM preload imports are not evaluated here.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import electron = require("electron");
 import type { DesktopPreloadApi } from "./contracts.js";
+
+const { contextBridge, ipcRenderer } = electron;
 
 const api: DesktopPreloadApi = {
   credentials: {

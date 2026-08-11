@@ -86,7 +86,8 @@ const report = [
   "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
   "- macOS native containment security review; Shell and Auto Debug remain gated.",
   "- Apple signing/notarization and complete packaged Browser adversarial/input-origin evidence.",
-  "- Complete ACC-12 metrics beyond the ten-run TUI/Desktop cold-start subset.",
+  "- User cancellation to a real Provider stream-stop request remains Blocked because the deterministic measurement uses no Provider stream.",
+  "- Provider latency/public-network behavior and complete ACC-12 UI/recovery evidence remain outside the deterministic ten-run cold-start and four-local-seam measurement.",
   "",
 ].join("\n");
 

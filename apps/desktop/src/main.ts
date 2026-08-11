@@ -28,6 +28,7 @@ import {
   type CommandEnvelope,
   type EventEnvelope,
   type ProtocolMessage,
+  type ValidatorSpec,
 } from "@candy/protocol";
 import {
   assertApplyPaths,
@@ -48,6 +49,14 @@ interface AppServerLaunchSpec {
   readonly runtimeExecutable: string;
   readonly entrypoint: string;
 }
+
+interface DesktopEventObservation {
+  readonly event: EventEnvelope;
+  readonly projection: RendererTaskProjection;
+  readonly receivedAt: number;
+}
+
+type DesktopEventListener = (observation: DesktopEventObservation) => void;
 
 class AppServerUnavailableError extends Error {
   public constructor() {
@@ -70,9 +79,16 @@ class AppServerClient {
 
   public start(spec: AppServerLaunchSpec): void {
     if (this.#child) return;
+    const environment = cleanChildEnvironment(process.env);
+    if (process.env.CANDY_DESKTOP_RESPONSIVENESS === "1") {
+      environment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
+      const nativeRunner = process.env.CANDY_RESPONSIVENESS_NATIVE_RUNNER;
+      if (nativeRunner !== undefined && isAbsolute(nativeRunner))
+        environment.CANDY_SANDBOX_RUNNER = nativeRunner;
+    }
     const child = spawn(spec.runtimeExecutable, [spec.entrypoint], {
       cwd: dirname(spec.entrypoint),
-      env: cleanChildEnvironment(process.env),
+      env: environment,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -131,6 +147,7 @@ let browserDownloadPrevented = false;
 let browserAttachments: AttachmentStore | undefined;
 let explicitQuit = false;
 let selectedWorkspacePath: string | undefined;
+const desktopEventListeners = new Set<DesktopEventListener>();
 
 function assertBrowserHost(host: unknown): asserts host is string {
   if (typeof host !== "string" || host.length === 0 || host.length > 255)
@@ -437,7 +454,9 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
 function handleAppServerEvent(event: EventEnvelope): void {
   const projection = projectionFromEvent(event);
   projections.set(event.taskId, projection);
+  const observation = { event, projection, receivedAt: Date.now() };
   mainWindow?.webContents.send("task.update", projection);
+  for (const listener of desktopEventListeners) listener(observation);
 }
 
 function validatePrompt(prompt: unknown): asserts prompt is string {
@@ -751,7 +770,7 @@ export function createDesktopWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.js"),
+      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
     },
   });
   const view = new WebContentsView({
@@ -788,7 +807,15 @@ export function createDesktopWindow(): BrowserWindow {
   view.setVisible(false);
   const nonce = randomUUID().replaceAll("-", "");
   void window.loadURL(
-    "data:text/html;charset=utf-8," + encodeURIComponent(desktopShellHtml(nonce)),
+    "data:text/html;charset=utf-8," +
+      encodeURIComponent(
+        desktopShellHtml(
+          nonce,
+          process.env.CANDY_DESKTOP_RESPONSIVENESS === "1",
+          process.env.CANDY_DESKTOP_SMOKE === "1" ||
+            process.env.CANDY_DESKTOP_RESPONSIVENESS === "1",
+        ),
+      ),
   );
   window.on("close", (event) => {
     if (!explicitQuit && classifyWindowClose(false) === "hide-to-tray") {
@@ -799,14 +826,50 @@ export function createDesktopWindow(): BrowserWindow {
   return window;
 }
 
-function desktopShellHtml(nonce: string): string {
+function desktopShellHtml(
+  nonce: string,
+  enableProbe = false,
+  skipCredentialRefresh = false,
+): string {
   const credentialStore = credentialStoreLabel(process.platform);
+  const probeScript = enableProbe
+    ? `const desktopProbe = window.__candyDesktopProbe = {
+  taskUpdateCount: 0,
+  updatesByTask: {},
+  lastProjection: null,
+  rendererReady: false,
+  frameCount: 0,
+  maxFrameGapMs: 0,
+  lastFrameAt: performance.now(),
+  active: false,
+  reset() {
+    this.taskUpdateCount = 0;
+    this.updatesByTask = {};
+    this.lastProjection = null;
+    this.frameCount = 0;
+    this.maxFrameGapMs = 0;
+    this.lastFrameAt = performance.now();
+    this.active = true;
+  },
+};
+const recordFrame = (now) => {
+  desktopProbe.frameCount += 1;
+  if (desktopProbe.active) {
+    if (desktopProbe.lastFrameAt !== null)
+      desktopProbe.maxFrameGapMs = Math.max(desktopProbe.maxFrameGapMs, now - desktopProbe.lastFrameAt);
+    desktopProbe.lastFrameAt = now;
+  }
+  requestAnimationFrame(recordFrame);
+};
+requestAnimationFrame(recordFrame);`
+    : "const desktopProbe = null;";
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
 <style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff;overflow:auto}section{padding:20px;overflow:auto}textarea,input{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px}textarea{height:140px}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}.card{border:1px solid #ddd;border-radius:6px;padding:10px;margin:14px 0}.status{font-size:12px}</style></head>
  <body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskProgress" class="muted"></div><div id="taskActions"></div><button id="applyChanges" disabled>Apply changes</button><button id="discardWorktree" disabled>Discard worktree</button></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
 <script nonce="${nonce}">
 (() => {
+  ${probeScript}
   const prompt = document.getElementById('prompt');
   const validatorExecutable = document.getElementById('validatorExecutable');
   const validatorArgs = document.getElementById('validatorArgs');
@@ -862,8 +925,13 @@ function desktopShellHtml(nonce: string): string {
   document.getElementById('deleteDeepSeek').addEventListener('click', () => deleteCredential('deepseek').catch((error) => { taskStatus.textContent = error.message; }));
   document.getElementById('saveMiniMax').addEventListener('click', () => saveCredential('minimax-cn').catch((error) => { taskStatus.textContent = error.message; }));
   document.getElementById('deleteMiniMax').addEventListener('click', () => deleteCredential('minimax-cn').catch((error) => { taskStatus.textContent = error.message; }));
-  void window.candy.workspace.current().then(showWorkspace); void refreshCredentials();
+  void window.candy.workspace.current().then(showWorkspace); ${skipCredentialRefresh ? "" : "void refreshCredentials();"}
   const render = (projection) => {
+    if (desktopProbe) {
+      desktopProbe.taskUpdateCount += 1;
+      desktopProbe.updatesByTask[projection.taskId] = (desktopProbe.updatesByTask[projection.taskId] || 0) + 1;
+      desktopProbe.lastProjection = { taskId: projection.taskId, revision: projection.revision, renderedAt: Date.now() };
+    }
     current = projection;
     taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision + ' · ' + (projection.workspaceState === 'worktree' ? 'Task Worktree' : 'Local');
     taskProgress.textContent = projection.progress
@@ -899,6 +967,7 @@ function desktopShellHtml(nonce: string): string {
     } catch (error) { taskStatus.textContent = 'Discard failed: ' + error.message; }
   });
   window.candy.tasks.onUpdate(render);
+  if (desktopProbe) desktopProbe.rendererReady = true;
 })();
 </script></body></html>`;
 }
@@ -946,6 +1015,13 @@ export function startDesktop(): void {
         console.error(error instanceof Error ? error.message : "Browser smoke failed.");
         app.exit(1);
       });
+    else if (process.env.CANDY_DESKTOP_RESPONSIVENESS === "1")
+      void runDesktopResponsivenessSmoke().catch((error: unknown) => {
+        console.error(
+          error instanceof Error ? error.message : "Desktop responsiveness smoke failed.",
+        );
+        app.exit(1);
+      });
     else if (process.env.CANDY_DESKTOP_SMOKE === "1") void runDesktopSmoke();
   });
   app.on("before-quit", () => {
@@ -964,6 +1040,400 @@ async function runDesktopSmoke(): Promise<void> {
     expectedRevision: 0,
     command: { type: "snapshot" },
   });
+  app.quit();
+}
+
+interface DesktopProbeSnapshot {
+  readonly taskUpdateCount: number;
+  readonly updatesByTask: Readonly<Record<string, number>>;
+  readonly rendererReady: boolean;
+  readonly lastProjection?: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly renderedAt: number;
+  } | null;
+  readonly frameCount: number;
+  readonly maxFrameGapMs: number;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
+}
+
+function waitForDesktopEvent(
+  taskId: string,
+  predicate: (observation: DesktopEventObservation) => boolean,
+  timeoutMs = 10_000,
+): Promise<DesktopEventObservation> {
+  return new Promise((resolve, reject) => {
+    const listener: DesktopEventListener = (observation) => {
+      if (observation.event.taskId !== taskId || !predicate(observation)) return;
+      globalThis.clearTimeout(timeout);
+      desktopEventListeners.delete(listener);
+      resolve(observation);
+    };
+    const timeout = globalThis.setTimeout(() => {
+      desktopEventListeners.delete(listener);
+      reject(new Error("Desktop responsiveness fixture did not emit the expected Runtime event."));
+    }, timeoutMs);
+    desktopEventListeners.add(listener);
+  });
+}
+
+async function executeRenderer<T>(script: string): Promise<T> {
+  if (!mainWindow) throw new Error("Desktop responsiveness renderer is unavailable.");
+  return (await mainWindow.webContents.executeJavaScript(script, true)) as T;
+}
+
+async function waitForDesktopRenderer(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      if (
+        await executeRenderer<boolean>(
+          "Boolean(window.__candyDesktopProbe?.rendererReady && document.getElementById('taskStatus'))",
+        )
+      )
+        return;
+    } catch {
+      // The data URL renderer may still be loading.
+    }
+    await delay(20);
+  }
+  throw new Error("Desktop responsiveness renderer did not become visible.");
+}
+
+async function readDesktopProbe(): Promise<DesktopProbeSnapshot> {
+  const probe = await executeRenderer<DesktopProbeSnapshot | null>(
+    "window.__candyDesktopProbe ? JSON.parse(JSON.stringify(window.__candyDesktopProbe)) : null",
+  );
+  if (probe === null) throw new Error("Desktop responsiveness probe is unavailable.");
+  return probe;
+}
+
+async function resetDesktopProbe(): Promise<void> {
+  await executeRenderer("window.__candyDesktopProbe.reset(); true");
+}
+
+async function waitForRenderedProjection(taskId: string, revision: number): Promise<number> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const probe = await readDesktopProbe();
+    if (
+      probe.lastProjection?.taskId === taskId &&
+      probe.lastProjection.revision === revision &&
+      Number.isSafeInteger(probe.lastProjection.renderedAt)
+    )
+      return probe.lastProjection.renderedAt;
+    await delay(5);
+  }
+  const probe = await readDesktopProbe();
+  throw new Error(
+    `Desktop responsiveness fixture did not render the expected projection (${probe.lastProjection?.taskId ?? "none"}/${probe.lastProjection?.revision ?? "none"}).`,
+  );
+}
+
+function responsivenessWorkspace(): string {
+  const workspace = process.env.CANDY_RESPONSIVENESS_WORKSPACE;
+  if (workspace === undefined || !isAbsolute(workspace))
+    throw new Error("Desktop responsiveness workspace is unavailable.");
+  assertWorkspacePath(workspace);
+  return workspace;
+}
+
+function responsivenessFixtureRoot(): string {
+  const fixtureRoot = process.env.CANDY_RESPONSIVENESS_FIXTURE_ROOT;
+  if (fixtureRoot === undefined || !isAbsolute(fixtureRoot))
+    throw new Error("Desktop responsiveness fixture root is unavailable.");
+  return fixtureRoot;
+}
+
+function responsivenessNode(): string {
+  const node = process.env.CANDY_RESPONSIVENESS_NODE;
+  if (node === undefined || !isAbsolute(node))
+    throw new Error("Desktop responsiveness Node runtime is unavailable.");
+  return node;
+}
+
+function desktopCommand(
+  taskId: string,
+  commandId: string,
+  expectedRevision: number,
+  command: CommandEnvelope["command"],
+): CommandEnvelope {
+  return { v: 1, kind: "command", commandId, taskId, expectedRevision, command };
+}
+
+async function createResponsivenessTask(
+  taskId: string,
+  approvalProfile: "read-only" | "auto",
+  validator?: ValidatorSpec,
+): Promise<DesktopEventObservation> {
+  if (!appServer) throw new Error("Desktop responsiveness app-server is unavailable.");
+  const snapshot = waitForDesktopEvent(
+    taskId,
+    (observation) => observation.event.event.type === "snapshot",
+  );
+  await appServer.send(
+    desktopCommand(taskId, `${taskId}-create`, 0, {
+      type: "task.create",
+      prompt: "Candy deterministic responsiveness fixture",
+      approvalProfile,
+      workspacePath: responsivenessWorkspace(),
+      model: DEFAULT_CANDY_MODEL,
+      attachmentIds: [],
+      ...(validator === undefined ? {} : { validator }),
+    }),
+  );
+  return snapshot;
+}
+
+async function readFixtureFile(filePath: string, timeoutMs = 10_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      return await readFile(filePath, "utf8");
+    } catch {
+      await delay(10);
+    }
+  }
+  throw new Error("Desktop responsiveness process fixture did not become ready.");
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function waitForProcessGone(pid: number, timeoutMs: number): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return Date.now();
+    await delay(10);
+  }
+  throw new Error("Desktop responsiveness task-owned process fixture did not terminate.");
+}
+
+async function runDesktopResponsivenessSmoke(): Promise<void> {
+  if (!appServer || !mainWindow)
+    throw new Error("Desktop responsiveness requires the app-server and visible window.");
+  const responsivenessAppServer = appServer;
+  if (process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE !== "1")
+    throw new Error("Desktop responsiveness requires the deterministic app-server fixture.");
+  const workspace = responsivenessWorkspace();
+  const fixtureRoot = responsivenessFixtureRoot();
+  const node = responsivenessNode();
+  if (!(await stat(workspace)).isDirectory())
+    throw new Error("Desktop responsiveness workspace is not a directory.");
+  selectedWorkspacePath = workspace;
+  await waitForDesktopRenderer();
+
+  const projectionSamples: number[] = [];
+  for (let index = 0; index < 10; index += 1) {
+    const taskId = `desktop-responsiveness-projection-${index}`;
+    const snapshot = await createResponsivenessTask(taskId, "read-only");
+    const renderedAt = await waitForRenderedProjection(
+      taskId,
+      snapshot.event.event.type === "snapshot" ? snapshot.event.event.snapshot.revision : 0,
+    );
+    projectionSamples.push(Math.max(0, renderedAt - snapshot.receivedAt));
+  }
+
+  const cancellationChildScript = [
+    "const fs = require('node:fs');",
+    "const heartbeat = process.argv[1];",
+    "const beat = () => { try { fs.writeFileSync(heartbeat, String(Date.now())); } catch {} };",
+    "beat(); setInterval(beat, 25);",
+  ].join(" ");
+  const cancellationValidatorScript = [
+    "const cp = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const validatorPidFile = process.argv[1];",
+    "const pidFile = process.argv[2];",
+    "const readyFile = process.argv[3];",
+    "const heartbeat = process.argv[4];",
+    "const childScript = process.argv[5];",
+    "const child = cp.spawn(process.execPath, ['-e', childScript, heartbeat], { stdio: 'ignore' });",
+    "if (!child.pid) process.exit(2);",
+    "fs.writeFileSync(validatorPidFile, String(process.pid));",
+    "fs.writeFileSync(pidFile, String(child.pid));",
+    "fs.writeFileSync(readyFile, 'ready');",
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
+  const cancellationSamples: number[] = [];
+  for (let index = 0; index < 10; index += 1) {
+    const taskId = `desktop-responsiveness-cancel-${index}`;
+    const validatorPidFile = join(fixtureRoot, `cancel-${index}.validator.pid`);
+    const pidFile = join(fixtureRoot, `cancel-${index}.pid`);
+    const readyFile = join(fixtureRoot, `cancel-${index}.ready`);
+    const heartbeatFile = join(fixtureRoot, `cancel-${index}.heartbeat`);
+    const validator: ValidatorSpec = {
+      executable: node,
+      args: [
+        "-e",
+        cancellationValidatorScript,
+        validatorPidFile,
+        pidFile,
+        readyFile,
+        heartbeatFile,
+        cancellationChildScript,
+      ],
+    };
+    await createResponsivenessTask(taskId, "auto", validator);
+    const started = waitForDesktopEvent(
+      taskId,
+      (observation) => observation.event.event.type === "tool.started",
+    );
+    await appServer.send(desktopCommand(taskId, `${taskId}-run`, 0, { type: "task.run" }));
+    await started;
+    await readFixtureFile(readyFile);
+    const validatorPid = Number.parseInt(await readFixtureFile(validatorPidFile), 10);
+    const pid = Number.parseInt(await readFixtureFile(pidFile), 10);
+    if (
+      !Number.isSafeInteger(validatorPid) ||
+      !Number.isSafeInteger(pid) ||
+      !isProcessAlive(validatorPid) ||
+      !isProcessAlive(pid)
+    )
+      throw new Error("Desktop responsiveness process fixture ended before cancellation.");
+    const cancelled = waitForDesktopEvent(
+      taskId,
+      (observation) =>
+        observation.event.event.type === "snapshot" &&
+        observation.event.event.snapshot.state === "cancelled",
+    );
+    const cancelStartedAt = Date.now();
+    const cancelRequest = executeRenderer<void>(
+      `window.candy.tasks.send(${JSON.stringify({ taskId, expectedRevision: 1, type: "task.cancel" })})`,
+    );
+    const [childTerminatedAt, validatorTerminatedAt] = await Promise.all([
+      waitForProcessGone(pid, 5_000),
+      waitForProcessGone(validatorPid, 5_000),
+    ]);
+    const terminatedAt = Math.max(childTerminatedAt, validatorTerminatedAt);
+    await cancelRequest;
+    await cancelled;
+    cancellationSamples.push(Math.max(0, terminatedAt - cancelStartedAt));
+  }
+
+  const fixtureUrl = process.env.CANDY_BROWSER_FIXTURE_URL;
+  if (fixtureUrl === undefined)
+    throw new Error("Desktop responsiveness Browser fixture is unavailable.");
+  const browserUrl = new URL(fixtureUrl);
+  browserHosts.add(browserUrl.host.toLowerCase());
+  await executeRenderer(`window.candy.browser.allowSite(${JSON.stringify(browserUrl.host)}); true`);
+  await executeRenderer(`window.candy.browser.open(${JSON.stringify(fixtureUrl)})`);
+  const browserSamples: number[] = [];
+  for (let index = 0; index < 10; index += 1) {
+    const current = await executeRenderer<{ readonly control?: unknown }>(
+      "window.candy.browser.observe()",
+    );
+    if (current.control === "user")
+      await executeRenderer("window.candy.browser.returnControlToAgent()");
+    const result = await executeRenderer<{
+      readonly rejected?: unknown;
+      readonly elapsed?: unknown;
+    }>(
+      `
+        (async () => {
+          const startedAt = Date.now();
+          const user = await window.candy.browser.takeControl();
+          try {
+            await window.candy.browser.act({ type: 'click', target: '#fixture-click', expectedRevision: user.revision });
+            return { rejected: false, elapsed: Date.now() - startedAt };
+          } catch {
+            return { rejected: true, elapsed: Date.now() - startedAt };
+          }
+        })()
+      `,
+    );
+    if (
+      result.rejected !== true ||
+      typeof result.elapsed !== "number" ||
+      !Number.isSafeInteger(result.elapsed)
+    )
+      throw new Error("Desktop responsiveness Browser action was not disabled after Take Control.");
+    browserSamples.push(result.elapsed);
+    await executeRenderer("window.candy.browser.returnControlToAgent()");
+  }
+
+  const concurrencySamples: {
+    readonly maxFrameGapMs: number;
+    readonly frameCount: number;
+    readonly expectedEventCount: number;
+    readonly renderedProjectionCount: number;
+    readonly expectedByTask: readonly number[];
+    readonly renderedByTask: readonly number[];
+    readonly eventLoss: boolean;
+  }[] = [];
+  const concurrencyValidator: ValidatorSpec = {
+    executable: node,
+    args: ["-e", "setTimeout(() => {}, 350);"],
+  };
+  for (let round = 0; round < 10; round += 1) {
+    const taskIds = [0, 1, 2].map((task) => `desktop-responsiveness-concurrency-${round}-${task}`);
+    for (const taskId of taskIds)
+      await createResponsivenessTask(taskId, "auto", concurrencyValidator);
+    await resetDesktopProbe();
+    const expectedByTask = new Map(taskIds.map((taskId) => [taskId, 0]));
+    const listener: DesktopEventListener = (observation) => {
+      if (expectedByTask.has(observation.event.taskId))
+        expectedByTask.set(
+          observation.event.taskId,
+          expectedByTask.get(observation.event.taskId)! + 1,
+        );
+    };
+    desktopEventListeners.add(listener);
+    try {
+      const completed = taskIds.map((taskId) =>
+        waitForDesktopEvent(
+          taskId,
+          (observation) =>
+            observation.event.event.type === "snapshot" &&
+            observation.event.event.snapshot.state === "completed",
+        ),
+      );
+      await Promise.all(
+        taskIds.map((taskId) =>
+          responsivenessAppServer.send(
+            desktopCommand(taskId, `${taskId}-run`, 0, { type: "task.run" }),
+          ),
+        ),
+      );
+      await Promise.all(completed);
+      await delay(100);
+      const probe = await readDesktopProbe();
+      const expected = taskIds.map((taskId) => expectedByTask.get(taskId) ?? 0);
+      const rendered = taskIds.map((taskId) => probe.updatesByTask[taskId] ?? 0);
+      const eventLoss = expected.some((count, index) => count !== rendered[index]);
+      if (probe.frameCount < 2)
+        throw new Error("Desktop responsiveness frame probe did not sample frames.");
+      concurrencySamples.push({
+        maxFrameGapMs: Math.round(probe.maxFrameGapMs),
+        frameCount: probe.frameCount,
+        expectedEventCount: expected.reduce((total, count) => total + count, 0),
+        renderedProjectionCount: probe.taskUpdateCount,
+        expectedByTask: expected,
+        renderedByTask: rendered,
+        eventLoss,
+      });
+    } finally {
+      desktopEventListeners.delete(listener);
+    }
+  }
+
+  console.log(
+    `CANDY_RESPONSIVENESS_RESULT ${JSON.stringify({
+      runtimeProjectionMs: projectionSamples,
+      cancellationProcessTreeMs: cancellationSamples,
+      browserTakeControlMs: browserSamples,
+      concurrency: concurrencySamples,
+    })}`,
+  );
   app.quit();
 }
 
