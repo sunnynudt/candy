@@ -87,10 +87,10 @@ class AppServerClient {
       const nativeRunner = process.env.CANDY_RESPONSIVENESS_NATIVE_RUNNER;
       if (nativeRunner !== undefined && isAbsolute(nativeRunner))
         environment.CANDY_SANDBOX_RUNNER = nativeRunner;
-      const appDataRoot = process.env.CANDY_APP_DATA_ROOT;
-      if (appDataRoot !== undefined && isAbsolute(appDataRoot))
-        environment.CANDY_APP_DATA_ROOT = appDataRoot;
     }
+    const appDataRoot = process.env.CANDY_APP_DATA_ROOT;
+    if (appDataRoot !== undefined && isAbsolute(appDataRoot))
+      environment.CANDY_APP_DATA_ROOT = appDataRoot;
     if (process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1") {
       environment.CANDY_LONG_RUNNING_SMOKE = "1";
       const nativeRunner = process.env.CANDY_SANDBOX_RUNNER;
