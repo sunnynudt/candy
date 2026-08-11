@@ -67,6 +67,7 @@ class AppServerUnavailableError extends Error {
 
 class AppServerClient {
   #child: ChildProcessWithoutNullStreams | undefined;
+  #browserSmokeMarkerSeen = false;
   readonly #pending = new Map<
     string,
     { resolve: (message: ProtocolMessage) => void; reject: (error: Error) => void }
@@ -80,6 +81,7 @@ class AppServerClient {
   public start(spec: AppServerLaunchSpec): void {
     if (this.#child) return;
     const environment = cleanChildEnvironment(process.env);
+    const browserSmokeMarker = process.env.CANDY_BROWSER_SMOKE_MARKER;
     if (process.env.CANDY_DESKTOP_RESPONSIVENESS === "1") {
       environment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
       const nativeRunner = process.env.CANDY_RESPONSIVENESS_NATIVE_RUNNER;
@@ -95,6 +97,8 @@ class AppServerClient {
     this.#child = child;
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", (line) => {
+      if (browserSmokeMarker !== undefined && line.includes(browserSmokeMarker))
+        this.#browserSmokeMarkerSeen = true;
       try {
         const message = decodeJsonLine(line);
         if (message.kind !== "event") return;
@@ -115,6 +119,10 @@ class AppServerClient {
       for (const pending of this.#pending.values()) pending.reject(new AppServerUnavailableError());
       this.#pending.clear();
     });
+  }
+
+  public get browserSmokeMarkerSeen(): boolean {
+    return this.#browserSmokeMarkerSeen;
   }
 
   public send(command: CommandEnvelope): Promise<ProtocolMessage> {
@@ -140,6 +148,8 @@ let mainWindow: BrowserWindow | undefined;
 let browserView: WebContentsView | undefined;
 let browserTab: BrowserTabSnapshot | undefined;
 const browserHosts = new Set<string>();
+let browserNavigationId = 0;
+let browserOperationTail: Promise<void> = Promise.resolve();
 let browserNavigationDenied = false;
 let browserPopupDenied = false;
 let browserPermissionDenied = false;
@@ -193,12 +203,23 @@ function browserSnapshotWithRevision(
   };
 }
 
-async function readBrowserPage(): Promise<BrowserTabSnapshot> {
+function enqueueBrowserOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = browserOperationTail.then(operation, operation);
+  browserOperationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function readBrowserPage(expectedNavigationId?: number): Promise<BrowserTabSnapshot> {
   if (!browserView || !browserTab) throw new Error("Browser Workspace has no open tab.");
+  const navigationId = expectedNavigationId ?? browserNavigationId;
   const page = (await browserView.webContents.executeJavaScript(
     "({ title: document.title || '', url: location.href, text: (document.body?.innerText || '').slice(0, 20000) })",
     true,
   )) as { readonly title?: unknown; readonly url?: unknown; readonly text?: unknown };
+  if (navigationId !== browserNavigationId) throw new Error("Browser navigation was superseded.");
   const url = typeof page.url === "string" ? page.url : browserTab.url;
   const parsed = parseCandyBrowserUrl(url);
   browserTab = {
@@ -210,6 +231,10 @@ async function readBrowserPage(): Promise<BrowserTabSnapshot> {
   };
   mainWindow?.webContents.send("browser.update", browserTab);
   return { ...browserTab };
+}
+
+function observeBrowserPage(): Promise<BrowserTabSnapshot> {
+  return enqueueBrowserOperation(() => readBrowserPage());
 }
 
 function assertBrowserAction(value: unknown): asserts value is BrowserAction {
@@ -229,6 +254,7 @@ function assertBrowserAction(value: unknown): asserts value is BrowserAction {
       action.type !== "type" &&
       action.type !== "submit") ||
     !Number.isSafeInteger(action.expectedRevision) ||
+    (action.expectedRevision as number) < 0 ||
     (action.type === "navigate" && typeof action.url !== "string") ||
     (action.type !== "navigate" &&
       (typeof action.target !== "string" ||
@@ -244,7 +270,7 @@ function assertBrowserAction(value: unknown): asserts value is BrowserAction {
     throw new Error("Browser action is invalid.");
 }
 
-async function captureBrowserScreenshot(): Promise<BrowserTabSnapshot> {
+async function captureBrowserScreenshotUnsafe(): Promise<BrowserTabSnapshot> {
   if (!browserView || !browserTab || !browserAttachments)
     throw new Error("Browser Workspace has no open tab.");
   mainWindow?.showInactive();
@@ -275,18 +301,67 @@ async function captureBrowserScreenshot(): Promise<BrowserTabSnapshot> {
   return { ...browserTab };
 }
 
-async function actInBrowser(action: BrowserAction): Promise<BrowserTabSnapshot> {
+function beginBrowserNavigation(parsed: URL): number {
+  if (!browserView) throw new Error("Browser Workspace is unavailable.");
+  browserNavigationId += 1;
+  browserTab = browserSnapshotWithRevision(browserTab, {
+    url: parsed.toString(),
+    title: "",
+    text: "",
+    siteAllowed: true,
+  });
+  browserView.setVisible(true);
+  return browserNavigationId;
+}
+
+function assertAgentBrowserRevision(expectedRevision: number): void {
   if (!browserView || !browserTab) throw new Error("Browser Workspace has no open tab.");
   if (browserTab.control !== "agent") throw new Error("User owns this browser tab.");
-  if (action.expectedRevision !== browserTab.revision)
-    throw new Error("Browser observation is stale.");
+  if (expectedRevision !== browserTab.revision) throw new Error("Browser observation is stale.");
   if (!browserTab.siteAllowed) throw new Error("Browser site permission is required.");
+}
+
+async function navigateBrowserUrlUnsafe(
+  urlValue: unknown,
+  expectedRevision: number,
+): Promise<BrowserTabSnapshot> {
+  assertAgentBrowserRevision(expectedRevision);
+  const parsed = parseCandyBrowserUrl(urlValue);
+  if (!browserHosts.has(parsed.host.toLowerCase()))
+    throw new Error("Browser site permission is required.");
+  const navigationId = beginBrowserNavigation(parsed);
+  await browserView!.webContents.loadURL(parsed.toString());
+  if (!browserTab || browserTab.control !== "agent" || browserTab.revision !== expectedRevision + 1)
+    throw new Error("Browser navigation was invalidated by ownership or revision change.");
+  const result = await readBrowserPage(navigationId);
+  if (!browserTab || browserTab.control !== "agent" || browserTab.revision !== expectedRevision + 1)
+    throw new Error("Browser navigation was invalidated by ownership or revision change.");
+  return result;
+}
+
+function navigateBrowserUrl(
+  urlValue: unknown,
+  expectedRevision: number,
+): Promise<BrowserTabSnapshot> {
+  return enqueueBrowserOperation(() => navigateBrowserUrlUnsafe(urlValue, expectedRevision));
+}
+
+async function actInBrowserUnsafe(action: BrowserAction): Promise<BrowserTabSnapshot> {
+  if (!browserView || !browserTab) throw new Error("Browser Workspace has no open tab.");
+  assertAgentBrowserRevision(action.expectedRevision);
   if (action.type === "navigate") {
     const parsed = parseCandyBrowserUrl(action.url);
     if (!browserHosts.has(parsed.host.toLowerCase()))
       throw new Error("Browser site permission is required.");
+    const navigationId = beginBrowserNavigation(parsed);
     await browserView.webContents.loadURL(parsed.toString());
-    return readBrowserPage();
+    if (
+      !browserTab ||
+      browserTab.control !== "agent" ||
+      browserTab.revision !== action.expectedRevision + 1
+    )
+      throw new Error("Browser navigation was invalidated by ownership or revision change.");
+    return readBrowserPage(navigationId);
   }
   if (action.type === "submit" && !action.confirmed)
     throw new Error("Sensitive browser action requires confirmation.");
@@ -331,24 +406,43 @@ async function actInBrowser(action: BrowserAction): Promise<BrowserTabSnapshot> 
         : "Browser action rejected.",
     );
   await new Promise((resolve) => globalThis.setTimeout(resolve, 25));
+  if (
+    !browserTab ||
+    browserTab.control !== "agent" ||
+    browserTab.revision !== action.expectedRevision
+  )
+    throw new Error("Browser action was invalidated by ownership or revision change.");
   browserTab = { ...browserTab, revision: browserTab.revision + 1 };
-  return readBrowserPage();
+  const current = await readBrowserPage();
+  if (
+    !browserTab ||
+    browserTab.control !== "agent" ||
+    browserTab.revision !== action.expectedRevision + 1
+  )
+    throw new Error("Browser action was invalidated by ownership or revision change.");
+  return current;
 }
 
-async function openBrowserUrl(urlValue: unknown): Promise<BrowserTabSnapshot> {
+function actInBrowser(action: BrowserAction): Promise<BrowserTabSnapshot> {
+  return enqueueBrowserOperation(() => actInBrowserUnsafe(action));
+}
+
+async function openBrowserUrlUnsafe(urlValue: unknown): Promise<BrowserTabSnapshot> {
   if (!browserView) throw new Error("Browser Workspace is unavailable.");
   const parsed = parseCandyBrowserUrl(urlValue);
   if (!browserHosts.has(parsed.host.toLowerCase()))
     throw new Error("Allow this Browser site before opening it.");
-  browserTab = browserSnapshotWithRevision(browserTab, {
-    url: parsed.toString(),
-    title: "",
-    text: "",
-    siteAllowed: true,
-  });
-  browserView.setVisible(true);
+  const navigationId = beginBrowserNavigation(parsed);
   await browserView.webContents.loadURL(parsed.toString());
-  return readBrowserPage();
+  return readBrowserPage(navigationId);
+}
+
+function openBrowserUrl(urlValue: unknown): Promise<BrowserTabSnapshot> {
+  return enqueueBrowserOperation(() => openBrowserUrlUnsafe(urlValue));
+}
+
+function captureBrowserScreenshot(): Promise<BrowserTabSnapshot> {
+  return enqueueBrowserOperation(() => captureBrowserScreenshotUnsafe());
 }
 
 function updateBrowserControl(control: "user" | "agent"): BrowserTabSnapshot {
@@ -507,14 +601,9 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("browser.navigate", async (event, url: unknown, expectedRevision: unknown) => {
     assertTrustedRenderer(event);
-    if (!browserTab || !browserView) throw new Error("Browser Workspace has no open tab.");
-    if (browserTab.control !== "agent") throw new Error("User owns this browser tab.");
-    if (expectedRevision !== browserTab.revision) throw new Error("Browser observation is stale.");
-    const parsed = parseCandyBrowserUrl(url);
-    if (!browserHosts.has(parsed.host.toLowerCase()))
-      throw new Error("Browser site permission is required.");
-    await browserView.webContents.loadURL(parsed.toString());
-    return readBrowserPage();
+    if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0)
+      throw new Error("Browser observation revision is invalid.");
+    return navigateBrowserUrl(url, expectedRevision as number);
   });
   ipcMain.handle("browser.act", async (event, action: unknown) => {
     assertTrustedRenderer(event);
@@ -523,7 +612,7 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("browser.observe", (event) => {
     assertTrustedRenderer(event);
-    return readBrowserPage();
+    return observeBrowserPage();
   });
   ipcMain.handle("browser.screenshot", async (event) => {
     assertTrustedRenderer(event);
@@ -800,7 +889,10 @@ export function createDesktopWindow(): BrowserWindow {
     }
   });
   view.webContents.on("did-finish-load", () => {
-    if (browserTab) void readBrowserPage();
+    if (browserTab)
+      void enqueueBrowserOperation(() => readBrowserPage()).catch(() => {
+        // A superseded navigation is expected during an explicit navigation race.
+      });
   });
   window.contentView.addChildView(view);
   view.setBounds({ x: 360, y: 0, width: 840, height: 800 });
@@ -1474,6 +1566,7 @@ async function runBrowserSmoke(): Promise<void> {
     null,
     { type: "click", target: "", expectedRevision: 0 },
     { type: "click", target: "\0", expectedRevision: 0 },
+    { type: "click", target: "x".repeat(513), expectedRevision: 0 },
     { type: "type", target: "#x", text: "contains\0nul", expectedRevision: 0 },
     { type: "navigate", url: 123, expectedRevision: 0 },
   ])
@@ -1485,6 +1578,30 @@ async function runBrowserSmoke(): Promise<void> {
   const opened = await openBrowserUrl(fixtureUrl);
   if (!opened.text.includes("Candy browser fixture"))
     throw new Error("Browser fixture text was not observed.");
+  if (
+    process.env.CANDY_BROWSER_ADVERSARIAL === "1" &&
+    !opened.text.includes("UNTRUSTED PAGE INSTRUCTION")
+  )
+    throw new Error("Browser prompt-injection fixture text was not observed as untrusted content.");
+  if (process.env.CANDY_BROWSER_ADVERSARIAL === "1") {
+    const promptTrap = await browserView.webContents.executeJavaScript(
+      "window.__promptInjectionTriggered === true",
+      true,
+    );
+    if (promptTrap === true)
+      throw new Error(
+        "Browser prompt-injection text triggered an action without an explicit request.",
+      );
+    await expectBrowserRejection(
+      () =>
+        actInBrowser({
+          type: "click",
+          target: "javascript:document.body.innerHTML='injected'",
+          expectedRevision: opened.revision,
+        }),
+      "Browser accepted a hostile selector target.",
+    );
+  }
   const clicked = await actInBrowser({
     type: "click",
     target: "#fixture-click",
@@ -1569,6 +1686,44 @@ async function runBrowserSmoke(): Promise<void> {
     staleRejected = true;
   }
   if (!staleRejected) throw new Error("Browser stale action was not rejected.");
+  if (process.env.CANDY_BROWSER_ADVERSARIAL === "1") {
+    const race = await executeRenderer<
+      readonly {
+        readonly status: "fulfilled" | "rejected";
+        readonly url?: unknown;
+        readonly revision?: unknown;
+      }[]
+    >(
+      `(async () => {
+        const current = await window.candy.browser.observe();
+        const results = await Promise.allSettled([
+          window.candy.browser.navigate(${JSON.stringify(`${fixture.origin}/race-slow`)}, current.revision),
+          window.candy.browser.navigate(${JSON.stringify(`${fixture.origin}/race-fast`)}, current.revision),
+        ]);
+        return results.map((result) => result.status === 'fulfilled'
+          ? { status: result.status, url: result.value.url, revision: result.value.revision }
+          : { status: result.status });
+      })()`,
+    );
+    const accepted = race.filter((result) => result.status === "fulfilled");
+    if (
+      accepted.length !== 1 ||
+      accepted[0]?.url !== `${fixture.origin}/race-slow` ||
+      accepted[0]?.revision !== submitted.revision + 1
+    )
+      throw new Error("Browser navigation race did not consume one observation revision.");
+    const restored = await openBrowserUrl(fixtureUrl);
+    const inFlight = actInBrowser({
+      type: "click",
+      target: "#fixture-click",
+      expectedRevision: restored.revision,
+    });
+    const user = updateBrowserControl("user");
+    const ownershipRace = await Promise.allSettled([inFlight]);
+    if (ownershipRace[0]?.status !== "rejected" || user.control !== "user")
+      throw new Error("Browser action survived an explicit Take Control ownership transfer.");
+    updateBrowserControl("agent");
+  }
   const screenshot = await captureBrowserScreenshot();
   if (!screenshot.screenshotAttachmentId?.startsWith("att_"))
     throw new Error("Browser screenshot was not stored as an attachment.");
@@ -1610,6 +1765,16 @@ async function runBrowserSmoke(): Promise<void> {
     throw new Error(
       `Browser security or explicit Take Control smoke failed: navigation=${browserNavigationDenied}, popup=${browserPopupDenied}, permission=${browserPermissionDenied}, download=${browserDownloadPrevented}, user=${user.control}, agent=${agent.control}`,
     );
+  if (
+    process.env.CANDY_BROWSER_ADVERSARIAL === "1" &&
+    (await browserView.webContents.executeJavaScript(
+      "window.__promptInjectionTriggered === true",
+      true,
+    ))
+  )
+    throw new Error("Browser prompt-injection trap was activated without an explicit action.");
+  if (process.env.CANDY_BROWSER_ADVERSARIAL === "1" && appServer?.browserSmokeMarkerSeen)
+    throw new Error("Browser page content appeared in the app-server protocol stream.");
   const platformLabel = process.platform === "darwin" ? "macOS" : "Windows";
   console.log(
     `packaged ${platformLabel} Browser Workspace smoke ok: allowlist, typed actions, adversarial rejection, navigation, popup, permission, download, and Take Control`,
