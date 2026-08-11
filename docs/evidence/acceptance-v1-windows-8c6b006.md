@@ -49,7 +49,7 @@ No real provider credential, OS credential value, browser authentication data, p
 - Windows code-signing identity (approved certificate with Code Signing EKU, PFX, or Trusted Signing) for `package:desktop:windows:release` and the install/upgrade/rollback/uninstall verifier.
 - Candy-owned MiniMax `minimax-token-plan` credential for `npm run gate:live:minimax` (LIVE-MM-01..05).
 - User-authorized DeepSeek account mutation window for the existing Candy `deepseek` Credential Manager account.
-- OS-level no-network and arbitrary-command workspace containment, post-resume reparse/race protection, packaged/signed runner evidence, and independent security review (G2).
+- OS-level no-network and arbitrary-command workspace containment, post-resume reparse/race protection, packaged/signed runner evidence, and independent security review (G2). This session runs at Medium integrity without `SeCreateAppContainerPrivilege`; `New-AppContainerProfile` fails and WFP filters require elevation, so AppContainer/WFP containment cannot be implemented or verified without an elevated environment or an external security reviewer.
 - Reliable Browser physical input-origin detection; explicit Take Control remains the accepted fallback.
 - macOS `26.5.2` Apple Silicon parity and Apple signing/notarization for the cross-platform release claim.
 - Product-owner review and explicit approval of the completed evidence package.
