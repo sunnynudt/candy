@@ -273,6 +273,7 @@ export class SQLiteTaskStore {
         PRAGMA user_version = 10;
       `);
     } else if (schemaVersion !== 10) {
+      this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }

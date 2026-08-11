@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   InMemoryExecutionLeaseRepository,
@@ -333,5 +343,84 @@ test("sqlite task metadata reorders queued tasks atomically across restart", () 
     reopened.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("sqlite task store rejects unknown future schema", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-future-schema-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    mkdirSync(path.dirname(databasePath), { recursive: true });
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("PRAGMA user_version = 11");
+    raw.close();
+    assert.throws(
+      () => new SQLiteTaskStore(databasePath),
+      /Unsupported task metadata schema version/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+});
+
+test("sqlite task store fails closed on a corrupted database", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-corrupt-db-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    mkdirSync(path.dirname(databasePath), { recursive: true });
+    writeFileSync(databasePath, "not a sqlite database file", "utf8");
+    assert.throws(
+      () => new SQLiteTaskStore(databasePath),
+      /not a database|SQLITE_NOTADB|file is not a database/u,
+    );
+    assert.equal(readFileSync(databasePath, "utf8"), "not a sqlite database file");
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+});
+
+test("sqlite task data survives file-level backup and restore", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-backup-restore-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  const backupDirectory = path.join(directory, "backup");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    store.create("task-backup", "auto", 1);
+    store.appendTranscript("task-backup", [{ role: "user", text: "backup fixture" }]);
+    store.recordRun({
+      taskId: "task-backup",
+      rounds: 1,
+      evidenceCount: 1,
+      completed: true,
+      stopReason: "validator_succeeded",
+    });
+    store.close();
+
+    mkdirSync(backupDirectory, { recursive: true });
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const source = `${databasePath}${suffix}`;
+      if (existsSync(source))
+        copyFileSync(source, path.join(backupDirectory, `tasks.sqlite${suffix}`));
+    }
+    const restored = new SQLiteTaskStore(path.join(backupDirectory, "tasks.sqlite"));
+    assert.equal(restored.get("task-backup")?.state, "queued");
+    assert.equal(restored.transcript("task-backup")?.at(-1)?.text, "backup fixture");
+    assert.equal(restored.getRun("task-backup")?.stopReason, "validator_succeeded");
+    restored.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+});
+
+test("sqlite task store fails closed when storage cannot be opened", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-storage-failure-"));
+  const blocked = path.join(directory, "state");
+  writeFileSync(blocked, "not a directory", "utf8");
+  const databasePath = path.join(blocked, "tasks.sqlite");
+  try {
+    assert.throws(() => new SQLiteTaskStore(databasePath));
+    assert.equal(readFileSync(blocked, "utf8"), "not a directory");
+  } finally {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
