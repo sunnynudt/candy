@@ -83,6 +83,8 @@ const api: DesktopPreloadApi = {
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["snapshot"]>>
       >,
     send: (command) => ipcRenderer.invoke("task.send", command) as Promise<void>,
+    steer: (input) => ipcRenderer.invoke("task.steer", input) as Promise<void>,
+    approval: (input) => ipcRenderer.invoke("task.approval", input) as Promise<void>,
     apply: (input) =>
       ipcRenderer.invoke("task.apply", input) as Promise<
         Awaited<ReturnType<DesktopPreloadApi["tasks"]["apply"]>>

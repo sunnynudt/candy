@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { PiAgentEngineInput } from "@candy/pi-adapter";
-import { type CommandEnvelope, type ProtocolMessage } from "@candy/protocol";
+import { type CommandEnvelope, type EventEnvelope, type ProtocolMessage } from "@candy/protocol";
 import { DEFAULT_CANDY_MODEL, SQLiteTaskStore } from "@candy/platform";
 import {
   AttachmentStore,
+  LongRunningControlError,
   type AgentEngine,
   type AgentTurnInput,
   type ApplyChangesInput,
@@ -30,6 +31,10 @@ function eventTypes(messages: readonly ProtocolMessage[]): string[] {
   return messages.flatMap((message) => (message.kind === "event" ? [message.event.type] : []));
 }
 
+type SnapshotEnvelope = Omit<EventEnvelope, "event"> & {
+  readonly event: Extract<EventEnvelope["event"], { readonly type: "snapshot" }>;
+};
+
 async function waitForCompletion(
   background: readonly ProtocolMessage[],
   taskId: string,
@@ -47,6 +52,26 @@ async function waitForCompletion(
     attempt += 1
   )
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
+}
+
+async function waitForSnapshotState(
+  background: readonly ProtocolMessage[],
+  taskId: string,
+  state: string,
+): Promise<SnapshotEnvelope> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const found = background.findLast(
+      (message) =>
+        message.kind === "event" &&
+        message.event.type === "snapshot" &&
+        message.event.snapshot.taskId === taskId &&
+        message.event.snapshot.state === state,
+    );
+    if (found?.kind === "event" && found.event.type === "snapshot")
+      return found as SnapshotEnvelope;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Task ${taskId} did not reach ${state}.`);
 }
 
 function createGitFixture(root: string): { readonly repository: string; readonly base: string } {
@@ -333,10 +358,111 @@ test("app-server runs auto validator tasks through normal turns and persists bou
         completed: true,
         stopReason: "validator_succeeded",
         lastFingerprintHash: progress.lastFingerprintHash,
+        evidenceSummary: "attempt-2",
       });
     }
     assert.equal(turns, 2);
     assert.equal(validatorCalls, 2);
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("app-server pauses for approval, applies steering to a new turn, and projects redacted final evidence", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-long-running-approval-"));
+  const prompts: string[] = [];
+  let firstTurn = true;
+  let validatorCalls = 0;
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    engine: {
+      async *runTurn(input: AgentTurnInput, signal: AbortSignal) {
+        prompts.push(input.prompt);
+        if (firstTurn) {
+          firstTurn = false;
+          throw new LongRunningControlError("approval_required");
+        }
+        if (signal.aborted) throw signal.reason;
+        yield { type: "assistant.delta" as const, text: input.prompt };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    activeSecrets: () => ["fixture-secret"],
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+    validatorRunner: {
+      async run() {
+        validatorCalls += 1;
+        return {
+          ok: validatorCalls === 2,
+          fingerprint: `validator-${validatorCalls}-fixture-secret`,
+          evidence: `${validatorCalls === 2 ? "validator-pass" : "validator-fail"} fixture-secret`,
+          durationMs: 1,
+        };
+      },
+    },
+  });
+  try {
+    await controller.dispatch(
+      command("task-approval-steer", "approval-create", 0, {
+        type: "task.create",
+        prompt: "base outcome",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        validator: { executable: process.execPath, args: ["-e", "process.exit(1)"] },
+      }),
+    );
+    await controller.dispatch(
+      command("task-approval-steer", "approval-run", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const waiting = await waitForSnapshotState(
+      background,
+      "task-approval-steer",
+      "waiting_approval",
+    );
+    assert.equal(waiting.event.snapshot.progress?.stopReason, "approval_required");
+    assert.equal(waiting.event.snapshot.approvalId, "approval:task-approval-steer:2");
+
+    await controller.dispatch(
+      command("task-approval-steer", "approval-steer", 2, {
+        type: "task.steer",
+        text: "steer-next-round",
+      }),
+    );
+    const approved = await controller.dispatch(
+      command("task-approval-steer", "approval-approve", 2, {
+        type: "approval.respond",
+        approvalId: waiting.event.snapshot.approvalId,
+        decision: "approve",
+      }),
+      (message) => background.push(message),
+    );
+    const approvalSnapshot = approved.at(-1);
+    assert.ok(approvalSnapshot?.kind === "event" && approvalSnapshot.event.type === "snapshot");
+    if (approvalSnapshot?.kind === "event" && approvalSnapshot.event.type === "snapshot")
+      assert.equal(approvalSnapshot.event.snapshot.state, "running");
+
+    await waitForCompletion(background, "task-approval-steer");
+    const completed = await waitForSnapshotState(background, "task-approval-steer", "completed");
+    assert.equal(validatorCalls, 2);
+    assert.deepEqual(prompts, ["base outcome", "steer-next-round", "base outcome"]);
+    assert.equal(completed.event.snapshot.progress?.stopReason, "validator_succeeded");
+    assert.equal(completed.event.snapshot.progress?.evidenceSummary, "validator-pass [REDACTED]");
+    assert.equal(JSON.stringify(background).includes("fixture-secret"), false);
   } finally {
     controller.close();
     await rm(workspace, { recursive: true, force: true });

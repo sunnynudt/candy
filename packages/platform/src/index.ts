@@ -98,6 +98,7 @@ export interface TaskRunMetadata {
   readonly completed: boolean;
   readonly stopReason: PersistedRunStopReason;
   readonly lastFingerprintHash?: string;
+  readonly evidenceSummary?: string;
 }
 
 /**
@@ -146,9 +147,10 @@ export class SQLiteTaskStore {
         evidence_count INTEGER NOT NULL,
         completed INTEGER NOT NULL,
         stop_reason TEXT NOT NULL,
-        last_fingerprint_hash TEXT
+        last_fingerprint_hash TEXT,
+        evidence_summary TEXT
       );
-      PRAGMA user_version = 8;
+      PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
@@ -164,9 +166,10 @@ export class SQLiteTaskStore {
           evidence_count INTEGER NOT NULL,
           completed INTEGER NOT NULL,
           stop_reason TEXT NOT NULL,
-          last_fingerprint_hash TEXT
+          last_fingerprint_hash TEXT,
+          evidence_summary TEXT
         );
-        PRAGMA user_version = 8;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 2) {
       this.#database.exec(`
@@ -176,7 +179,8 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 3) {
       this.#database.exec(`
@@ -185,7 +189,8 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 4) {
       this.#database.exec(`
@@ -193,27 +198,36 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 5) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN validator_json TEXT;
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 6) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN workspace_baseline TEXT;
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
     } else if (schemaVersion === 7) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN worktree_path TEXT;
-        PRAGMA user_version = 8;
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
       `);
-    } else if (schemaVersion !== 8) {
+    } else if (schemaVersion === 8) {
+      this.#database.exec(`
+        ALTER TABLE task_runs ADD COLUMN evidence_summary TEXT;
+        PRAGMA user_version = 9;
+      `);
+    } else if (schemaVersion !== 9) {
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
   }
@@ -387,17 +401,24 @@ export class SQLiteTaskStore {
     ) {
       throw new Error("Task run fingerprint hash is invalid.");
     }
+    if (
+      progress.evidenceSummary !== undefined &&
+      (progress.evidenceSummary.length > 4_096 || progress.evidenceSummary.includes("\0"))
+    ) {
+      throw new Error("Task run evidence summary is invalid.");
+    }
     this.#database
       .prepare(
         `INSERT INTO task_runs
-          (task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash)
-         VALUES (?, ?, ?, ?, ?, ?)
+          (task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash, evidence_summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(task_id) DO UPDATE SET
           rounds = excluded.rounds,
           evidence_count = excluded.evidence_count,
           completed = excluded.completed,
           stop_reason = excluded.stop_reason,
-          last_fingerprint_hash = excluded.last_fingerprint_hash`,
+          last_fingerprint_hash = excluded.last_fingerprint_hash,
+          evidence_summary = excluded.evidence_summary`,
       )
       .run(
         progress.taskId,
@@ -406,13 +427,14 @@ export class SQLiteTaskStore {
         progress.completed ? 1 : 0,
         progress.stopReason,
         progress.lastFingerprintHash ?? null,
+        progress.evidenceSummary ?? null,
       );
   }
 
   public getRun(taskId: string): TaskRunMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash FROM task_runs WHERE task_id = ?",
+        "SELECT task_id, rounds, evidence_count, completed, stop_reason, last_fingerprint_hash, evidence_summary FROM task_runs WHERE task_id = ?",
       )
       .get(taskId);
     if (row === undefined) return undefined;
@@ -425,6 +447,9 @@ export class SQLiteTaskStore {
       ...(row.last_fingerprint_hash === null
         ? {}
         : { lastFingerprintHash: String(row.last_fingerprint_hash) }),
+      ...(row.evidence_summary === null || row.evidence_summary === undefined
+        ? {}
+        : { evidenceSummary: String(row.evidence_summary) }),
     };
   }
 

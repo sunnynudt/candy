@@ -33,6 +33,7 @@ export interface TaskProgress {
   readonly completed: boolean;
   readonly stopReason: TaskRunStopReason;
   readonly lastFingerprintHash?: string;
+  readonly evidenceSummary?: string;
 }
 
 export interface TaskSnapshot {
@@ -47,6 +48,7 @@ export interface TaskSnapshot {
   readonly workspaceState?: "local" | "worktree";
   readonly worktreePath?: string;
   readonly ownerId?: string;
+  readonly approvalId?: string;
   readonly progress?: TaskProgress;
 }
 
@@ -71,6 +73,11 @@ export interface ValidatorSpec {
 
 export interface TaskActionCommand {
   readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
+}
+
+export interface TaskSteerCommand {
+  readonly type: "task.steer";
+  readonly text: string;
 }
 
 export interface TaskReorderCommand {
@@ -99,6 +106,7 @@ export type RuntimeCommand =
   | SnapshotCommand
   | CreateTaskCommand
   | TaskActionCommand
+  | TaskSteerCommand
   | TaskReorderCommand
   | WorkspaceApplyCommand
   | WorkspaceDiscardCommand
@@ -298,6 +306,7 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   }
   if (value.worktreePath !== undefined)
     assertWorkspacePath(value.worktreePath, "snapshot.worktreePath");
+  if (value.approvalId !== undefined) assertString(value.approvalId, "snapshot.approvalId");
   if (value.progress !== undefined) validateTaskProgress(value.progress);
 }
 
@@ -336,6 +345,17 @@ function validateTaskProgress(value: unknown): asserts value is TaskProgress {
       "snapshot.progress.lastFingerprintHash is invalid.",
     );
   }
+  if (
+    value.evidenceSummary !== undefined &&
+    (typeof value.evidenceSummary !== "string" ||
+      value.evidenceSummary.length > 4_096 ||
+      value.evidenceSummary.includes("\0"))
+  ) {
+    throw new ProtocolValidationError(
+      "invalid_message",
+      "snapshot.progress.evidenceSummary is invalid.",
+    );
+  }
 }
 
 function validateCommand(value: unknown): asserts value is RuntimeCommand {
@@ -350,6 +370,12 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     value.type === "task.resume"
   )
     return;
+  if (value.type === "task.steer") {
+    assertString(value.text, "command.text");
+    if (value.text.length > 100_000 || value.text.includes("\0"))
+      throw new ProtocolValidationError("invalid_message", "command.text is too large.");
+    return;
+  }
   if (value.type === "task.reorder") {
     assertString(value.beforeTaskId, "command.beforeTaskId");
     return;

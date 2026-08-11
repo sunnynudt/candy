@@ -88,6 +88,18 @@ class AppServerClient {
       if (nativeRunner !== undefined && isAbsolute(nativeRunner))
         environment.CANDY_SANDBOX_RUNNER = nativeRunner;
     }
+    if (process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1") {
+      environment.CANDY_LONG_RUNNING_SMOKE = "1";
+      const nativeRunner = process.env.CANDY_SANDBOX_RUNNER;
+      if (nativeRunner !== undefined && isAbsolute(nativeRunner))
+        environment.CANDY_SANDBOX_RUNNER = nativeRunner;
+      const validatorExecutable = process.env.CANDY_LONG_RUNNING_VALIDATOR_EXECUTABLE;
+      const validatorArgs = process.env.CANDY_LONG_RUNNING_VALIDATOR_ARGS;
+      if (validatorExecutable !== undefined && isAbsolute(validatorExecutable))
+        environment.CANDY_LONG_RUNNING_VALIDATOR_EXECUTABLE = validatorExecutable;
+      if (validatorArgs !== undefined && validatorArgs.length <= 100_000)
+        environment.CANDY_LONG_RUNNING_VALIDATOR_ARGS = validatorArgs;
+    }
     const child = spawn(spec.runtimeExecutable, [spec.entrypoint], {
       cwd: dirname(spec.entrypoint),
       env: environment,
@@ -497,6 +509,9 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...(event.event.snapshot.worktreePath === undefined
         ? {}
         : { worktreePath: event.event.snapshot.worktreePath }),
+      ...(event.event.snapshot.approvalId === undefined
+        ? {}
+        : { approvalId: event.event.snapshot.approvalId }),
       ...(event.event.snapshot.progress === undefined
         ? {}
         : { progress: event.event.snapshot.progress }),
@@ -556,6 +571,11 @@ function handleAppServerEvent(event: EventEnvelope): void {
 function validatePrompt(prompt: unknown): asserts prompt is string {
   if (typeof prompt !== "string" || prompt.length === 0 || prompt.length > 1_000_000)
     throw new Error("Invalid task prompt.");
+}
+
+function validateSteering(text: unknown): asserts text is string {
+  if (typeof text !== "string" || text.length === 0 || text.length > 100_000 || text.includes("\0"))
+    throw new Error("Invalid task steering.");
 }
 
 function workspaceSelectionFile(): string {
@@ -773,6 +793,55 @@ function registerIpcHandlers(): void {
     },
   );
   ipcMain.handle(
+    "task.steer",
+    async (
+      event,
+      input: DesktopPreloadApi["tasks"] extends { steer: (value: infer T) => unknown } ? T : never,
+    ) => {
+      assertTrustedRenderer(event);
+      assertTaskId(input.taskId);
+      validateSteering(input.text);
+      if (!appServer) throw new AppServerUnavailableError();
+      await appServer.send({
+        v: 1,
+        kind: "command",
+        commandId: randomUUID(),
+        taskId: input.taskId,
+        expectedRevision: input.expectedRevision,
+        command: { type: "task.steer", text: input.text },
+      });
+    },
+  );
+  ipcMain.handle(
+    "task.approval",
+    async (
+      event,
+      input: DesktopPreloadApi["tasks"] extends { approval: (value: infer T) => unknown }
+        ? T
+        : never,
+    ) => {
+      assertTrustedRenderer(event);
+      assertTaskId(input.taskId);
+      if (typeof input.approvalId !== "string" || input.approvalId.length === 0)
+        throw new Error("Invalid approval id.");
+      if (input.decision !== "approve" && input.decision !== "deny")
+        throw new Error("Invalid approval decision.");
+      if (!appServer) throw new AppServerUnavailableError();
+      await appServer.send({
+        v: 1,
+        kind: "command",
+        commandId: randomUUID(),
+        taskId: input.taskId,
+        expectedRevision: input.expectedRevision,
+        command: {
+          type: "approval.respond",
+          approvalId: input.approvalId,
+          decision: input.decision,
+        },
+      });
+    },
+  );
+  ipcMain.handle(
     "task.apply",
     async (
       event,
@@ -903,7 +972,8 @@ export function createDesktopWindow(): BrowserWindow {
       encodeURIComponent(
         desktopShellHtml(
           nonce,
-          process.env.CANDY_DESKTOP_RESPONSIVENESS === "1",
+          process.env.CANDY_DESKTOP_RESPONSIVENESS === "1" ||
+            process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1",
           process.env.CANDY_DESKTOP_SMOKE === "1" ||
             process.env.CANDY_DESKTOP_RESPONSIVENESS === "1",
         ),
@@ -977,6 +1047,17 @@ requestAnimationFrame(recordFrame);`
   const taskStatus = document.getElementById('taskStatus');
   const taskProgress = document.getElementById('taskProgress');
   const taskActions = document.getElementById('taskActions');
+  const evidenceSummary = document.createElement('pre');
+  evidenceSummary.className = 'muted';
+  evidenceSummary.id = 'taskEvidence';
+  evidenceSummary.textContent = 'No validator evidence yet.';
+  taskActions.after(evidenceSummary);
+  const steeringInput = document.createElement('input');
+  steeringInput.placeholder = 'Steer the next agent turn';
+  const steerButton = document.createElement('button');
+  steerButton.textContent = 'Steer next turn';
+  const controlButtons = document.createElement('div');
+  taskActions.append(steeringInput, steerButton, controlButtons);
   const applyChanges = document.getElementById('applyChanges');
   const discardWorktree = document.getElementById('discardWorktree');
   const transcript = document.getElementById('transcript');
@@ -1029,12 +1110,28 @@ requestAnimationFrame(recordFrame);`
     taskProgress.textContent = projection.progress
       ? 'Run progress · round ' + projection.progress.rounds + ' · evidence ' + projection.progress.evidenceCount + ' · ' + projection.progress.stopReason
       : '';
+    evidenceSummary.textContent = projection.progress?.evidenceSummary || 'No validator evidence yet.';
     transcript.textContent = projection.transcript.map((entry) => entry.role.toUpperCase() + ': ' + entry.text).join('\\n') || 'No transcript yet.';
     diff.textContent = projection.changedFiles.length > 0
       ? 'Changed files:\\n' + projection.changedFiles.join('\\n') + '\\n\\nDiff:\\n' + (projection.diff || '(no tracked patch)') + (projection.diffTruncated ? '\\n\\nDiff is truncated; Apply is unavailable until the workspace is reviewed in smaller changes.' : '')
       : 'No diff yet.';
     applyChanges.disabled = !(projection.state === 'completed' && projection.workspaceState === 'worktree' && projection.changedFiles.length > 0 && projection.workspaceBaseline && !projection.diffTruncated);
     discardWorktree.disabled = !(projection.state === 'completed' && projection.workspaceState === 'worktree');
+    controlButtons.replaceChildren();
+    for (const type of ['task.run','task.pause','task.resume','task.cancel']) {
+      const button = document.createElement('button');
+      button.textContent = type.replace('task.','');
+      button.addEventListener('click', () => send(type));
+      controlButtons.append(button);
+    }
+    if (projection.state === 'waiting_approval' && projection.approvalId) {
+      for (const decision of ['approve', 'deny']) {
+        const button = document.createElement('button');
+        button.textContent = decision;
+        button.addEventListener('click', () => window.candy.tasks.approval({ taskId: projection.taskId, expectedRevision: projection.revision, approvalId: projection.approvalId, decision }).catch((error) => { taskStatus.textContent = 'Approval failed: ' + error.message; }));
+        controlButtons.append(button);
+      }
+    }
   };
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;
@@ -1042,8 +1139,15 @@ requestAnimationFrame(recordFrame);`
     try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds, readValidator())); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
   });
   attach.addEventListener('click', async () => { const id = await window.candy.attachments.pickImage(); if (id) { attachmentIds.push(id); attachments.textContent = attachmentIds.length + ' image attached'; } });
+  steerButton.addEventListener('click', async () => {
+    if (!current || !steeringInput.value.trim()) return;
+    try {
+      await window.candy.tasks.steer({ taskId: current.taskId, expectedRevision: current.revision, text: steeringInput.value });
+      steeringInput.value = '';
+      taskStatus.textContent = 'Steering queued for the next agent turn.';
+    } catch (error) { taskStatus.textContent = 'Steering failed: ' + error.message; }
+  });
   const send = (type) => current && window.candy.tasks.send({ taskId: current.taskId, expectedRevision: current.revision, type }).catch((error) => { taskStatus.textContent = error.message; });
-  for (const type of ['task.run','task.pause','task.resume','task.cancel']) { const button = document.createElement('button'); button.textContent = type.replace('task.',''); button.addEventListener('click', () => send(type)); taskActions.appendChild(button); }
   applyChanges.addEventListener('click', async () => {
     if (!current) return;
     try {
@@ -1114,6 +1218,13 @@ export function startDesktop(): void {
         );
         app.exit(1);
       });
+    else if (process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1")
+      void runDesktopLongRunningSmoke().catch((error: unknown) => {
+        console.error(
+          error instanceof Error ? error.message : "Desktop long-running smoke failed.",
+        );
+        app.exit(1);
+      });
     else if (process.env.CANDY_DESKTOP_SMOKE === "1") void runDesktopSmoke();
   });
   app.on("before-quit", () => {
@@ -1132,6 +1243,107 @@ async function runDesktopSmoke(): Promise<void> {
     expectedRevision: 0,
     command: { type: "snapshot" },
   });
+  app.quit();
+}
+
+async function runDesktopLongRunningSmoke(): Promise<void> {
+  if (!appServer || !mainWindow)
+    throw new Error("Desktop long-running smoke requires the app-server and visible window.");
+  const workspace = process.env.CANDY_LONG_RUNNING_WORKSPACE;
+  if (workspace === undefined || !isAbsolute(workspace))
+    throw new Error("Desktop long-running workspace is unavailable.");
+  assertWorkspacePath(workspace);
+  const validatorExecutable = process.env.CANDY_LONG_RUNNING_VALIDATOR_EXECUTABLE;
+  const validatorArgsValue = process.env.CANDY_LONG_RUNNING_VALIDATOR_ARGS;
+  if (validatorExecutable === undefined || !isAbsolute(validatorExecutable))
+    throw new Error("Desktop long-running validator is unavailable.");
+  let validatorArgs: unknown;
+  try {
+    validatorArgs = JSON.parse(validatorArgsValue ?? "[]");
+  } catch {
+    throw new Error("Desktop long-running validator arguments are invalid.");
+  }
+  const validator = { executable: validatorExecutable, args: validatorArgs };
+  assertValidatorSpec(validator);
+  selectedWorkspacePath = workspace;
+  await waitForDesktopRenderer();
+
+  const taskId = "desktop-long-running-smoke";
+  const waiting = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.state === "waiting_approval",
+  );
+  await appServer.send(
+    desktopCommand(taskId, "desktop-long-running-create", 0, {
+      type: "task.create",
+      prompt: "Candy packaged long-running fixture",
+      approvalProfile: "auto",
+      workspacePath: workspace,
+      model: DEFAULT_CANDY_MODEL,
+      attachmentIds: [],
+      validator,
+    }),
+  );
+  await appServer.send(desktopCommand(taskId, "desktop-long-running-run", 0, { type: "task.run" }));
+  const waitingObservation = await waiting;
+  if (waitingObservation.event.event.type !== "snapshot")
+    throw new Error("Desktop long-running approval snapshot is unavailable.");
+  const waitingSnapshot = waitingObservation.event.event.snapshot;
+  if (waitingSnapshot.approvalId === undefined)
+    throw new Error("Desktop long-running approval id is unavailable.");
+
+  await executeRenderer(
+    `window.candy.tasks.steer(${JSON.stringify({
+      taskId,
+      expectedRevision: waitingSnapshot.revision,
+      text: "steer-next-turn",
+    })})`,
+  );
+  const completed = waitForDesktopEvent(
+    taskId,
+    (observation) =>
+      observation.event.event.type === "snapshot" &&
+      observation.event.event.snapshot.state === "completed",
+  );
+  await executeRenderer(
+    `window.candy.tasks.approval(${JSON.stringify({
+      taskId,
+      expectedRevision: waitingSnapshot.revision,
+      approvalId: waitingSnapshot.approvalId,
+      decision: "approve",
+    })})`,
+  );
+  const completedObservation = await completed;
+  if (completedObservation.event.event.type !== "snapshot")
+    throw new Error("Desktop long-running completion snapshot is unavailable.");
+  const completedSnapshot = completedObservation.event.event.snapshot;
+  const deadline = Date.now() + 10_000;
+  let rendered: { readonly status: string; readonly evidence: string; readonly transcript: string };
+  for (;;) {
+    rendered = await executeRenderer(
+      "({ status: document.getElementById('taskStatus')?.textContent || '', evidence: document.getElementById('taskEvidence')?.textContent || '', transcript: document.getElementById('transcript')?.textContent || '' })",
+    );
+    if (
+      rendered.status.includes("completed") &&
+      rendered.evidence.includes("validator-pass") &&
+      rendered.transcript.includes("steer-next-turn")
+    )
+      break;
+    if (Date.now() >= deadline)
+      throw new Error("Packaged Desktop did not project the final long-running evidence.");
+    await delay(20);
+  }
+  console.log(
+    `CANDY_LONG_RUNNING_RESULT ${JSON.stringify({
+      state: completedSnapshot.state,
+      approvalId: waitingSnapshot.approvalId,
+      evidenceSummary: completedSnapshot.progress?.evidenceSummary,
+      rendererEvidence: rendered.evidence,
+      steeringProjected: rendered.transcript.includes("steer-next-turn"),
+    })}`,
+  );
   app.quit();
 }
 

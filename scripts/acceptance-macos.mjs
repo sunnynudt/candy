@@ -35,6 +35,7 @@ const steps = [
   "check",
   "check:native",
   "smoke:sandbox:macos",
+  "smoke:long-running:macos",
   "smoke:runtime-session-remap",
   "smoke:recovery:macos",
   "smoke:safe-edit",
@@ -45,6 +46,7 @@ const steps = [
   "smoke:desktop:packaged",
   "smoke:desktop:packaged:recovery:macos",
   "smoke:desktop:packaged:handoff:macos",
+  "smoke:desktop:packaged:long-running:macos",
   "smoke:browser:macos",
   "measure:macos:responsiveness",
 ];

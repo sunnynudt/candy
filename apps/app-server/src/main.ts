@@ -186,6 +186,7 @@ export class AppServerController {
   readonly #handoffs = new Map<string, WorkspaceHandoff>();
   readonly #commands = new CommandLedger();
   readonly #prompts = new Map<string, string>();
+  readonly #steering = new Map<string, string[]>();
   readonly #active = new Map<string, ActiveTask>();
   readonly #pendingRuns: PendingRun[] = [];
   readonly #requestedRuns = new Set<string>();
@@ -309,6 +310,15 @@ export class AppServerController {
       const snapshot = reordered.find((task) => task.taskId === message.taskId);
       return [this.snapshot(snapshot ?? existing)];
     }
+    if (command.type === "task.steer") {
+      if (existing.state === "completed" || existing.state === "cancelled")
+        throw new Error(`Task ${message.taskId} is not steerable.`);
+      if (existing.ownerId !== undefined && existing.ownerId !== this.#ownerId)
+        return [this.snapshot(existing)];
+      const queued = this.#steering.get(message.taskId) ?? [];
+      this.#steering.set(message.taskId, [...queued, command.text]);
+      return [this.snapshot(existing)];
+    }
     if (command.type === "task.run" || command.type === "task.resume") {
       if (existing.state === "running") return [this.snapshot(existing)];
       if (
@@ -356,6 +366,10 @@ export class AppServerController {
         this.#requestedRuns.delete(message.taskId);
       }
       const nextState = command.type === "task.pause" ? "paused" : "cancelled";
+      this.recordStopProgress(
+        message.taskId,
+        command.type === "task.pause" ? "user_stop" : "cancelled",
+      );
       const updated = this.#store.transition(message.taskId, message.expectedRevision, nextState);
       return [this.stateChanged(updated, "user"), this.snapshot(updated)];
     }
@@ -423,7 +437,26 @@ export class AppServerController {
     }
 
     if (command.type === "approval.respond") {
-      return [this.snapshot(existing)];
+      if (existing.state !== "waiting_approval")
+        throw new Error("Task is not waiting for approval.");
+      if (command.approvalId !== approvalIdFor(existing.taskId, existing.revision))
+        throw new Error("Approval request is stale.");
+      const active = this.#active.get(message.taskId);
+      if (active) await active.done;
+      if (command.decision === "deny") {
+        this.recordStopProgress(message.taskId, "approval_required");
+        const paused = this.#store.transition(message.taskId, message.expectedRevision, "paused");
+        return [this.stateChanged(paused, "approval"), this.snapshot(paused)];
+      }
+      const running = this.#store.transition(
+        message.taskId,
+        message.expectedRevision,
+        "running",
+        this.#ownerId,
+      );
+      const startEvents = [this.stateChanged(running, "approval"), this.snapshot(running)];
+      this.startTask(message.taskId, emit);
+      return startEvents;
     }
 
     throw new Error("Unsupported app-server command.");
@@ -476,8 +509,17 @@ export class AppServerController {
             : (() => {
                 throw new Error("Attachment storage is unavailable after restart.");
               })();
-      const runTurn = (): Promise<void> =>
-        this.runAgentTurn(taskId, current, prompt, images, active.abort.signal, emit);
+      const runTurn = (): Promise<void> => {
+        const steering = this.consumeSteering(taskId);
+        return this.runAgentTurn(
+          taskId,
+          current,
+          steering ?? prompt,
+          images,
+          active.abort.signal,
+          emit,
+        );
+      };
 
       if (current.approvalProfile === "auto" && current.validator !== undefined) {
         const longRunning = new LongRunningTaskRunner(3, 2);
@@ -579,6 +621,8 @@ export class AppServerController {
     } finally {
       this.#active.delete(taskId);
       this.#requestedRuns.delete(taskId);
+      const finalState = this.#storeClosed ? undefined : this.#store.get(taskId)?.state;
+      if (finalState === "completed" || finalState === "cancelled") this.#steering.delete(taskId);
       if (!this.#closed) this.pumpPendingRuns();
     }
   }
@@ -633,10 +677,18 @@ export class AppServerController {
         ok: result.ok,
       }),
     );
+    const activeSecrets = this.#activeSecrets?.() ?? [];
+    const evidence = sanitizeEvidenceSummary(
+      result.evidence ?? (result.ok ? "validator passed" : "validator failed"),
+      activeSecrets,
+    );
     return {
       ok: result.ok,
-      fingerprint: result.fingerprint ?? `${result.ok ? "ok" : "error"}:${result.evidence ?? ""}`,
-      evidence: result.evidence ?? (result.ok ? "validator passed" : "validator failed"),
+      fingerprint: sanitizeEvidenceSummary(
+        result.fingerprint ?? `${result.ok ? "ok" : "error"}:${evidence}`,
+        activeSecrets,
+      ),
+      evidence,
       durationMs: result.durationMs ?? 0,
     };
   }
@@ -660,7 +712,40 @@ export class AppServerController {
       ...(previous?.lastFingerprintHash === undefined
         ? {}
         : { lastFingerprintHash: previous.lastFingerprintHash }),
+      ...(previous?.evidenceSummary === undefined
+        ? {}
+        : { evidenceSummary: previous.evidenceSummary }),
     });
+  }
+
+  private recordStopProgress(
+    taskId: string,
+    stopReason: Extract<
+      TaskProgress["stopReason"],
+      "cancelled" | "user_stop" | "approval_required"
+    >,
+  ): void {
+    const previous = this.#store.getRun(taskId);
+    this.#store.recordRun({
+      taskId,
+      rounds: previous?.rounds ?? 0,
+      evidenceCount: previous?.evidenceCount ?? 0,
+      completed: false,
+      stopReason,
+      ...(previous?.lastFingerprintHash === undefined
+        ? {}
+        : { lastFingerprintHash: previous.lastFingerprintHash }),
+      ...(previous?.evidenceSummary === undefined
+        ? {}
+        : { evidenceSummary: previous.evidenceSummary }),
+    });
+  }
+
+  private consumeSteering(taskId: string): string | undefined {
+    const queued = this.#steering.get(taskId);
+    if (queued === undefined || queued.length === 0) return undefined;
+    this.#steering.delete(taskId);
+    return queued.join("\n\n");
   }
 
   private closeStore(): void {
@@ -770,6 +855,9 @@ export class AppServerController {
         workspaceState: worktreePath === undefined ? "local" : "worktree",
         ...(worktreePath === undefined ? {} : { worktreePath }),
         ...(metadata.ownerId === undefined ? {} : { ownerId: metadata.ownerId }),
+        ...(metadata.state === "waiting_approval"
+          ? { approvalId: approvalIdFor(metadata.taskId, metadata.revision) }
+          : {}),
         ...(progress === undefined ? {} : { progress: toTaskProgress(progress) }),
       },
     });
@@ -799,6 +887,7 @@ function toTaskProgress(progress: {
   readonly completed: boolean;
   readonly stopReason: TaskProgress["stopReason"];
   readonly lastFingerprintHash?: string;
+  readonly evidenceSummary?: string;
 }): TaskProgress {
   return {
     rounds: progress.rounds,
@@ -808,7 +897,14 @@ function toTaskProgress(progress: {
     ...(progress.lastFingerprintHash === undefined
       ? {}
       : { lastFingerprintHash: progress.lastFingerprintHash }),
+    ...(progress.evidenceSummary === undefined
+      ? {}
+      : { evidenceSummary: progress.evidenceSummary }),
   };
+}
+
+function approvalIdFor(taskId: string, revision: number): string {
+  return `approval:${taskId}:${revision}`;
 }
 
 function longRunningState(
@@ -885,6 +981,15 @@ function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): 
   );
 }
 
+function sanitizeEvidenceSummary(value: string, activeSecrets: readonly string[]): string {
+  return redactWorkspacePatch(value, activeSecrets)
+    .replace(
+      /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/gu,
+      "[REDACTED]",
+    )
+    .slice(0, 4_096);
+}
+
 function samePathList(left: readonly string[], right: readonly string[]): boolean {
   const sort = (paths: readonly string[]): string[] => [...paths].sort();
   const a = sort(left);
@@ -903,31 +1008,56 @@ function createDeterministicRecoveryEngine(): RecoverableAgentEngine {
   };
 }
 
+/** Test-only engine used by the packaged macOS long-running smoke. It exercises
+ * the production controller and LongRunningTaskRunner at an approval boundary;
+ * it is not a second task workflow or a production fallback. */
+function createLongRunningSmokeEngine(): RecoverableAgentEngine {
+  let firstTurn = true;
+  return {
+    async *runTurn(input: AgentTurnInput, signal: AbortSignal) {
+      if (firstTurn) {
+        firstTurn = false;
+        throw new LongRunningControlError("approval_required");
+      }
+      if (signal.aborted) throw signal.reason;
+      yield { type: "assistant.delta" as const, text: input.prompt };
+      if (signal.aborted) throw signal.reason;
+      yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+    },
+    recoverPrompt: async () => "Candy packaged long-running fixture",
+  };
+}
+
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
   const sandboxRunner = resolveSandboxRunner();
   const deterministicRecoverySmoke = process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE === "1";
+  const longRunningSmoke = process.env.CANDY_LONG_RUNNING_SMOKE === "1";
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments),
-    engine: deterministicRecoverySmoke
-      ? createDeterministicRecoveryEngine()
-      : new PiAppServerEngine(
-          new PiAgentEngine(paths.sessions, async () => {
-            const lease = resolveCredential("deepseek");
-            return lease ? { secret: lease.value, release: lease.release } : undefined;
-          }),
-          new PiAgentEngine(
-            paths.sessions,
-            async () => {
-              const lease = resolveCredential("minimax-cn");
+    engine: longRunningSmoke
+      ? createLongRunningSmokeEngine()
+      : deterministicRecoverySmoke
+        ? createDeterministicRecoveryEngine()
+        : new PiAppServerEngine(
+            new PiAgentEngine(paths.sessions, async () => {
+              const lease = resolveCredential("deepseek");
               return lease ? { secret: lease.value, release: lease.release } : undefined;
-            },
-            "minimax-cn",
+            }),
+            new PiAgentEngine(
+              paths.sessions,
+              async () => {
+                const lease = resolveCredential("minimax-cn");
+                return lease ? { secret: lease.value, release: lease.release } : undefined;
+              },
+              "minimax-cn",
+            ),
           ),
-        ),
     ownerId: `app-server:${process.pid}`,
-    ...(deterministicRecoverySmoke ? {} : { activeSecrets: resolveActiveProviderSecrets }),
+    ...(deterministicRecoverySmoke || longRunningSmoke
+      ? {}
+      : { activeSecrets: resolveActiveProviderSecrets }),
     worktreeRoot: paths.worktrees,
     ...(sandboxRunner === undefined
       ? {}

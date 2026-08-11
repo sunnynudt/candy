@@ -795,6 +795,7 @@ export interface LongRunningProgress {
     | "crash_interrupted"
     | "error";
   readonly lastFingerprintHash?: string;
+  readonly evidenceSummary?: string;
 }
 
 export interface LongRunningProgressStore {
@@ -827,6 +828,7 @@ export class LongRunningTaskRunner {
           evidenceCount: evidence.length,
           completed: false,
           stopReason,
+          ...lastEvidenceSummary(evidence),
         });
         return { completed: false, stopReason, rounds: round - 1, evidence };
       }
@@ -844,6 +846,7 @@ export class LongRunningTaskRunner {
             completed: true,
             stopReason: "validator_succeeded",
             lastFingerprintHash: fingerprintHash,
+            ...lastEvidenceSummary(evidence),
           });
           return { completed: true, stopReason: "validator_succeeded", rounds: round, evidence };
         }
@@ -854,6 +857,7 @@ export class LongRunningTaskRunner {
             completed: false,
             stopReason: "stall_detected",
             lastFingerprintHash: fingerprintHash,
+            ...lastEvidenceSummary(evidence),
           });
           return { completed: false, stopReason: "stall_detected", rounds: round, evidence };
         }
@@ -863,6 +867,7 @@ export class LongRunningTaskRunner {
           completed: false,
           stopReason: "running",
           lastFingerprintHash: fingerprintHash,
+          ...lastEvidenceSummary(evidence),
         });
       } catch (error) {
         const stopReason = signal.aborted
@@ -873,6 +878,7 @@ export class LongRunningTaskRunner {
           evidenceCount: evidence.length,
           completed: false,
           stopReason,
+          ...lastEvidenceSummary(evidence),
         });
         return { completed: false, stopReason, rounds: round, evidence };
       }
@@ -882,6 +888,7 @@ export class LongRunningTaskRunner {
       evidenceCount: evidence.length,
       completed: false,
       stopReason: "budget_exhausted",
+      ...lastEvidenceSummary(evidence),
     });
     return { completed: false, stopReason: "budget_exhausted", rounds: this.maxRounds, evidence };
   }
@@ -905,6 +912,13 @@ function persistProgress(
   progress: LongRunningProgress,
 ): void {
   binding?.store.record(progress);
+}
+
+function lastEvidenceSummary(evidence: readonly ValidatorResult[]): {
+  readonly evidenceSummary?: string;
+} {
+  const summary = evidence.at(-1)?.evidence;
+  return summary === undefined ? {} : { evidenceSummary: summary.slice(0, 4_096) };
 }
 
 export interface ApplyChangesInput {

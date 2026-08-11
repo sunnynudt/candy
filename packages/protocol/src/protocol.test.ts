@@ -332,6 +332,7 @@ test("snapshots carry bounded long-running progress without evidence text", () =
           completed: false,
           stopReason: "stall_detected",
           lastFingerprintHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          evidenceSummary: "validator failed: test fixture",
         },
       },
     },
@@ -350,6 +351,38 @@ test("snapshots carry bounded long-running progress without evidence text", () =
           },
         },
       }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...event,
+        event: {
+          ...event.event,
+          snapshot: {
+            ...event.event.snapshot,
+            progress: { ...event.event.snapshot.progress, evidenceSummary: "x".repeat(4_097) },
+          },
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
+test("task steering is bounded and round-trips without adding an execution command", () => {
+  const command = {
+    v: 1,
+    kind: "command",
+    commandId: "steer-1",
+    taskId: "task-steer",
+    expectedRevision: 2,
+    command: { type: "task.steer", text: "continue with the failing test" },
+  } as const;
+  assert.deepEqual(decodeJsonLine(encodeJsonLine(command)), command);
+  assert.throws(
+    () => validateProtocolMessage({ ...command, command: { type: "task.steer", text: "x\0y" } }),
     (error: unknown) =>
       error instanceof ProtocolValidationError && error.code === "invalid_message",
   );

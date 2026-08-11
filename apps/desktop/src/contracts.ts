@@ -20,6 +20,7 @@ export interface RendererTaskProjection {
   readonly workspaceBaseline?: string;
   readonly workspaceState: "local" | "worktree";
   readonly worktreePath?: string;
+  readonly approvalId?: string;
   readonly progress?: TaskProgress;
   readonly changedFiles: readonly string[];
   readonly trackedFiles: readonly string[];
@@ -87,6 +88,17 @@ export interface DesktopPreloadApi {
       readonly taskId: string;
       readonly expectedRevision: number;
       readonly type: "task.run" | "task.cancel" | "task.pause" | "task.resume";
+    }): Promise<void>;
+    steer(input: {
+      readonly taskId: string;
+      readonly expectedRevision: number;
+      readonly text: string;
+    }): Promise<void>;
+    approval(input: {
+      readonly taskId: string;
+      readonly expectedRevision: number;
+      readonly approvalId: string;
+      readonly decision: "approve" | "deny";
     }): Promise<void>;
     apply(input: {
       readonly taskId: string;

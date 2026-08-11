@@ -294,6 +294,7 @@ test("long-running validator progress persists only bounded evidence metadata", 
   assert.equal(completed.stopReason, "validator_succeeded");
   assert.equal(store.getRun("debug-task")?.completed, true);
   assert.equal(store.getRun("debug-task")?.evidenceCount, 1);
+  assert.equal(store.getRun("debug-task")?.evidenceSummary, "fixture");
   assert.match(store.getRun("debug-task")?.lastFingerprintHash ?? "", /^[a-f0-9]{64}$/u);
   store.close();
 });

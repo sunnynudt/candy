@@ -155,6 +155,43 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
   }
 });
 
+test("sqlite task run persists a bounded final evidence summary", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-evidence-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    store.create("task-evidence", "auto");
+    store.recordRun({
+      taskId: "task-evidence",
+      rounds: 2,
+      evidenceCount: 2,
+      completed: true,
+      stopReason: "validator_succeeded",
+      evidenceSummary: "validator-pass [REDACTED]",
+    });
+    assert.equal(store.getRun("task-evidence")?.evidenceSummary, "validator-pass [REDACTED]");
+    assert.throws(
+      () =>
+        store.recordRun({
+          taskId: "task-evidence",
+          rounds: 2,
+          evidenceCount: 2,
+          completed: true,
+          stopReason: "validator_succeeded",
+          evidenceSummary: "x".repeat(4_097),
+        }),
+      /evidence summary/u,
+    );
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.getRun("task-evidence")?.evidenceSummary, "validator-pass [REDACTED]");
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task metadata persists the workspace baseline and never overwrites it", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-baseline-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");
