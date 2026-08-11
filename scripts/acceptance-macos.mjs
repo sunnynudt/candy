@@ -34,6 +34,7 @@ const steps = [
   "check:toolchain",
   "check",
   "check:native",
+  "smoke:sandbox:macos",
   "smoke:runtime-session-remap",
   "smoke:recovery:macos",
   "smoke:safe-edit",
