@@ -46,7 +46,7 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 ## 2026-08-11 macOS Runtime/session-remap checkpoint
 
 - Added `smoke:runtime-session-remap` to the macOS acceptance sequence. It creates a real Pi `SessionManager` session under a temporary Candy app-data sessions root, recovers the persisted prompt through the Runtime recovery path with a different existing workspace, reloads the same session identity, and proves the JSONL history is unchanged and no second session is created.
-- The smoke passed on macOS `26.5.2` arm64 with Node `22.23.2` and no provider request or credential access. The expanded `npm run acceptance:macos` sequence passed 10/10, including the existing 94-test deterministic check and packaged Desktop/Keychain smoke.
+- The smoke passed on macOS `26.5.2` arm64 with Node `22.23.2` and no provider request or credential access. Published revision `a13e6e8376ae93284abf3829818b7e9e628ac97a` passed the clean expanded `npm run acceptance:macos` sequence 10/10, including the existing 94-test deterministic check and packaged Desktop/Keychain smoke.
 - This proves the local macOS session-remap seam only. Cross-platform TUI/Desktop ownership handoff, process-restart recovery, ACC-12 ten-run timing, live providers, native security review, signing/notarization, Browser adversarial evidence, and final acceptance remain open. Shell Auto and Shell Auto Debug remain disabled.
 
 ## 2026-08-11 Windows Credential Manager checkpoint
