@@ -71,7 +71,7 @@
 
 - ◐ macOS Keychain fixture、打包 Desktop JSONL、packaged Node/app-server recovery 已通过；仍需 OS Keychain 完整受控生命周期、Apple 签名/公证、完整 Desktop/UI 恢复和未覆盖的 ACC-12/Provider 指标。
 
-- ◐ macOS packaged Browser 本机 fixture 已通过 allowlist、redirect/popup/permission/download default-deny、typed action/selector/stale/confirmation rejection、截图 attachment id 和显式 Take Control；物理输入归属、更广对抗性页面和完整 ACC-09/ACC-12 矩阵仍待完成。
+- ◐ macOS packaged Browser 本机 fixture 已通过 allowlist、typed click/type/confirmed-submit、URL credentials、恶意/NUL/oversized selector、stale revision、disallowed redirect/popup/permission/download default-deny、截图 attachment id，以及显式 Take Control 后的 user ownership。source revision `951283bd4c8f3c0ae8778ab50bd6ed4044f436e7` 还通过提示注入文本不触发 trap、同 revision 双导航竞态只接受一个请求，并扫描 packaged 输出、app-server JSONL stdout 与 Candy 临时 app-data 未出现页面 marker。物理输入来源不可可靠判定，仍保留显式 Take Control fallback；更广 hostile-page/navigation、live Provider/session/protocol、完整 ACC-09/ACC-12 矩阵仍待完成。
 
 - ◐ 补齐 macOS ACC-12 可测确定性指标：`measure:macos:responsiveness` 已执行十轮真实 Desktop event/projection、用户取消到 validator 父子进程树终止、显式 Take Control 后 agent action 禁止，以及三任务并发 frame-gap/event delivery。已发布 source revision `d9a0fe2` 的 `out/acceptance/macos/responsiveness-latest.md` 记录 p95 `2/12/2/19 ms`，三任务十轮均 `9/9/9=>9/9/9` 且无 event loss；TUI/Desktop cold p95 为 `983/2053 ms`，完整 `acceptance:macos` 为 15/15。Provider stream stop、完整 UI/recovery/Windows parity 和完整 ACC-12 仍 Blocked，Shell Auto 与 Shell Auto Debug 保持 disabled。
 
