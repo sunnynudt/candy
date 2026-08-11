@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cleanChildEnvironment } from "@candy/platform";
 
@@ -922,9 +922,27 @@ export interface ApplyChangesInput {
 export interface PathSeam {
   readonly resolve: (...paths: string[]) => string;
   readonly relative: (from: string, to: string) => string;
+  readonly normalize: (value: string) => string;
   readonly isAbsolute: (value: string) => boolean;
   readonly sep: string;
+  /** Optional host canonicalization; omitted by simulated cross-host fixtures. */
+  readonly canonicalize?: (value: string) => Promise<string>;
 }
+
+const nativeGitPathSeam: PathSeam = {
+  resolve: (...paths) => path.resolve(...paths),
+  relative: (from, to) => path.relative(from, to),
+  normalize: (value) => path.normalize(value),
+  isAbsolute: (value) => path.isAbsolute(value),
+  sep: path.sep,
+  canonicalize: async (value) => {
+    try {
+      return await realpath(value);
+    } catch {
+      return value;
+    }
+  },
+};
 
 export class ApplyChangesGuard {
   readonly #path: PathSeam;
@@ -1064,7 +1082,7 @@ export class GitWorktreeManager {
   public constructor(
     private readonly worktreeRoot: string,
     runner: GitCommandRunner = new NodeGitCommandRunner(),
-    pathSeam: PathSeam = path,
+    pathSeam: PathSeam = nativeGitPathSeam,
   ) {
     this.#runner = runner;
     this.#path = pathSeam;
@@ -1079,12 +1097,15 @@ export class GitWorktreeManager {
 
   public async inspect(plan: GitWorktreePlan): Promise<string> {
     const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
-    const expectedPath = canonicalGitWorktreePath(plan.worktreePath);
-    const associated = parseGitWorktreePorcelain(listing).some(
-      (entry) =>
-        canonicalGitWorktreePath(entry.path) === expectedPath &&
-        entry.lockReason === `candy:${plan.taskId}`,
-    );
+    const expectedPath = await canonicalGitWorktreePath(plan.worktreePath, this.#path);
+    let associated = false;
+    for (const entry of parseGitWorktreePorcelain(listing)) {
+      if (entry.lockReason !== `candy:${plan.taskId}`) continue;
+      if ((await canonicalGitWorktreePath(entry.path, this.#path)) === expectedPath) {
+        associated = true;
+        break;
+      }
+    }
     if (!associated) throw new Error("Git worktree association could not be verified.");
     return listing;
   }
@@ -1388,9 +1409,12 @@ function parseGitWorktreePorcelain(listing: string): readonly GitWorktreePorcela
   return entries;
 }
 
-function canonicalGitWorktreePath(value: string): string {
-  const normalized = path.normalize(path.resolve(value));
-  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
+async function canonicalGitWorktreePath(value: string, pathSeam: PathSeam): Promise<string> {
+  const normalized = pathSeam.normalize(pathSeam.resolve(value));
+  const canonical = pathSeam.canonicalize
+    ? pathSeam.normalize(pathSeam.resolve(await pathSeam.canonicalize(normalized)))
+    : normalized;
+  return pathSeam.sep === "\\" ? canonical.toLocaleLowerCase() : canonical;
 }
 
 function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): string {

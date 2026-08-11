@@ -401,39 +401,72 @@ test("Git worktree planning uses argument arrays and handoff blocks unsafe trans
   assert.equal(handoff.state, "blocked");
 });
 
-test("Git worktree inspection parses NUL porcelain records and requires the matching lock", async () => {
+test("Git worktree inspection uses an injected Windows path seam on macOS", async () => {
   const plan = planGitWorktree(
     "C:\\repo",
     "C:\\Candy Data\\worktrees\\task-1",
     "task-1",
     "0123456789abcdef",
   );
-  const manager = new GitWorktreeManager("C:\\Candy Data\\worktrees", {
-    run: async () =>
-      [
-        "worktree C:/Candy Data/worktrees/other",
-        "HEAD 0123456789abcdef",
-        "locked candy:other",
-        "",
-        "worktree C:/Candy Data/worktrees/task-1",
-        "HEAD 0123456789abcdef",
-        "detached",
-        "locked candy:task-1",
-        "",
-      ].join("\0"),
-  });
+  const manager = new GitWorktreeManager(
+    "C:\\Candy Data\\worktrees",
+    {
+      run: async () =>
+        [
+          "worktree C:/Candy Data/worktrees/other",
+          "HEAD 0123456789abcdef",
+          "locked candy:other",
+          "",
+          "worktree c:/candy data/worktrees/task-1",
+          "HEAD 0123456789abcdef",
+          "detached",
+          "locked candy:task-1",
+          "",
+        ].join("\0"),
+    },
+    path.win32,
+  );
   await manager.inspect(plan);
 
-  const wrongLock = new GitWorktreeManager("C:\\Candy Data\\worktrees", {
+  const wrongLock = new GitWorktreeManager(
+    "C:\\Candy Data\\worktrees",
+    {
+      run: async () =>
+        [
+          "worktree C:/Candy Data/worktrees/task-1",
+          "HEAD 0123456789abcdef",
+          "locked candy:other",
+          "",
+        ].join("\0"),
+    },
+    path.win32,
+  );
+  await assert.rejects(wrongLock.inspect(plan), /association/u);
+});
+
+test("Git worktree inspection resolves the macOS /var and /private/var aliases", async () => {
+  if (process.platform !== "darwin") return;
+  const root = mkdtempSync(path.join(tmpdir(), "candy-git-canonical-"));
+  const worktree = path.join(root, "task-worktree");
+  mkdirSync(worktree, { recursive: true });
+  const plan = planGitWorktree(root, worktree, "task-canonical", "0123456789abcdef");
+  const gitReportedPath = worktree.replace(/^\/var(?=\/)/u, "/private/var");
+  const manager = new GitWorktreeManager(root, {
     run: async () =>
       [
-        "worktree C:/Candy Data/worktrees/task-1",
+        `worktree ${gitReportedPath}`,
         "HEAD 0123456789abcdef",
-        "locked candy:other",
+        "detached",
+        "locked candy:task-canonical",
         "",
       ].join("\0"),
   });
-  await assert.rejects(wrongLock.inspect(plan), /association/u);
+
+  try {
+    await manager.inspect(plan);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {

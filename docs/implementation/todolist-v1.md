@@ -62,9 +62,9 @@
 
 ## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
 
-- ⬜ 先修复 macOS Git Task Worktree 关联校验：`npm run acceptance:macos` 在 `a43012511448a04f6269ec5e1244ee69d6d8a10b` 上有 8/9 步通过，但 `npm run check` 为 86/93；临时目录的 `/var` 与 Git 报告的 `/private/var` 未作真实路径规范化，另有 Windows 路径 fixture 在 macOS 上误用宿主 POSIX 路径语义。修复必须保持 Worktree 根目录与锁定原因的 fail-closed 校验，并增加 macOS 与跨宿主回归覆盖。
+- ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。`npm run check` 通过（94/94 tests），`npm run acceptance:macos` 通过（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
-- ⬜ 在 Worktree 基线恢复后，执行 macOS 工具链、TUI、Desktop App Server、Runtime/session-remap、Worktree/Apply 和 ACC-12 响应性矩阵，并生成新的 macOS 脱敏证据。
+- ◐ 在 Worktree 基线恢复后，工具链、TUI、Desktop App Server、Worktree/Apply 的确定性 macOS 基线和打包 smoke 已通过，并生成了新的 macOS 脱敏证据；Runtime/session-remap 专项、ACC-12 十轮响应性矩阵和完整 macOS 接受矩阵仍待完成。
 
 - ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
 
