@@ -26,6 +26,7 @@ const home = path.join(fixtureRoot, "home");
 const temporary = path.join(fixtureRoot, "tmp");
 const workspace = path.join(fixtureRoot, "workspace");
 const marker = path.join(fixtureRoot, "validator-invocations.txt");
+const descendantMarker = path.join(fixtureRoot, "validator-descendant-survived.txt");
 const taskId = "packaged-macos-handoff";
 await mkdir(home, { recursive: true });
 await mkdir(temporary, { recursive: true });
@@ -104,6 +105,28 @@ async function waitForEvent(server, type) {
   });
 }
 
+async function waitForProtocolError(server) {
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      server.lines.off("line", onLine);
+      reject(new Error("Packaged macOS handoff did not emit the expected protocol error."));
+    }, 10_000);
+    const onLine = (line) => {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.kind === "error") {
+          globalThis.clearTimeout(timeout);
+          server.lines.off("line", onLine);
+          resolve(parsed);
+        }
+      } catch {
+        // Ignore unrelated diagnostics; the protocol assertion remains JSONL-only.
+      }
+    };
+    server.lines.on("line", onLine);
+  });
+}
+
 async function waitForInvocationCount(expected) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -114,6 +137,15 @@ async function waitForInvocationCount(expected) {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
   }
   throw new Error(`Packaged macOS handoff validator did not reach invocation ${expected}.`);
+}
+
+async function assertNoValidatorDescendant(stage) {
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 3_000));
+  assert.equal(
+    existsSync(descendantMarker),
+    false,
+    `Packaged macOS validator descendant survived ${stage}.`,
+  );
 }
 
 async function stopServer(server) {
@@ -132,13 +164,26 @@ async function stopServer(server) {
 }
 
 try {
+  const descendantScript = [
+    "const fs = require('node:fs');",
+    "const marker = process.argv[1];",
+    "setTimeout(() => fs.writeFileSync(marker, 'descendant-survived'), 2500);",
+    "setTimeout(() => {}, 10000);",
+  ].join(" ");
+  const validatorScript = [
+    "const cp = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const marker = process.argv[1];",
+    "const descendantMarker = process.argv[2];",
+    "const descendantScript = process.argv[3];",
+    "const n = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').split(/\\r?\\n/).filter(Boolean).length : 0;",
+    "fs.appendFileSync(marker, 'invocation-' + (n + 1) + '\\n');",
+    "cp.spawn(process.execPath, ['-e', descendantScript, descendantMarker], { stdio: 'ignore' });",
+    "setTimeout(() => {}, 10000);",
+  ].join(" ");
   const validator = {
     executable: packagedNode,
-    args: [
-      "-e",
-      "const fs=require('node:fs'); const p=process.argv[1]; const n=fs.existsSync(p) ? fs.readFileSync(p, 'utf8').split(/\\r?\\n/).filter(Boolean).length : 0; fs.appendFileSync(p, 'invocation-' + (n + 1) + '\\n'); setTimeout(() => {}, 10000);",
-      marker,
-    ],
+    args: ["-e", validatorScript, marker, descendantMarker, descendantScript],
   };
 
   const first = await startServer();
@@ -175,6 +220,7 @@ try {
     assert.equal(paused.revision, 2);
     assert.equal(paused.ownerId, undefined);
     assert.equal(paused.progress?.stopReason, "user_stop");
+    await assertNoValidatorDescendant("pause");
   } finally {
     await stopServer(first);
   }
@@ -188,6 +234,23 @@ try {
     const restored = await restoredPromise;
     assert.equal(restored.revision, 2);
     assert.equal(restored.ownerId, undefined);
+
+    const staleErrorPromise = waitForProtocolError(second);
+    second.child.stdin.write(
+      `${JSON.stringify(command("handoff-stale-resume", 1, { type: "task.resume" }))}\n`,
+    );
+    const staleError = await staleErrorPromise;
+    assert.equal(staleError.code, "invalid_message");
+
+    const fencedPromise = waitForSnapshot(
+      second,
+      (snapshot) => snapshot.state === "paused" && snapshot.revision === 2,
+    );
+    second.child.stdin.write(
+      `${JSON.stringify(command("handoff-fenced-snapshot", 2, { type: "snapshot" }))}\n`,
+    );
+    const fenced = await fencedPromise;
+    assert.equal(fenced.ownerId, undefined);
 
     const resumedPromise = waitForSnapshot(second, (snapshot) => snapshot.state === "running");
     const receiverTool = waitForEvent(second, "tool.started");
@@ -207,6 +270,7 @@ try {
     const cancelled = await cancelledPromise;
     assert.equal(cancelled.revision, 4);
     assert.equal(cancelled.progress?.stopReason, "cancelled");
+    await assertNoValidatorDescendant("cancel");
   } finally {
     await stopServer(second);
   }
@@ -217,7 +281,7 @@ try {
     "Packaged macOS handoff validator invocations were not sequential.",
   );
   console.log(
-    "Packaged macOS handoff smoke passed: paused owner released, receiver resumed a new turn, and validator invocations were sequential",
+    "Packaged macOS handoff smoke passed: stale revision fenced, owner released, receiver resumed a new turn, and validator descendants were cleaned up",
   );
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });

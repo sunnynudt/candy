@@ -2,7 +2,7 @@
 
 更新日期：2026-08-11
 基线分支：`codex/candy-v1-foundation`
-本工作包起始提交：`5b29f5bef50b8c395f113b9b6fd4d2dfbabdf89e`
+本工作包起始提交：`7ed1e945fea830a364c6c0b0d09137630b20abc6`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -65,9 +65,9 @@
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
 - ◐ 在 Worktree 基线恢复后，已发布提交 `261bb346f12b6c28288a292db5bf77e26d531127` 的工具链、Runtime/session-remap、TUI、Desktop App Server、Worktree/Apply、源 app-server 恢复、packaged Node/app-server 恢复、packaged Browser adversarial 子集和 ACC-12 cold-start 子集确定性 smoke 通过；干净 macOS acceptance 为 14/14，TUI p95 `878 ms`、Desktop p95 `1693 ms`，报告 source revision 为该提交。恢复证据覆盖 queued 元数据、owner interruption、`crash_interrupted` 快照和 macOS validator 后代清理；ACC-12 其余指标、物理输入归属、完整 UI/跨客户端恢复、完整 Browser 矩阵、签名和完整 macOS 接受矩阵仍待完成。
-- ◐ macOS packaged sequential cross-client handoff 已完成确定性覆盖：第一个 packaged app-server 在 validator 运行中暂停到 revision `2` 并释放 owner，第二个 packaged app-server 从相同 Candy-owned SQLite 状态显式 resume 到 revision `3`，执行第二次 validator invocation，再在 revision `4` 取消；未迁移 in-flight tool call。该 smoke 已加入 macOS acceptance，当前 expanded runner 为 15/15；完整 UI/ACC-05 恢复、签名、物理 Browser 输入归属、完整 ACC-12、G2、live provider 和 product-owner acceptance 仍未完成。
+- ◐ macOS packaged sequential cross-client handoff 已完成确定性覆盖：第一个 packaged app-server 在 validator 运行中暂停到 revision `2` 并释放 owner，macOS validator 子进程清理窗口后无残留 marker；第二个 packaged app-server 从相同 Candy-owned SQLite 状态拒绝 stale revision `1` resume，保持 ownerless paused revision `2`，只能显式 resume 到 revision `3`，执行第二次 validator invocation，再在 revision `4` 取消并验证后代清理。未迁移 in-flight tool call。该 smoke 已加入 macOS acceptance，当前 expanded runner 为 15/15；完整 UI/ACC-05 恢复、签名、物理 Browser 输入归属、完整 ACC-12、G2、live provider 和 product-owner acceptance 仍未完成。
 
-- ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；当前仅有确定性 validator 后代清理和协议/本地 smoke 证据，在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
+- ⬜ 完成 macOS Sandbox Runner/Seatbelt、后代取消、网络与工作区隔离及安全评审；当前已有 packaged 确定性 validator 后代清理和协议/本地 smoke 证据，但不替代 OS-level containment/security review，在验收前继续禁用 macOS Shell Auto 和 Shell Auto Debug。
 
 - ◐ macOS Keychain fixture、打包 Desktop JSONL、packaged Node/app-server recovery 已通过；仍需 OS Keychain 完整受控生命周期、Apple 签名/公证、完整 Desktop/UI 恢复和响应性矩阵。
 
