@@ -43,6 +43,12 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The pinned macOS runner on `26.5.2` arm64 completed 9/9 steps on clean published revision `91f4f12d3d6b92d2d657d341ff14c14ef3482369`: `check:toolchain`, `check`, `check:native`, safe-edit, TUI, TUI task, app-server, Electron, and packaged Desktop/Keychain smoke. The deterministic suite passed 94 tests; no live provider command or external-tool credential was read.
 - This restores the deterministic macOS Worktree baseline but does not close Runtime/session-remap, ACC-12 ten-run responsiveness, full recovery, Browser adversarial, Apple signing/notarization, live-provider, native containment/security-review, or final ACC-01..12 gates. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-11 macOS Runtime/session-remap checkpoint
+
+- Added `smoke:runtime-session-remap` to the macOS acceptance sequence. It creates a real Pi `SessionManager` session under a temporary Candy app-data sessions root, recovers the persisted prompt through the Runtime recovery path with a different existing workspace, reloads the same session identity, and proves the JSONL history is unchanged and no second session is created.
+- The smoke passed on macOS `26.5.2` arm64 with Node `22.23.2` and no provider request or credential access. The expanded `npm run acceptance:macos` sequence passed 10/10, including the existing 94-test deterministic check and packaged Desktop/Keychain smoke.
+- This proves the local macOS session-remap seam only. Cross-platform TUI/Desktop ownership handoff, process-restart recovery, ACC-12 ten-run timing, live providers, native security review, signing/notarization, Browser adversarial evidence, and final acceptance remain open. Shell Auto and Shell Auto Debug remain disabled.
+
 ## 2026-08-11 Windows Credential Manager checkpoint
 
 - `npm run smoke:credential-manager:windows` exercised Candy's own `KeyringCredentialStore` through Windows Credential Manager using only synthetic fixture values. The empty `minimax-cn` account passed `absent -> present -> present -> absent` for set, replace, presence, and delete; the already-present DeepSeek account was observed by presence only and left untouched.

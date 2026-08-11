@@ -40,6 +40,7 @@
     "lint": "eslint apps packages scripts",
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
+    "smoke:runtime-session-remap": "npm run build && node scripts/smoke-runtime-session-remap.mjs",
     "smoke:app-server": "npm run build && node scripts/smoke-app-server.mjs",
     "smoke:safe-edit": "npm run build && node scripts/smoke-safe-edit.mjs",
     "smoke:desktop": "npm run build && node scripts/smoke-desktop.mjs",
