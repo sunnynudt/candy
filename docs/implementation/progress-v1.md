@@ -57,6 +57,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The fixture asserts the completed snapshot carries the final `evidenceSummary` containing `validator-pass`, the renderer projects the completed status, final evidence, and the steered transcript, and the validator marker records exactly two invocations (first fails, second passes). The step passed on Windows 11 Pro x64.
 - `npm run acceptance:windows` now passes 20/20 deterministic steps. Remaining F items are the real-Provider stream-stop latency, signed-package evidence, OS-level containment, and independent security review; those remain Blocked and Shell Auto / Shell Auto Debug stay disabled.
 
+## 2026-08-11 Windows packaged renderer credential-isolation checkpoint
+
+- Added `CANDY_DESKTOP_CREDENTIAL_SMOKE` to the Desktop main process and `smoke:desktop:packaged:credential-isolation:windows`. The packaged Windows app runs under an isolated Candy-owned app-data root; the trusted main process writes a fixture value into the empty `minimax-cn` Credential Manager account, then the sandboxed renderer attempts `has`, key enumeration, and property-name enumeration over `window.candy.credentials`. None of the read attempts can observe the complete value, and the main process deletes the fixture afterwards and asserts `absent`.
+- The fixture value is asserted absent from the packaged process stdout/stderr, and the smoke passed on Windows 11 Pro x64. This closes the packaged Windows renderer readback gap for ACC-02 as deterministic evidence; the signed Desktop path, the user-authorized DeepSeek account mutation window, and the live MiniMax Gate remain Blocked.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

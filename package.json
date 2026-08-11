@@ -61,6 +61,7 @@
     "smoke:desktop:packaged:recovery:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-recovery-windows.mjs",
     "smoke:desktop:packaged:handoff:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-handoff-windows.mjs",
     "smoke:desktop:packaged:long-running:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-long-running-windows.mjs",
+    "smoke:desktop:packaged:credential-isolation:windows": "npm run package:desktop:windows && node scripts/smoke-desktop-packaged-credential-isolation-windows.mjs",
     "smoke:browser:windows": "npm run package:desktop:windows && node scripts/smoke-browser-windows.mjs",
     "test": "npm run build && node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false"

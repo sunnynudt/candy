@@ -976,9 +976,11 @@ export function createDesktopWindow(): BrowserWindow {
         desktopShellHtml(
           nonce,
           process.env.CANDY_DESKTOP_RESPONSIVENESS === "1" ||
-            process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1",
+            process.env.CANDY_DESKTOP_LONG_RUNNING_SMOKE === "1" ||
+            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1",
           process.env.CANDY_DESKTOP_SMOKE === "1" ||
-            process.env.CANDY_DESKTOP_RESPONSIVENESS === "1",
+            process.env.CANDY_DESKTOP_RESPONSIVENESS === "1" ||
+            process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1",
         ),
       ),
   );
@@ -1211,6 +1213,11 @@ export function startDesktop(): void {
     registerIpcHandlers();
     mainWindow = createDesktopWindow();
     mainWindow.show();
+    if (process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1")
+      void runDesktopCredentialSmoke().catch((error: unknown) => {
+        console.error(error instanceof Error ? error.message : "Desktop credential smoke failed.");
+        app.exit(1);
+      });
     if (process.env.CANDY_BROWSER_SMOKE === "1")
       void runBrowserSmoke().catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : "Browser smoke failed.");
@@ -1248,6 +1255,39 @@ async function runDesktopSmoke(): Promise<void> {
     expectedRevision: 0,
     command: { type: "snapshot" },
   });
+  app.quit();
+}
+
+async function runDesktopCredentialSmoke(): Promise<void> {
+  if (!mainWindow) throw new Error("Desktop credential smoke requires a visible window.");
+  const fixtureValue = process.env.CANDY_CREDENTIAL_FIXTURE_VALUE;
+  if (fixtureValue === undefined || fixtureValue.length === 0)
+    throw new Error("Desktop credential smoke fixture value is unavailable.");
+  const credentials = new KeyringCredentialStore();
+  await waitForDesktopRenderer();
+
+  credentials.replace("minimax-cn", fixtureValue);
+  if (credentials.has("minimax-cn") !== "present")
+    throw new Error("Desktop credential smoke fixture was not stored.");
+
+  const readAttempts = [
+    "(await window.candy.credentials.has('minimax-cn'))",
+    "JSON.stringify(Object.keys(window.candy.credentials))",
+    "JSON.stringify(Object.getOwnPropertyNames(window.candy))",
+    "JSON.stringify(Object.getOwnPropertyNames(window.candy.credentials))",
+  ];
+  for (const script of readAttempts) {
+    const value = await executeRenderer<string>(`(async () => ${script})()`);
+    if (value.includes(fixtureValue))
+      throw new Error("Renderer observed a complete credential value.");
+  }
+
+  credentials.delete("minimax-cn");
+  if (credentials.has("minimax-cn") !== "absent")
+    throw new Error("Desktop credential smoke fixture was not deleted.");
+  console.log(
+    "Desktop credential smoke passed: renderer set/presence/delete only; complete value never observable",
+  );
   app.quit();
 }
 
