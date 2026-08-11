@@ -61,6 +61,25 @@ test("default app-data root uses platform-owned locations", () => {
   assert.equal(resolveDefaultAppDataRoot("linux", {}, "/home/test"), "/home/test/.candy");
 });
 
+test("default app-data root honors an explicit Candy-owned override", () => {
+  assert.equal(
+    resolveDefaultAppDataRoot(
+      "win32",
+      { CANDY_APP_DATA_ROOT: "D:/Candy Fixture" },
+      "C:/Users/test",
+    ),
+    path.win32.resolve("D:/Candy Fixture"),
+  );
+  assert.equal(
+    resolveDefaultAppDataRoot(
+      "darwin",
+      { CANDY_APP_DATA_ROOT: "/tmp/candy-fixture" },
+      "/Users/test",
+    ),
+    "/tmp/candy-fixture",
+  );
+});
+
 test("credential store exposes presence and short-lived leases without renderer readback", () => {
   const credentials = new InMemoryCredentialStore();
   assert.equal(credentials.has("deepseek"), "absent");

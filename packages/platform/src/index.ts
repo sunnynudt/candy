@@ -44,6 +44,10 @@ export function resolveDefaultAppDataRoot(
   homeDirectory = os.homedir(),
 ): string {
   const platformPath = platform === "win32" ? path.win32 : path.posix;
+  const explicitRoot = environment.CANDY_APP_DATA_ROOT;
+  if (explicitRoot !== undefined && explicitRoot !== "") {
+    return platformPath.resolve(explicitRoot);
+  }
   if (platform === "win32") {
     return platformPath.join(
       environment.LOCALAPPDATA ?? environment.APPDATA ?? homeDirectory,

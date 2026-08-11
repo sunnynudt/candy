@@ -29,7 +29,7 @@
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
-  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `1185 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1432 ms`（目标 <= `5000 ms`）；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除，source revision 为 `7c2eb877b0a9262735623aa83016916bf0fcc997`。
+  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `798 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `991 ms`（目标 <= `5000 ms`），Runtime event 到可见 Desktop projection p95 `1 ms`（目标 <= `200 ms`），用户取消到任务进程树终止 p95 `26 ms`（目标 <= `5000 ms`），Browser Take Control 到禁用 agent action p95 `3 ms`（目标 <= `500 ms`），三任务并发 renderer frame gap p95 `21 ms`（目标 <= `1000 ms`）且 10 轮 `9/9/9=>9/9/9` 无事件丢失；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除。
   待完成：Runtime event 到 UI、取消、Browser Take Control、三任务并发冻结/丢事件等 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
 
 - ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
@@ -57,7 +57,7 @@
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
   已完成：在干净提交 `b1c88f7a9628c56f081382d054e00b49bb4cd3cc` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性 cold-start 子集本次 p95 为 TUI `803 ms`、Desktop `1004 ms`；并发槽位/FIFO、packaged sequential handoff 和 Browser selector fail-closed 子集通过，但完整 ACC-12 指标仍未完成。
+  ACC-12 确定性子集本次全部通过：TUI/Desktop cold start p95 `798/991 ms`，Runtime projection、取消终止、Take Control 与三任务并发 frame gap/event-loss 四项新增 Windows 指标均 Pass；完整 ACC-12 仍要求真实 Provider 取消延迟与完整 UI/recovery 证据。
   未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 - ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
