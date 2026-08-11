@@ -383,7 +383,11 @@ extern "system" {
 
 #[cfg(windows)]
 fn run_windows(request: RunRequest) -> String {
-    if let Some(code) = validate_windows_request(&request) {
+    let paths = match canonical_launch_paths(&request) {
+        Ok(paths) => paths,
+        Err(code) => return error_response(code),
+    };
+    if let Some(code) = validate_windows_request(&request, &paths) {
         return error_response(code);
     }
 
@@ -429,7 +433,7 @@ fn run_windows(request: RunRequest) -> String {
         return error_response("job_object_failed");
     }
 
-    let result = create_windows_process(&request, job);
+    let result = create_windows_process(&request, job, &paths);
     unsafe { CloseHandle(job) };
     match result {
         Ok(result) => result,
@@ -438,7 +442,11 @@ fn run_windows(request: RunRequest) -> String {
 }
 
 #[cfg(windows)]
-fn create_windows_process(request: &RunRequest, job: Handle) -> Result<String, &'static str> {
+fn create_windows_process(
+    request: &RunRequest,
+    job: Handle,
+    paths: &CanonicalLaunchPaths,
+) -> Result<String, &'static str> {
     let executable = wide_null(&request.executable);
     let cwd = wide_null(&request.cwd);
     let mut command_line = wide_null(&command_line(&request.executable, &request.args));
@@ -498,6 +506,15 @@ fn create_windows_process(request: &RunRequest, job: Handle) -> Result<String, &
         }
         close_many([stdout_read, stderr_read]);
         return Err("job_assignment_failed");
+    }
+    if let Some(code) = validate_launch_paths(request, paths) {
+        unsafe {
+            TerminateJobObject(job, 1);
+            CloseHandle(information.thread);
+            CloseHandle(information.process);
+        }
+        close_many([stdout_read, stderr_read]);
+        return Err(code);
     }
     if unsafe { ResumeThread(information.thread) } == u32::MAX {
         unsafe {
@@ -638,31 +655,106 @@ fn quote_windows_arg(value: &str) -> String {
 }
 
 #[cfg(windows)]
-fn validate_windows_request(request: &RunRequest) -> Option<&'static str> {
+struct CanonicalLaunchPaths {
+    workspace: std::path::PathBuf,
+    cwd: std::path::PathBuf,
+    executable: std::path::PathBuf,
+}
+
+#[cfg(windows)]
+fn canonical_launch_paths(request: &RunRequest) -> Result<CanonicalLaunchPaths, &'static str> {
     let workspace = Path::new(&request.workspace);
     let cwd = Path::new(&request.cwd);
-    if !workspace.is_absolute()
-        || !cwd.is_absolute()
-        || !Path::new(&request.executable).is_absolute()
-    {
-        return Some("invalid_path");
+    let executable = Path::new(&request.executable);
+    if !workspace.is_absolute() || !cwd.is_absolute() || !executable.is_absolute() {
+        return Err("invalid_path");
     }
     if has_reparse_component(workspace) || has_reparse_component(cwd) {
-        return Some("reparse_forbidden");
+        return Err("reparse_forbidden");
     }
     let Ok(workspace) = fs::canonicalize(workspace) else {
-        return Some("invalid_path");
+        return Err("invalid_path");
     };
     let Ok(cwd) = fs::canonicalize(cwd) else {
-        return Some("invalid_path");
+        return Err("invalid_path");
     };
+    let Ok(executable) = fs::canonicalize(executable) else {
+        return Err("invalid_path");
+    };
+    if executable.file_name().is_none() {
+        return Err("invalid_path");
+    }
+    Ok(CanonicalLaunchPaths {
+        workspace,
+        cwd,
+        executable,
+    })
+}
+
+#[cfg(windows)]
+fn validate_windows_request(
+    _request: &RunRequest,
+    paths: &CanonicalLaunchPaths,
+) -> Option<&'static str> {
+    let workspace = &paths.workspace;
+    let cwd = &paths.cwd;
     if !windows_path_is_within(&cwd, &workspace) {
         return Some("workspace_escape");
+    }
+    if executable_is_reparse(&paths.executable) {
+        return Some("reparse_forbidden");
     }
     if contains_reparse_tree(&workspace) {
         return Some("reparse_forbidden");
     }
     None
+}
+
+#[cfg(windows)]
+fn executable_is_reparse(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    metadata.file_type().is_symlink()
+}
+
+/// Re-validate the canonical launch paths after CreateProcessW resolved them
+/// but before the suspended process is resumed. This closes the window in which
+/// a workspace or executable path component could be swapped for a reparse point
+/// or outside-workspace target between the pre-flight check and process launch.
+#[cfg(windows)]
+fn validate_launch_paths(
+    request: &RunRequest,
+    expected: &CanonicalLaunchPaths,
+) -> Option<&'static str> {
+    let Ok(workspace) = fs::canonicalize(Path::new(&request.workspace)) else {
+        return Some("invalid_path");
+    };
+    let Ok(cwd) = fs::canonicalize(Path::new(&request.cwd)) else {
+        return Some("invalid_path");
+    };
+    let Ok(executable) = fs::canonicalize(Path::new(&request.executable)) else {
+        return Some("invalid_path");
+    };
+    if has_reparse_component(&workspace)
+        || has_reparse_component(&cwd)
+        || !windows_path_is_within(&cwd, &workspace)
+    {
+        return Some("reparse_forbidden");
+    }
+    if !same_windows_path(&workspace, &expected.workspace)
+        || !same_windows_path(&cwd, &expected.cwd)
+        || !same_windows_path(&executable, &expected.executable)
+        || executable_is_reparse(&executable)
+    {
+        return Some("reparse_forbidden");
+    }
+    None
+}
+
+#[cfg(windows)]
+fn same_windows_path(left: &Path, right: &Path) -> bool {
+    normalize_windows_path(left) == normalize_windows_path(right)
 }
 
 #[cfg(windows)]

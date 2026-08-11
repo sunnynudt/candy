@@ -181,9 +181,32 @@ try {
   rmSync(junction, { recursive: false, force: true });
   junctionPath = undefined;
 
+  const missingExecutable = await runNative(
+    requestFor(workspace, {
+      executable: path.join(root, "missing-executable.exe"),
+    }),
+  );
+  assert.deepEqual(
+    missingExecutable.response,
+    { v: 1, kind: "error", code: "invalid_path" },
+    "runner accepted a missing executable path",
+  );
+
+  const largeOutput = await runNative(
+    requestFor(workspace, {
+      args: ["-e", "process.stdout.write('x'.repeat(2 * 1024 * 1024))"],
+    }),
+  );
+  assert.equal(largeOutput.response?.kind, "completed");
+  assert.equal(largeOutput.response?.code, 0);
+  assert.ok(
+    largeOutput.response?.stdout.length <= 1024 * 1024,
+    "runner did not bound oversized child output",
+  );
+
   await runCancellationFixture();
   console.log(
-    "native Windows Job Object smoke passed: completion, network rejection, workspace/reparse rejection, descendant cancellation",
+    "native Windows Job Object smoke passed: completion, network rejection, workspace/reparse rejection, missing-executable rejection, bounded output, descendant cancellation",
   );
 } finally {
   await removeFixtureTree();
