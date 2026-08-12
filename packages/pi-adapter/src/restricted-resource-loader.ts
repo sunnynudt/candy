@@ -7,6 +7,24 @@ const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const REDACTED_CREDENTIAL = "[REDACTED]";
 
+interface RestrictedResourceFileStats {
+  readonly size: number;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+interface RestrictedResourceFileSystem {
+  lstat(filePath: string): RestrictedResourceFileStats;
+  readFile(filePath: string): Buffer;
+  realpath(filePath: string): string;
+}
+
+const DEFAULT_FILE_SYSTEM: RestrictedResourceFileSystem = {
+  lstat: (filePath) => lstatSync(filePath),
+  readFile: (filePath) => readFileSync(filePath),
+  realpath: (filePath) => realpathSync(filePath),
+};
+
 /**
  * Candy's resource boundary. Pi is allowed to consume the public ResourceLoader
  * contract, but it must not discover files, packages, or executable resources.
@@ -16,8 +34,8 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
 
   private readonly agentsFiles: Array<{ path: string; content: string }>;
 
-  public constructor(cwd: string) {
-    this.agentsFiles = readApprovedContextFile(cwd);
+  public constructor(cwd: string, fileSystem: RestrictedResourceFileSystem = DEFAULT_FILE_SYSTEM) {
+    this.agentsFiles = readApprovedContextFile(cwd, fileSystem);
   }
 
   public getExtensions(): LoadExtensionsResult {
@@ -79,20 +97,23 @@ type RestrictedResourceExtensionPaths = {
   readonly themePaths?: readonly unknown[];
 };
 
-function readApprovedContextFile(cwd: string): Array<{ path: string; content: string }> {
+function readApprovedContextFile(
+  cwd: string,
+  fileSystem: RestrictedResourceFileSystem,
+): Array<{ path: string; content: string }> {
   const workspaceRoot = path.resolve(cwd);
   const contextPath = path.join(workspaceRoot, CONTEXT_FILE_NAME);
 
   try {
-    const workspaceRealPath = realpathSync(workspaceRoot);
-    const contextStats = lstatSync(contextPath);
+    const workspaceRealPath = fileSystem.realpath(workspaceRoot);
+    const contextStats = fileSystem.lstat(contextPath);
     if (!contextStats.isFile() || contextStats.isSymbolicLink()) return [];
     if (contextStats.size > MAX_CONTEXT_FILE_BYTES) return [];
 
-    const contextRealPath = realpathSync(contextPath);
+    const contextRealPath = fileSystem.realpath(contextPath);
     if (!isWithinRoot(workspaceRealPath, contextRealPath)) return [];
 
-    const content = decodeUtf8(readFileSync(contextPath));
+    const content = decodeUtf8(fileSystem.readFile(contextPath));
     if (content === undefined) return [];
 
     return [{ path: contextRealPath, content: redactCredentialMaterial(content) }];

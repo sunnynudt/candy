@@ -12,6 +12,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -345,7 +346,37 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
 
     await rm(path.join(root, "AGENTS.md"));
     await writeFile(path.join(root, "AGENTS.md"), `root guidance\ntoken: ${credentialCanary}\n`);
-    const loader = new CandyRestrictedResourceLoader(root);
+    await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+    await writeFile(path.join(root, ".pi", "settings.json"), "package probe\n");
+    const observedPaths: string[] = [];
+    const observedDotPiPaths: string[] = [];
+    const dotPiPath = path.resolve(root, ".pi");
+    const observePath = (filePath: string): void => {
+      const resolvedPath = path.resolve(filePath);
+      const relativePath = path.relative(dotPiPath, resolvedPath);
+      const isInsideDotPi =
+        relativePath === "" || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`));
+      if (isInsideDotPi) {
+        observedDotPiPaths.push(filePath);
+      }
+      observedPaths.push(filePath);
+    };
+    const loader = new CandyRestrictedResourceLoader(root, {
+      lstat: (filePath) => {
+        observePath(filePath);
+        return lstatSync(filePath);
+      },
+      readFile: (filePath) => {
+        observePath(filePath);
+        return readFileSync(filePath);
+      },
+      realpath: (filePath) => {
+        observePath(filePath);
+        return realpathSync(filePath);
+      },
+    });
+    assert.ok(observedPaths.length > 0);
+    assert.deepEqual(observedDotPiPaths, []);
     const extensions = loader.getExtensions();
     assert.deepEqual(extensions.extensions, []);
     assert.deepEqual(extensions.errors, []);
