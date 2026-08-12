@@ -20,6 +20,16 @@ This is a deterministic implementation checkpoint for the Windows Personal Previ
 - Coverage includes Pi Bash argv, approval ordering, cwd containment, non-Git rejection before Worktree creation, timeout/abort propagation, credential rejection before approval/spawn, approval projection, and cancellation without replay.
 - Existing Git Worktree review, Apply, and Discard fixtures remain green.
 
+## Windows dogfooding and packaging
+
+- `npm run check:native`: passed.
+- `npm run smoke:native:windows`: passed Job Object completion, network rejection, workspace/reparse rejection, missing-executable rejection, bounded output, and descendant cancellation.
+- `npm run smoke:app-server`, `npm run smoke:tui-task`, `npm run smoke:desktop`, and the Windows recovery/long-running/attachment/cross-client/concurrency smoke commands passed.
+- With `ELECTRON_OVERRIDE_DIST_PATH=D:\candy\out\electron-dist`, `npm run package:desktop:windows` produced unsigned Electron `43.2.0` output and packaged Desktop JSONL, recovery, handoff, long-running, credential-isolation, coding-journey, Browser, and packaged Credential Manager smokes passed.
+- `npm run acceptance:windows`: **22 passed, 0 failed**. Responsiveness subset: TUI/Desktop p95 `1161/1365 ms`, projection `1 ms`, cancellation `16 ms`, Browser `1 ms`, concurrency frame-gap `21 ms`.
+
+These results are Windows deterministic/unsigned preview evidence. They do not prove signed installation, live Provider Shell execution, OS-level arbitrary-command containment, physical Browser input origin, independent security review, or complete G2.
+
 ## Windows host limitation
 
 The required fixed Git Bash executable is not present on this host, so real command execution was not attempted and the adapter fails closed with a clear missing-executable error. No alternative Git installation path is substituted. Deterministic tests use an injected runner and do not claim live Provider or live Shell evidence.

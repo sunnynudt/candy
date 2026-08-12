@@ -200,3 +200,7 @@ Blocked external resources do not stop independent implementation. They do preve
 
 - **Fixed Git Bash executable unavailable:** the required `C:\Program Files\Git\bin\bash.exe` is not present on the current Windows host. Candy fails closed; no alternate Git installation path is used. This blocks live Pi Bash dogfooding, but not the deterministic adapter/approval/Worktree tests.
 - **Security scope remains preview-only:** Personal Preview Shell uses the current Windows user's permissions. Job Objects provide process ownership and cancellation, not OS-level workspace or network containment. AppContainer/WFP, reparse/race hardening, independent security review, and Shell Auto/Shell Auto Debug remain blocked or disabled as documented above.
+
+## 2026-08-13 WP4/WP5 result
+
+- Windows deterministic acceptance remains green at **22/22** after the Personal Preview implementation, including unsigned packaged Desktop and responsiveness evidence. This does not clear the existing signing, live Provider, OS containment, Browser physical-input, independent-security-review, or final acceptance blockers.

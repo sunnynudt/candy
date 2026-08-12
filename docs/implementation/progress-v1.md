@@ -73,6 +73,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Deterministic verification passed: TypeScript build and `scripts/run-tests.mjs` passed **136/136**. Evidence is recorded in `docs/evidence/windows-personal-preview-2026-08-13.md`.
 - The required fixed Git Bash executable is absent on the current host, so live Shell execution is intentionally blocked by fail-closed behavior. This checkpoint does not claim live Provider evidence, Windows Release Pass, complete G2, or final V1 acceptance.
 
+## 2026-08-13 Windows Personal Preview WP4-WP5 evidence
+
+- Windows native and packaged dogfooding passed after the Personal Preview changes: native Job Object smoke, app-server/TUI/Desktop smoke, recovery, long-running cancellation, attachment recovery, cross-client fencing, three-slot concurrency, unsigned packaged Desktop recovery/handoff/long-running/credential-isolation/coding-journey/Browser/Credential Manager smokes, and the responsiveness subset.
+- `npm run acceptance:windows` passed **22/22**. The latest responsiveness report records TUI/Desktop p95 `1161/1365 ms`, Runtime projection `1 ms`, cancellation `16 ms`, Browser `1 ms`, and concurrent frame-gap `21 ms`.
+- The unsigned Desktop package was built with the verified Electron `43.2.0` runtime. This is a Personal Preview artifact, not a signed Windows release.
+- The fixed Git Bash path remains absent on the host, so no live Pi Bash command or real Provider credential was used. The preview remains fail-closed and must not be described as complete G2 or Windows Release Pass.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint
