@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
+import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
 
@@ -711,6 +712,8 @@ export class PiAgentEngine {
       const sessionManager = existing
         ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
         : piSdk.SessionManager.create(input.cwd, sessionDirectory);
+      const settingsManager = piSdk.SettingsManager.inMemory({}, { projectTrusted: false });
+      const resourceLoader = new CandyRestrictedResourceLoader(input.cwd);
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
         input.approvalProfile ?? "read-only",
@@ -724,6 +727,8 @@ export class PiAgentEngine {
         noTools: "builtin",
         tools: workspaceTools.map((tool) => tool.name),
         customTools: workspaceTools,
+        resourceLoader,
+        settingsManager,
       });
       session = created.session;
       if (input.thinkingLevel !== undefined) {

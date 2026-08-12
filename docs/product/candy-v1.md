@@ -147,7 +147,7 @@ V1 does not:
 - rewrite the agent loop;
 - promise compatibility with the full Pi extension ecosystem.
 
-Current source-boundary gap: `PiAgentEngine` creates Pi's `AgentSession` without supplying a restricted Resource Loader. Pi's default loader treats the workspace as trusted and can discover workspace `.pi/extensions`. Candy does not expose this as a product capability, but the current source has not hard-disabled it. This must be blocked and covered by a workspace fixture before Candy can claim the V1 no-plugin boundary or release security acceptance.
+The WP1 source boundary is now enforced in the Pi Adapter: `PiAgentEngine` supplies a Candy-owned `CandyRestrictedResourceLoader` and an in-memory `SettingsManager` with `projectTrusted: false`. The loader never discovers or reloads Pi resources, exposes empty extensions/skills/prompts/themes, rejects non-empty resource extension requests, and reads only a bounded, non-symlink root `AGENTS.md` after credential redaction. `.pi` settings, packages, extensions, skills, prompts, themes, and executable resources are outside the Candy session boundary. The deterministic hostile-workspace fixture proves this behavior and is not macOS/Windows platform acceptance or a final release-security Pass.
 
 Pin the complete Pi package family to exact `0.84.1` and verify session behavior on both supported operating systems. Pi is the agent-runtime compatibility anchor: Node stays on Pi's tested Node 22 line, TypeScript matches Pi `5.9.3`, and npm follows the selected Node distribution and Pi's lockfile workflow. Pi and these boundary-sensitive toolchain versions upgrade as one compatibility change, never as independent freshness updates.
 

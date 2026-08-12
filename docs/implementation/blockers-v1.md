@@ -21,6 +21,13 @@ Updated: 2026-08-12
 | G4-WORKTREE       | Implementation agent                     | In progress | Reviewed Apply Changes acceptance                          | Desktop Apply runs through a real Task Worktree handoff with persisted association, explicit discard, and patch-truncation/manifest-change guards; macOS `/var` to `/private/var` canonical association, cross-host Windows path-seam fixtures, dirty target, changed base, conflict, untracked collision, real Windows Git worktree/Apply/restart fixtures, and junction escape rejection pass. Broader platform matrices, Windows reparse-point evidence, and security review remain under G0-WIN/G2. |
 | G5-PERSISTED-AUTO | Implementation agent                     | In progress | Long-running product acceptance                            | Auto tasks now alternate bounded normal turns and the same validator, persist run progress/stop reasons, expose Desktop progress, mark restart uncertainty as `crash_interrupted`, and pass Windows/macOS packaged approval/steering and validator evidence; complete user steering/approval integration, final evidence summary, native shell validator, and packaged/platform evidence. |
 
+## WP1 checkpoint oversight
+
+- The engineer owns only the implementation and deterministic evidence for WP1 `restricted-resource-loader`; the current scope is `packages/pi-adapter` plus the four WP1 documentation updates.
+- The test agent independently re-runs the hostile `.pi` fixture and checks zero resource discovery, subprocess/network/install side effects, tool/command registration, prompt/session changes, and marker-file creation. The engineer's local 13/13 Pi Adapter result is not the QA decision.
+- The architect reviews the diff against the WP1 whitelist and acceptance/stop conditions, then explicitly decides Pass, Blocked, or required fixes. WP2 pi-tui, WP3 native-process, and WP4 read-only tool reuse remain gated until that review and QA result are published.
+- This checkpoint does not clear G2, platform acceptance, live-provider, signing, Browser, or final ACC-01..12 blockers.
+
 ## Daily platform handoff boundary
 
 ## 2026-08-12 macOS live DeepSeek checkpoint

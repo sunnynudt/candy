@@ -19,6 +19,14 @@ Updated: 2026-08-12
 
 Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is `Pass` only when its mapped acceptance evidence is complete.
 
+## 2026-08-12 WP1 restricted-resource-loader checkpoint
+
+- `PiAgentEngine` now passes `CandyRestrictedResourceLoader` and an in-memory `SettingsManager` with `projectTrusted: false` to Pi's public `createAgentSession` API. The adapter does not invoke Pi's `DefaultResourceLoader`, `DefaultPackageManager`, or resource discovery path.
+- The restricted loader returns empty extensions, skills, prompts, and themes; rejects non-empty resource extension requests; and reads only a bounded, non-symlink root `AGENTS.md` with credential-shaped content redacted. Returned context data is copied at the boundary.
+- The hostile workspace fixture covers `.pi/settings.json` package configuration, extension/skill/prompt/theme resources, an executable subprocess probe, an install probe, a symlink, a network canary, and a credential canary. The fixture passes with no marker, non-provider request, `.pi` content, or credential exposure in the request/session.
+- Validation on this host: Node `22.23.2`, npm `10.9.8`, `npm run check` passes format, lint, typecheck, all 111 repository tests, Pi boundary/version checks, and lifecycle policy. This checkpoint is still not macOS/Windows platform acceptance or a final security/release Pass.
+- WP2 pi-tui, WP3 native-process, and WP4 read-only tool reuse remain unopened until the WP1 QA fixture is independently accepted. Shell Auto and Shell Auto Debug remain disabled.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint

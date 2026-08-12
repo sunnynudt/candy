@@ -112,7 +112,7 @@ The Runtime depends on one narrow Agent Engine Interface that advances a complet
 
 Pi messages, tool definitions, model objects, session paths, and provider payloads never cross this seam. A Pi upgrade is complete only when adapter contract, session reload, cancellation, tool-policy, and event-order tests pass.
 
-Current source gap: `PiAgentEngine` calls Pi's `createAgentSession` without an explicit Resource Loader. Pi consequently constructs its default loader with the workspace trusted and can discover `cwd/.pi/extensions`. Candy does not surface the resulting extension capability or types, but it also does not yet hard-disable execution. A V1 hardening change must pass a Candy-owned restricted loader (at minimum Pi's `noExtensions: true` behavior, with an explicit decision for any non-executable context or skills) and prove a workspace extension cannot load. Until then, the no-plugin product boundary is an intended policy rather than an enforced source property.
+WP1 now enforces the source boundary with a Candy-owned `CandyRestrictedResourceLoader` passed to `createAgentSession` together with `SettingsManager.inMemory({}, { projectTrusted: false })`. The loader does not instantiate or invoke Pi's default resource/package discovery, returns empty extensions/skills/prompts/themes, rejects non-empty `extendResources` requests, and reads only a bounded, regular root `AGENTS.md` after redaction. The hostile `.pi` fixture covers settings package configuration, executable extension and install probes, symlink, and network canary behavior. This is deterministic source/fixture evidence only; macOS/Windows platform acceptance and the final security gates remain open.
 
 ### Browser Interface
 

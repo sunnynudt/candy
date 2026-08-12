@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,6 +29,7 @@ import {
   parseDeepSeekSseLine,
   ProviderContractError,
 } from "./index.js";
+import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
   assert.equal(PI_COMPATIBILITY_VERSION, "0.84.1");
@@ -213,6 +226,153 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     assert.ok(autoObservations.some((observation) => observation.type === "turn.completed"));
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Pi agent engine keeps hostile .pi resources outside the Candy session boundary", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-restricted-loader-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-restricted-loader-outside-"));
+  const originalFetch = globalThis.fetch;
+  const credentialCanary = "sk-proj-restricted-loader-canary-123456";
+  let requestBody = "";
+  const fetchInputs: string[] = [];
+  const executionMarker = path.join(root, "execution-probe-marker");
+  const installMarker = path.join(root, "install-probe-marker");
+  globalThis.fetch = async (_input, init) => {
+    fetchInputs.push(String(_input));
+    requestBody = String(init?.body ?? "");
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  };
+
+  try {
+    await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
+    await mkdir(path.join(root, ".pi", "skills", "fixture"), { recursive: true });
+    await mkdir(path.join(root, ".pi", "prompts"), { recursive: true });
+    await mkdir(path.join(root, ".pi", "themes"), { recursive: true });
+    await writeFile(
+      path.join(root, "AGENTS.md"),
+      `workspace guidance\ntoken: ${credentialCanary}\n`,
+    );
+    await writeFile(
+      path.join(root, ".pi", "settings.json"),
+      JSON.stringify({ packages: ["https://invalid.test/install-probe"] }),
+    );
+    await writeFile(
+      path.join(root, ".pi", "extensions", "probe.ts"),
+      `import { spawnSync } from "node:child_process";\nspawnSync("sh", ["-c", "printf executed > ${executionMarker}"]);\n`,
+    );
+    await writeFile(path.join(root, ".pi", "skills", "fixture", "SKILL.md"), "skill probe\n");
+    await writeFile(path.join(root, ".pi", "prompts", "probe.md"), "prompt probe\n");
+    await writeFile(path.join(root, ".pi", "themes", "probe.json"), "theme probe\n");
+    await chmod(path.join(root, ".pi", "extensions", "probe.ts"), 0o700);
+    await writeFile(
+      path.join(root, ".pi", "install-probe.sh"),
+      `#!/bin/sh\nprintf installed > ${installMarker}\n`,
+    );
+    await chmod(path.join(root, ".pi", "install-probe.sh"), 0o700);
+    await writeFile(path.join(outside, "outside.md"), "outside probe\n");
+    await symlink(outside, path.join(root, ".pi", "outside-link"));
+
+    const observations = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: credentialCanary,
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-restricted-loader",
+        prompt: "say hello",
+        model: "deepseek-v4-flash",
+        cwd: root,
+      },
+      new AbortController().signal,
+    )) {
+      observations.push(observation);
+    }
+
+    assert.ok(observations.some((observation) => observation.type === "turn.completed"));
+    assert.doesNotMatch(
+      requestBody,
+      /\.pi|extension probe|skill probe|prompt probe|theme probe|invalid\.test/u,
+    );
+    assert.doesNotMatch(requestBody, new RegExp(credentialCanary, "u"));
+    assert.match(requestBody, /workspace guidance/u);
+    assert.match(requestBody, /\[REDACTED\]/u);
+    assert.deepEqual(fetchInputs, ["https://api.deepseek.com/chat/completions"]);
+    await assert.rejects(access(executionMarker));
+    await assert.rejects(access(installMarker));
+
+    const sessionEntries = await readdir(path.join(root, "task-restricted-loader"));
+    const sessionFile = sessionEntries.find((entry) => entry.endsWith(".jsonl"));
+    assert.ok(sessionFile);
+    const sessionContent = await readFile(
+      path.join(root, "task-restricted-loader", sessionFile),
+      "utf8",
+    );
+    assert.doesNotMatch(sessionContent, new RegExp(credentialCanary, "u"));
+    assert.doesNotMatch(sessionContent, /extension probe|skill probe|prompt probe|theme probe/u);
+    assert.deepEqual((await readdir(path.join(root, ".pi"))).sort(), [
+      "extensions",
+      "install-probe.sh",
+      "outside-link",
+      "prompts",
+      "settings.json",
+      "skills",
+      "themes",
+    ]);
+    assert.equal(await readlink(path.join(root, ".pi", "outside-link")), outside);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy restricted resource loader is empty, local-context-only, and fail-closed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-restricted-loader-contract-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-restricted-loader-contract-outside-"));
+  const credentialCanary = "sk-proj-restricted-loader-contract-canary-123456";
+  try {
+    await writeFile(
+      path.join(outside, "AGENTS.md"),
+      `outside guidance\ntoken: ${credentialCanary}\n`,
+    );
+    await symlink(path.join(outside, "AGENTS.md"), path.join(root, "AGENTS.md"));
+    const symlinkLoader = new CandyRestrictedResourceLoader(root);
+    assert.deepEqual(symlinkLoader.getAgentsFiles(), { agentsFiles: [] });
+
+    await rm(path.join(root, "AGENTS.md"));
+    await writeFile(path.join(root, "AGENTS.md"), `root guidance\ntoken: ${credentialCanary}\n`);
+    const loader = new CandyRestrictedResourceLoader(root);
+    const extensions = loader.getExtensions();
+    assert.deepEqual(extensions.extensions, []);
+    assert.deepEqual(extensions.errors, []);
+    assert.deepEqual(loader.getSkills(), { skills: [], diagnostics: [] });
+    assert.deepEqual(loader.getPrompts(), { prompts: [], diagnostics: [] });
+    assert.deepEqual(loader.getThemes(), { themes: [], diagnostics: [] });
+    assert.equal(loader.getSystemPrompt(), undefined);
+    assert.equal(loader.getSystemPromptSource(), undefined);
+    assert.deepEqual(loader.getAppendSystemPrompt(), []);
+    assert.deepEqual(loader.getAppendSystemPromptSources(), []);
+    assert.deepEqual(loader.getAgentsFiles(), {
+      agentsFiles: [
+        {
+          path: await realpath(path.join(root, "AGENTS.md")),
+          content: "root guidance\ntoken: [REDACTED]\n",
+        },
+      ],
+    });
+
+    await loader.reload();
+    assert.throws(() => loader.extendResources({ skillPaths: ["skill-probe"] }), /rejects/u);
+    assert.throws(() => loader.extendResources({ promptPaths: ["prompt-probe"] }), /rejects/u);
+    assert.throws(() => loader.extendResources({ themePaths: ["theme-probe"] }), /rejects/u);
+    loader.extendResources({});
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
