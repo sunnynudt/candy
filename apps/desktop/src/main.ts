@@ -16,6 +16,7 @@ import {
 import {
   cleanChildEnvironment,
   DEFAULT_CANDY_MODEL,
+  InMemoryCredentialStore,
   KeyringCredentialStore,
   resolveAppPaths,
   resolveDefaultAppDataRoot,
@@ -638,7 +639,10 @@ async function saveWorkspaceSelection(workspacePath: string): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
-  const credentials = new KeyringCredentialStore();
+  const credentials =
+    process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1"
+      ? new InMemoryCredentialStore()
+      : new KeyringCredentialStore();
   const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
   browserAttachments = attachments;
   ipcMain.handle("browser.allow-site", (event, host: unknown) => {
@@ -1356,15 +1360,25 @@ async function runDesktopCredentialSmoke(): Promise<void> {
   const fixtureValue = process.env.CANDY_CREDENTIAL_FIXTURE_VALUE;
   if (fixtureValue === undefined || fixtureValue.length === 0)
     throw new Error("Desktop credential smoke fixture value is unavailable.");
-  const credentials = new KeyringCredentialStore();
   await waitForDesktopRenderer();
 
-  credentials.replace("minimax-cn", fixtureValue);
-  if (credentials.has("minimax-cn") !== "present")
-    throw new Error("Desktop credential smoke fixture was not stored.");
+  const credentialName = "minimax-cn";
+  const initialPresence = await executeRenderer<"present" | "absent">(
+    `window.candy.credentials.has(${JSON.stringify(credentialName)})`,
+  );
+  if (initialPresence !== "absent")
+    throw new Error("Desktop credential smoke fixture store was not empty.");
+  await executeRenderer(
+    `(async () => { await window.candy.credentials.set(${JSON.stringify(credentialName)}, ${JSON.stringify(fixtureValue)}); return true; })()`,
+  );
+  const storedPresence = await executeRenderer<"present" | "absent">(
+    `window.candy.credentials.has(${JSON.stringify(credentialName)})`,
+  );
+  if (storedPresence !== "present")
+    throw new Error("Desktop credential smoke renderer set did not store the fixture.");
 
   const readAttempts = [
-    "(await window.candy.credentials.has('minimax-cn'))",
+    `await window.candy.credentials.has(${JSON.stringify(credentialName)})`,
     "JSON.stringify(Object.keys(window.candy.credentials))",
     "JSON.stringify(Object.getOwnPropertyNames(window.candy))",
     "JSON.stringify(Object.getOwnPropertyNames(window.candy.credentials))",
@@ -1375,9 +1389,14 @@ async function runDesktopCredentialSmoke(): Promise<void> {
       throw new Error("Renderer observed a complete credential value.");
   }
 
-  credentials.delete("minimax-cn");
-  if (credentials.has("minimax-cn") !== "absent")
-    throw new Error("Desktop credential smoke fixture was not deleted.");
+  await executeRenderer(
+    `(async () => { await window.candy.credentials.delete(${JSON.stringify(credentialName)}); return true; })()`,
+  );
+  const deletedPresence = await executeRenderer<"present" | "absent">(
+    `window.candy.credentials.has(${JSON.stringify(credentialName)})`,
+  );
+  if (deletedPresence !== "absent")
+    throw new Error("Desktop credential smoke renderer delete did not remove the fixture.");
   console.log(
     "Desktop credential smoke passed: renderer set/presence/delete only; complete value never observable",
   );

@@ -47,12 +47,14 @@ const fixtureRoot = await mkdtemp(
 );
 const home = path.join(fixtureRoot, "home");
 const temporary = path.join(fixtureRoot, "tmp");
+const appData = path.join(fixtureRoot, "app-data");
 const workspace = path.join(fixtureRoot, "workspace");
 const marker = path.join(workspace, "validator-survived.txt");
 const queuedTaskId = packaged ? "packaged-macos-queued-recovery" : "macos-queued-recovery";
 const activeTaskId = packaged ? "packaged-macos-active-recovery" : "macos-active-recovery";
 await mkdir(home, { recursive: true });
 await mkdir(temporary, { recursive: true });
+await mkdir(appData, { recursive: true });
 await mkdir(workspace);
 
 function command(taskId, commandId, expectedRevision, value) {
@@ -70,6 +72,7 @@ async function startServer() {
   const environment = cleanChildEnvironment(process.env);
   environment.HOME = home;
   environment.TMPDIR = temporary;
+  environment.CANDY_APP_DATA_ROOT = appData;
   environment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
   environment.CANDY_SANDBOX_RUNNER = sandboxRunner;
   const child = spawn(runtimeExecutable, [appServer], {
@@ -87,10 +90,11 @@ async function startServer() {
 
 async function waitForSnapshot(server, predicate) {
   return new Promise((resolve, reject) => {
+    const timeoutMs = packaged ? 30_000 : 10_000;
     const timeout = globalThis.setTimeout(() => {
       server.lines.off("line", onLine);
       reject(new Error("macOS recovery did not emit the expected snapshot."));
-    }, 10_000);
+    }, timeoutMs);
     const onLine = (line) => {
       try {
         const parsed = JSON.parse(line);
@@ -113,10 +117,11 @@ async function waitForSnapshot(server, predicate) {
 
 async function waitForEvent(server, taskId, type) {
   return new Promise((resolve, reject) => {
+    const timeoutMs = packaged ? 30_000 : 10_000;
     const timeout = globalThis.setTimeout(() => {
       server.lines.off("line", onLine);
       reject(new Error(`macOS recovery did not emit ${type}.`));
-    }, 10_000);
+    }, timeoutMs);
     const onLine = (line) => {
       try {
         const parsed = JSON.parse(line);

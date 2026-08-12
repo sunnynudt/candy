@@ -24,12 +24,14 @@ if (!existsSync(packagedNode) || !existsSync(appServer) || !existsSync(sandboxRu
 const fixtureRoot = await mkdtemp(path.join(tmpdir(), "candy-packaged-handoff-macos-"));
 const home = path.join(fixtureRoot, "home");
 const temporary = path.join(fixtureRoot, "tmp");
+const appData = path.join(fixtureRoot, "app-data");
 const workspace = path.join(fixtureRoot, "workspace");
 const marker = path.join(fixtureRoot, "validator-invocations.txt");
 const descendantMarker = path.join(fixtureRoot, "validator-descendant-survived.txt");
 const taskId = "packaged-macos-handoff";
 await mkdir(home, { recursive: true });
 await mkdir(temporary, { recursive: true });
+await mkdir(appData, { recursive: true });
 await mkdir(workspace);
 
 function command(commandId, expectedRevision, value) {
@@ -47,6 +49,7 @@ async function startServer() {
   const environment = cleanChildEnvironment(process.env);
   environment.HOME = home;
   environment.TMPDIR = temporary;
+  environment.CANDY_APP_DATA_ROOT = appData;
   environment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
   environment.CANDY_SANDBOX_RUNNER = sandboxRunner;
   const child = spawn(packagedNode, [appServer], {

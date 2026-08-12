@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanChildEnvironment } from "@candy/platform";
@@ -15,7 +17,17 @@ const electronExecutable = electronModule.default ?? electronModule;
 if (typeof electronExecutable !== "string" || !path.isAbsolute(electronExecutable))
   throw new Error("Electron executable path is unavailable.");
 
+const fixtureRoot = await mkdtemp(path.join(tmpdir(), "candy-desktop-macos-"));
+const home = path.join(fixtureRoot, "home");
+const temporary = path.join(fixtureRoot, "tmp");
+const appData = path.join(fixtureRoot, "app-data");
+await mkdir(home, { recursive: true });
+await mkdir(temporary, { recursive: true });
+await mkdir(appData, { recursive: true });
 const environment = cleanChildEnvironment(process.env);
+environment.HOME = home;
+environment.TMPDIR = temporary;
+environment.CANDY_APP_DATA_ROOT = appData;
 environment.CANDY_DESKTOP_RUN = "1";
 environment.CANDY_DESKTOP_SMOKE = "1";
 environment.CANDY_DEV_APP_SERVER_NODE = process.execPath;
@@ -34,15 +46,20 @@ child.stderr.on("data", (chunk) => {
 });
 
 const timeout = globalThis.setTimeout(() => child.kill("SIGTERM"), 10_000);
-const exit = await new Promise((resolve, reject) => {
-  child.once("error", reject);
-  child.once("exit", (code, signal) => resolve({ code, signal }));
-});
-globalThis.clearTimeout(timeout);
+try {
+  const exit = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
 
-if (exit.code !== 0) {
-  throw new Error(
-    `Desktop smoke exited with code ${exit.code ?? "null"} (${exit.signal ?? "no signal"}): ${stderr}`,
-  );
+  if (exit.code !== 0) {
+    throw new Error(
+      `Desktop smoke exited with code ${exit.code ?? "null"} (${exit.signal ?? "no signal"}): ${stderr}`,
+    );
+  }
+  console.log("desktop app-server JSONL smoke ok");
+} finally {
+  globalThis.clearTimeout(timeout);
+  if (child.exitCode === null) child.kill("SIGTERM");
+  await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
-console.log("desktop app-server JSONL smoke ok");

@@ -34,6 +34,7 @@ const steps = [
   "check:toolchain",
   "check",
   "check:native",
+  "measure:macos:responsiveness",
   "smoke:sandbox:macos",
   "smoke:long-running:macos",
   "smoke:runtime-session-remap",
@@ -47,8 +48,9 @@ const steps = [
   "smoke:desktop:packaged:recovery:macos",
   "smoke:desktop:packaged:handoff:macos",
   "smoke:desktop:packaged:long-running:macos",
+  "smoke:desktop:packaged:credential-isolation:macos",
+  "smoke:desktop:packaged:coding-journey:macos",
   "smoke:browser:macos",
-  "measure:macos:responsiveness",
 ];
 const results = [];
 

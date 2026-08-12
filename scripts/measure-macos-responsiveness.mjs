@@ -50,29 +50,46 @@ if (typeof electronExecutable !== "string" || !path.isAbsolute(electronExecutabl
   throw new Error("Electron executable path is unavailable.");
 
 const runs = 10;
-const tui = await measure(() =>
-  runProcess(
-    process.execPath,
-    [tuiEntrypoint, "--smoke"],
-    root,
-    cleanChildEnvironment(process.env),
-  ),
-);
-const desktopEnvironment = cleanChildEnvironment(process.env);
-desktopEnvironment.CANDY_DESKTOP_RUN = "1";
-desktopEnvironment.CANDY_DESKTOP_SMOKE = "1";
-desktopEnvironment.CANDY_DEV_APP_SERVER_NODE = process.execPath;
-desktopEnvironment.CANDY_DEV_APP_SERVER_ENTRY = appServerEntrypoint;
-const desktop = await measure(() =>
-  runProcess(electronExecutable, [desktopEntrypoint], root, desktopEnvironment),
-);
+const isolationRoot = await mkdtemp(path.join(tmpdir(), "candy-responsiveness-app-data-macos-"));
+const isolationHome = path.join(isolationRoot, "home");
+const isolationTemporary = path.join(isolationRoot, "tmp");
+const isolationAppData = path.join(isolationRoot, "app-data");
+await mkdir(isolationHome, { recursive: true });
+await mkdir(isolationTemporary, { recursive: true });
+await mkdir(isolationAppData, { recursive: true });
+const isolatedEnvironment = () => {
+  const environment = cleanChildEnvironment(process.env);
+  environment.HOME = isolationHome;
+  environment.TMPDIR = isolationTemporary;
+  environment.CANDY_APP_DATA_ROOT = isolationAppData;
+  return environment;
+};
+let tui;
+let desktop;
+try {
+  tui = await measure(() =>
+    runProcess(process.execPath, [tuiEntrypoint, "--smoke"], root, isolatedEnvironment()),
+  );
+  const desktopEnvironment = isolatedEnvironment();
+  desktopEnvironment.CANDY_DESKTOP_RUN = "1";
+  desktopEnvironment.CANDY_DESKTOP_SMOKE = "1";
+  desktopEnvironment.CANDY_DEV_APP_SERVER_NODE = process.execPath;
+  desktopEnvironment.CANDY_DEV_APP_SERVER_ENTRY = appServerEntrypoint;
+  desktop = await measure(() =>
+    runProcess(electronExecutable, [desktopEntrypoint], root, desktopEnvironment),
+  );
+} finally {
+  await rm(isolationRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+}
 
 const fixtureRoot = await mkdtemp(path.join(tmpdir(), "candy-responsiveness-macos-"));
 const home = path.join(fixtureRoot, "home");
 const temporary = path.join(fixtureRoot, "tmp");
+const appData = path.join(fixtureRoot, "app-data");
 const workspace = path.join(fixtureRoot, "workspace");
 await mkdir(home, { recursive: true });
 await mkdir(temporary, { recursive: true });
+await mkdir(appData, { recursive: true });
 await mkdir(workspace);
 const browserFixtureServer = createServer((_request, response) => {
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -91,6 +108,7 @@ try {
   const responsivenessEnvironment = cleanChildEnvironment(process.env);
   responsivenessEnvironment.HOME = home;
   responsivenessEnvironment.TMPDIR = temporary;
+  responsivenessEnvironment.CANDY_APP_DATA_ROOT = appData;
   responsivenessEnvironment.CANDY_DESKTOP_RUN = "1";
   responsivenessEnvironment.CANDY_DESKTOP_RESPONSIVENESS = "1";
   responsivenessEnvironment.CANDY_DETERMINISTIC_RECOVERY_SMOKE = "1";
@@ -250,15 +268,27 @@ function runDesktopResponsiveness(command, args, cwd, env) {
     const child = spawn(command, args, {
       cwd,
       env,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       windowsHide: true,
     });
     let stdout = "";
+    let stderr = "";
     child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    const terminate = (signal) => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
     const timeout = globalThis.setTimeout(() => {
-      child.kill("SIGTERM");
-      globalThis.setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+      terminate("SIGTERM");
+      globalThis.setTimeout(() => terminate("SIGKILL"), 2_000).unref();
     }, 90_000);
     child.once("error", (error) => {
       globalThis.clearTimeout(timeout);
@@ -269,7 +299,7 @@ function runDesktopResponsiveness(command, args, cwd, env) {
       if (code !== 0) {
         reject(
           new Error(
-            `Desktop responsiveness process failed: ${code ?? "null"}/${signal ?? "signal"}.`,
+            `Desktop responsiveness process failed: ${code ?? "null"}/${signal ?? "signal"}: ${stderr.slice(-4_000)}`,
           ),
         );
         return;

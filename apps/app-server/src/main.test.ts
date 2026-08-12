@@ -332,18 +332,7 @@ test("app-server runs an explicit validator before marking edited work complete"
       command("task-validator", "run-validator", 0, { type: "task.run" }),
       (message) => background.push(message),
     );
-    for (
-      let attempt = 0;
-      attempt < 20 &&
-      !background.some(
-        (message) =>
-          message.kind === "event" &&
-          message.event.type === "snapshot" &&
-          message.event.snapshot.state === "completed",
-      );
-      attempt += 1
-    )
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForCompletion(background, "task-validator");
     assert.deepEqual(validatorCalls, [`${process.execPath}:${workspace}`]);
     assert.deepEqual(
       background
