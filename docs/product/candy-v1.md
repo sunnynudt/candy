@@ -50,7 +50,7 @@ Candy TUI
   -> selected Primary Model
 ```
 
-The TUI runs the runtime in-process. The current implementation renders through Candy's own `node:readline` loop; it does not import `@earendil-works/pi-tui` or run Pi interactive mode. `pi-tui` is present only as a transitive package in the pinned Pi dependency closure, not as Candy's active UI dependency.
+The TUI runs the runtime in-process. The WP2 vertical slice now uses the exact direct dependency `@earendil-works/pi-tui@0.84.1` only for the editor, transcript widgets, and rendering surface. Candy retains command parsing, task state, scheduling, Runtime calls, and session ownership; it does not run Pi interactive mode or import Pi's client, protocol, plugin, or session-store surfaces. The slice uses `TuiAltScreen` and `ProcessTerminal`, rejects `PI_TUI_WRITE_LOG`, `PI_TUI_DEBUG`, and `PI_DEBUG_REDRAW`, writes to an explicit Candy app-data log directory, and redacts secret-shaped transcript output. Deterministic FakeTerminal coverage is an implementation checkpoint, not macOS/Windows terminal acceptance.
 
 ### Desktop
 
@@ -148,6 +148,8 @@ V1 does not:
 - promise compatibility with the full Pi extension ecosystem.
 
 The WP1 source boundary is now enforced in the Pi Adapter: `PiAgentEngine` supplies a Candy-owned `CandyRestrictedResourceLoader` and an in-memory `SettingsManager` with `projectTrusted: false`. The loader never discovers or reloads Pi resources, exposes empty extensions/skills/prompts/themes, rejects non-empty resource extension requests, and reads only a bounded, non-symlink root `AGENTS.md` after credential redaction. `.pi` settings, packages, extensions, skills, prompts, themes, and executable resources are outside the Candy session boundary. The deterministic hostile-workspace fixture proves this behavior and is not macOS/Windows platform acceptance or a final release-security Pass.
+
+WP2 keeps that boundary at the presentation seam: `CandyTuiSurface` is the only TUI module that imports `pi-tui`, and the `InteractiveTui` remains the product control plane. Its injected terminal seam restores input, cursor, and terminal state on normal exit, Ctrl+C, startup failure, and runtime failure. The explicit log path and output redaction protect the TUI surface from the Pi default debug/crash destinations and credential-shaped values; real terminal behavior still requires the supported macOS and Windows acceptance matrices.
 
 Pin the complete Pi package family to exact `0.84.1` and verify session behavior on both supported operating systems. Pi is the agent-runtime compatibility anchor: Node stays on Pi's tested Node 22 line, TypeScript matches Pi `5.9.3`, and npm follows the selected Node distribution and Pi's lockfile workflow. Pi and these boundary-sensitive toolchain versions upgrade as one compatibility change, never as independent freshness updates.
 

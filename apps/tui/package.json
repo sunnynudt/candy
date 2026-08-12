@@ -6,6 +6,7 @@
   "dependencies": {
     "@candy/pi-adapter": "0.0.0",
     "@candy/platform": "0.0.0",
-    "@candy/runtime": "0.0.0"
+    "@candy/runtime": "0.0.0",
+    "@earendil-works/pi-tui": "0.84.1"
   }
 }

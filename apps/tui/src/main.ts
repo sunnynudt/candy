@@ -1,6 +1,5 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import {
   PI_COMPATIBILITY_VERSION,
@@ -23,6 +22,7 @@ import {
   TaskScheduler,
   UnavailableBrowserCapability,
 } from "@candy/runtime";
+import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
 
 export interface TuiSmokeResult {
   readonly piVersion: string;
@@ -84,10 +84,9 @@ export async function runTuiTaskSmoke(): Promise<TuiTaskSmokeResult> {
 }
 
 export interface InteractiveTuiOptions {
-  readonly input?: NodeJS.ReadableStream;
-  readonly output?: NodeJS.WritableStream;
   readonly appDataRoot?: string;
   readonly engine?: TuiAgentEngine;
+  readonly terminal?: CandyTuiTerminal;
 }
 
 export interface TuiAgentEngine {
@@ -96,8 +95,8 @@ export interface TuiAgentEngine {
 }
 
 export class InteractiveTui {
-  readonly #input: NodeJS.ReadableStream;
-  readonly #output: NodeJS.WritableStream;
+  readonly #appDataRoot: string;
+  readonly #terminal: CandyTuiTerminal | undefined;
   readonly #store: SQLiteTaskStore;
   readonly #scheduler: TaskScheduler;
   readonly #controllers = new Map<string, TaskController>();
@@ -106,12 +105,14 @@ export class InteractiveTui {
   readonly #requestedStops = new Map<string, "paused" | "cancelled">();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}`;
+  #surface: CandyTuiSurface | undefined = undefined;
+  #resolveExit: (() => void) | undefined = undefined;
   #closing = false;
 
   public constructor(options: InteractiveTuiOptions = {}) {
-    this.#input = options.input ?? process.stdin;
-    this.#output = options.output ?? process.stdout;
-    const paths = resolveAppPaths(options.appDataRoot ?? resolveDefaultAppDataRoot());
+    this.#appDataRoot = options.appDataRoot ?? resolveDefaultAppDataRoot();
+    this.#terminal = options.terminal;
+    const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
     this.#store.markActiveInterrupted();
     this.#scheduler = new TaskScheduler(3, 5, this.#store);
@@ -124,30 +125,22 @@ export class InteractiveTui {
   }
 
   public async run(): Promise<void> {
+    this.#surface = new CandyTuiSurface({
+      appDataRoot: this.#appDataRoot,
+      terminal: this.#terminal,
+      onSubmit: (text: string): void => this.handleInput(text),
+      onInterrupt: (): void => this.requestExit(),
+    });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n> ",
+      "Enter a prompt, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
-    const lines = createInterface({ input: this.#input, crlfDelay: Infinity });
+    const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      this.#resolveExit = resolve;
+    });
     try {
-      for await (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed === ":quit") break;
-        if (trimmed === ":tasks") {
-          this.printTasks();
-        } else if (trimmed.startsWith(":prioritize ")) {
-          this.prioritize(trimmed.slice(12).trim());
-        } else if (trimmed.startsWith(":pause ")) {
-          this.pause(trimmed.slice(7).trim());
-        } else if (trimmed.startsWith(":resume ")) {
-          this.resume(trimmed.slice(8).trim());
-        } else if (trimmed.startsWith(":cancel ")) {
-          await this.cancel(trimmed.slice(8).trim());
-        } else if (trimmed.length > 0) {
-          this.create(trimmed);
-        }
-        this.write("> ");
-      }
+      this.#surface.start();
+      await exitPromise;
     } finally {
       this.#closing = true;
       for (const task of this.#controllers.values()) {
@@ -158,8 +151,34 @@ export class InteractiveTui {
       this.#store.markOwnerInterrupted(this.#ownerId);
       for (const controller of this.#abortControllers.values()) controller.abort();
       await new Promise<void>((resolve) => setImmediate(resolve));
+      this.#resolveExit = undefined;
+      await this.#surface.stop();
+      this.#surface = undefined;
       this.#store.close();
     }
+  }
+
+  private handleInput(value: string): void {
+    const trimmed: string = value.trim();
+    if (trimmed === ":quit") {
+      this.requestExit();
+    } else if (trimmed === ":tasks") {
+      this.printTasks();
+    } else if (trimmed.startsWith(":prioritize ")) {
+      this.prioritize(trimmed.slice(12).trim());
+    } else if (trimmed.startsWith(":pause ")) {
+      this.pause(trimmed.slice(7).trim());
+    } else if (trimmed.startsWith(":resume ")) {
+      this.resume(trimmed.slice(8).trim());
+    } else if (trimmed.startsWith(":cancel ")) {
+      void this.cancel(trimmed.slice(8).trim());
+    } else if (trimmed.length > 0) {
+      this.create(trimmed);
+    }
+  }
+
+  private requestExit(): void {
+    this.#resolveExit?.();
   }
 
   private create(prompt: string): void {
@@ -301,7 +320,7 @@ export class InteractiveTui {
   }
 
   private write(value: string): void {
-    this.#output.write(value);
+    this.#surface?.appendTranscript(redactTuiOutput(value));
   }
 }
 
@@ -315,6 +334,12 @@ function containsCredentialMaterial(value: string): boolean {
   return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
     value,
   );
+}
+
+function redactTuiOutput(value: string): string {
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1[REDACTED]`)
+    .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, "[REDACTED]");
 }
 
 function isDirectExecution(): boolean {

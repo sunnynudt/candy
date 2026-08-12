@@ -26,8 +26,15 @@ Updated: 2026-08-12
 - The engineer owns only the implementation and deterministic evidence for WP1 `restricted-resource-loader`; the current scope is `packages/pi-adapter` plus the four WP1 documentation updates.
 - The test agent independently re-runs the hostile `.pi` fixture and checks zero resource discovery, subprocess/network/install side effects, tool/command registration, prompt/session changes, and marker-file creation. The engineer's local 13/13 Pi Adapter result is not the QA decision.
 - The WP1 contract fixture now injects a Candy-owned filesystem tripwire that records approved root `AGENTS.md` access and fails on any `.pi` read or enumeration. The full check is green outside the restricted shell; the restricted shell denies macOS `sandbox-exec` with `sandbox_apply: Operation not permitted` (exit `71`), while the same unchanged native runner probe succeeds outside it. This is scoped harness evidence only and does not clear G2 or platform acceptance.
-- The architect reviews the diff against the WP1 whitelist and acceptance/stop conditions, then explicitly decides Pass, Blocked, or required fixes. WP2 pi-tui, WP3 native-process, and WP4 read-only tool reuse remain gated until that review and QA result are published.
+- The architect reviewed the diff against the WP1 whitelist and acceptance/stop conditions and recorded Pass; independent hostile-fixture QA also recorded Pass. WP3 native-process and WP4 read-only tool reuse remain gated behind the active WP2 technical review and QA result.
 - This checkpoint does not clear G2, platform acceptance, live-provider, signing, Browser, or final ACC-01..12 blockers.
+
+## WP2 checkpoint oversight
+
+- The WP2 implementation scope is limited to the TUI dependency/lockfile, boundary script, TUI surface/controller tests and sources, and the four checkpoint documents. `CandyTuiSurface` is the only direct `pi-tui` import surface; Candy remains the owner of commands, tasks, scheduling, Runtime calls, and sessions.
+- The implementation rejects Pi debug/log environment variables, uses an explicit Candy app-data log directory, avoids `TuiMainScreen`, and redacts secret-shaped transcript output. FakeTerminal tests provide deterministic lifecycle evidence for normal exit, Ctrl+C, startup failure, and runtime failure.
+- The architect must review the exact dependency allowlist, lifecycle restoration, and scope before the test agent performs independent macOS/Windows terminal QA. The deterministic checkpoint does not prove raw mode, paste, Chinese input, resize, IME, or cross-platform terminal recovery.
+- WP3 native-process and WP4 read-only tool reuse remain gated until the WP2 technical review and independent QA result are published. Shell Auto and Shell Auto Debug remain disabled.
 
 ## Daily platform handoff boundary
 

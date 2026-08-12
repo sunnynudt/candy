@@ -2,46 +2,94 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import { InteractiveTui, type TuiAgentEngine } from "./main.js";
+import { FakeTerminal } from "./pi-tui-surface.js";
+
+async function waitForOutput(terminal: FakeTerminal, pattern: RegExp): Promise<string> {
+  for (let attempt: number = 0; attempt < 20; attempt += 1) {
+    const output: string = terminal.writes.join("");
+    if (pattern.test(output)) return output;
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+  }
+  return terminal.writes.join("");
+}
 
 test("interactive TUI creates a queued task, runs it, and reports completion", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-"));
-  let output = "";
+  const terminal: FakeTerminal = new FakeTerminal();
   const engine: TuiAgentEngine = {
     async *runTurn(input, signal) {
       if (signal.aborted) throw new Error("cancelled");
       yield { type: "turn.started", taskId: input.taskId };
-      yield { type: "assistant.delta", taskId: input.taskId, text: "fixture response" };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: "fixture response sk-proj-tui-output-canary-123456",
+      };
       yield { type: "turn.completed", taskId: input.taskId };
     },
   };
-  const outputStream = new Writable({
-    write(chunk, _encoding, callback) {
-      output += chunk.toString();
-      callback();
-    },
-  });
   try {
-    await new InteractiveTui({
-      input: Readable.from(
-        (async function* () {
-          yield "inspect fixture\n";
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          yield ":tasks\n";
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          yield ":quit\n";
-        })(),
-      ),
-      output: outputStream,
+    const runPromise: Promise<void> = new InteractiveTui({
       appDataRoot: root,
       engine,
+      terminal,
     }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
     assert.match(output, /created task-/u);
-    assert.match(output, /fixture response/u);
+    assert.match(output, /fixture response \[REDACTED\]/u);
+    assert.doesNotMatch(output, /sk-proj-tui-output-canary-123456/u);
     assert.match(output, /completed/u);
     assert.match(output, /task-.*completed/u);
+    assert.equal(terminal.started, true);
+    assert.equal(terminal.stopped, true);
+    assert.equal(terminal.drainCalls, 1);
+    assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI restores the terminal after a task error and Ctrl+C", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-error-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      throw new Error("fixture failure");
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new InteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /runtime error/u);
+    assert.match(output, /runtime error/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+    assert.equal(terminal.stopped, true);
+    assert.equal(terminal.drainCalls, 1);
+    assert.equal(terminal.cursorShown, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
