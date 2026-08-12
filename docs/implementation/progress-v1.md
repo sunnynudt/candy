@@ -44,6 +44,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Deterministic source validation added platform-owned path/platform rejection coverage. Full `npm run check`, `cargo test --locked`, and the available macOS native/smoke checks remain required before this checkpoint can be marked independently QA-verified.
 - Evidence boundary: this is an implementation boundary checkpoint, not G2, Windows 11, signed packaging, independent security review, Shell Auto, Shell Auto Debug, or final V1 acceptance evidence.
 
+## 2026-08-12 WP3 P1 nested JSON active-secret repair
+
+- Independent QA reopened WP3 on `fdf6b453`: an active credential containing JSON-special characters could be embedded through nested JSON representations in a command argument, reach the real macOS runner, and execute before the prior one-layer scan rejected it. The earlier WP3 acceptance claim is withdrawn; WP3 remains Blocked pending fresh independent QA.
+- The repair adds a bounded recursive JSON-representation guard before spawn. It scans executable, every argument, cwd, workspace, request and cleaned environment keys/values, and the complete serialized request; representation generation stops at the Rust v1 request-line byte limit and does not rely on a fixed layer count.
+- Regression coverage includes the real macOS runner marker fixture, an injected-spawn no-execution fixture with quote/backslash input, and the deepest representation that fits the v1 request-line limit. Rust, JSONL v1 fields, Runtime contracts, and cancellation semantics remain unchanged.
+- This repair checkpoint is implementation evidence only until the architect reopens the gate and the test agent reproduces the original nested fixture with no spawn and no marker. Windows 11 remains Pending; G2, Shell Auto, and Shell Auto Debug remain unchanged.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint

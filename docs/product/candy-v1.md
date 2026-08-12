@@ -251,7 +251,7 @@ Credential resolution order:
 2. local credential store;
 3. `needs_credentials`.
 
-Provider credentials must be removed from environments passed to tools and child processes.
+Provider credentials must be removed from environments passed to tools and child processes. Before a native validator starts, Candy rejects active credentials in executable, arguments, paths, environment entries, and their bounded JSON request representations; redacting returned output is not a substitute for preventing execution.
 
 Credentials must never appear in:
 

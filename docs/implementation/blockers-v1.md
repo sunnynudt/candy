@@ -176,3 +176,9 @@ Blocked external resources do not stop independent implementation. They do preve
 - The native-process refactor is complete within the approved scope: Runtime owns the platform-neutral `CommandRunner` port and common `CommandValidator`; Platform owns the JSONL v1 client, runner path resolution, environment/secret rejection, bounded output, and OS-specific cancellation; app-server performs only composition-root injection.
 - No Rust crate, JSONL v1 field/version, native error code, no-network request, secret scrub contract, or cancellation result semantic was intentionally changed. The implementation checkpoint still requires full deterministic verification and independent QA before downstream work is accepted.
 - `G2-SANDBOX`, `G2-PRIVILEGE`, `G0-WIN`, signing, live-provider, Browser, and final ACC blockers remain unchanged. Shell Auto and Shell Auto Debug stay disabled; this checkpoint does not authorize WP4 or any release activity.
+
+## 2026-08-12 WP3 P1 nested JSON active-secret blocker
+
+- Independent QA reproduced a credential boundary failure on `fdf6b453`: quote/backslash content embedded through nested JSON representations in an argument passed the previous TypeScript one-layer scan and executed in the real macOS sandbox child. Output redaction did not prevent execution, so the previous WP3 technical/QA closure is revoked.
+- The required repair is now implemented as a bounded recursive JSON-representation guard before spawn. It must be independently verified against the saved nested fixture, including no child spawn and no workspace marker, before WP3 can leave `Blocked`.
+- Do not start WP4. Windows 11 Job Object/native evidence remains Pending, and G2, Shell Auto, and Shell Auto Debug remain Blocked/disabled.

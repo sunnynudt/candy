@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { cleanChildEnvironment } from "./index.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
+const MAX_PROTOCOL_LINE_BYTES = 1_048_576;
 // Rust bounds each child stream to MAX_OUTPUT_BYTES before serde_json encoding.
 // A control character can expand to six JSON bytes, so both streams need a
 // larger protocol-frame bound than the raw child-output bound.
@@ -115,7 +116,7 @@ export class NativeProcessRunner {
     });
     if (
       containsSandboxSecretMaterial(payload) ||
-      containsActiveSecretMaterial(payload, request.activeSecrets ?? [])
+      containsActiveSecretMaterialInRequest(request, environment, payload)
     )
       throw new Error("Provider credentials are forbidden in Sandbox Runner requests.");
 
@@ -364,10 +365,40 @@ function containsSandboxSecretMaterial(value: string): boolean {
   return /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(value);
 }
 
+function containsActiveSecretMaterialInRequest(
+  request: NativeProcessRequest,
+  environment: NodeJS.ProcessEnv,
+  payload: string,
+): boolean {
+  const values = [
+    request.executable,
+    ...request.args,
+    request.cwd,
+    request.workspace,
+    ...environmentEntries(request.environment ?? {}),
+    ...environmentEntries(environment),
+    payload,
+  ];
+  const activeSecrets = request.activeSecrets ?? [];
+  return values.some((value) => containsActiveSecretMaterial(value, activeSecrets));
+}
+
+function environmentEntries(environment: Readonly<Record<string, string | undefined>>): string[] {
+  return Object.entries(environment).flatMap(([key, value]) =>
+    value === undefined ? [key] : [key, value],
+  );
+}
+
 function containsActiveSecretMaterial(value: string, activeSecrets: readonly string[]): boolean {
   return activeSecrets.some((secret) => {
     if (secret.length === 0) return false;
-    const serializedSecret = JSON.stringify(secret).slice(1, -1);
-    return value.includes(secret) || value.includes(serializedSecret);
+    let representation = secret;
+    while (Buffer.byteLength(representation, "utf8") <= MAX_PROTOCOL_LINE_BYTES) {
+      if (value.includes(representation)) return true;
+      const nextRepresentation = JSON.stringify(representation);
+      if (Buffer.byteLength(nextRepresentation, "utf8") > MAX_PROTOCOL_LINE_BYTES) break;
+      representation = nextRepresentation;
+    }
+    return false;
   });
 }
