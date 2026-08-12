@@ -91,6 +91,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - Added an app-server fixture proving ACC-06 provider isolation: a DeepSeek task that throws a provider error (`provider_error` after `ProviderContractError`) does not block a concurrently running MiniMax task; the MiniMax task completes, writes its local file, and the local read succeeds while the DeepSeek task is surfaced as an actionable `provider_error`. The engine records both model calls.
 - `npm run check` now passes 108 tests. This is deterministic evidence that provider failure classification and task scheduling keep DeepSeek rate limiting isolated from MiniMax and local reads; real cross-provider concurrency under live rate limits and the full dual-platform matrix remain Blocked.
 
+## 2026-08-12 Windows TUI/Desktop shared app-data checkpoint
+
+- Fixed an ACC-05 cross-client defect: the Desktop app used Electron's default `userData` (`%APPDATA%\Candy` on Windows) while the TUI and app-server used `resolveDefaultAppDataRoot()` (`%LOCALAPPDATA%\Candy`), so TUI and Desktop did not read the same Candy-owned task/session root. `startDesktop` now resolves `userData` from `CANDY_APP_DATA_ROOT ?? resolveDefaultAppDataRoot()`, making Desktop, TUI, and the app-server share the same Candy-owned app-data root by default while keeping the explicit override for fixtures.
+- `npm run check` stays green at 108 tests and the development Desktop smoke (`npm run smoke:desktop`, no override) passes on Windows 11 Pro x64. This closes the ACC-05 same-session path seam as code evidence; a cross-client TUI/Desktop restart handoff on both platforms and full ACC-05 recovery remain open.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

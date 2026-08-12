@@ -18,6 +18,7 @@ import {
   DEFAULT_CANDY_MODEL,
   KeyringCredentialStore,
   resolveAppPaths,
+  resolveDefaultAppDataRoot,
   type CredentialName,
   type CandyModelId,
 } from "@candy/platform";
@@ -1287,7 +1288,7 @@ export function configureCandyBrowserSession(): void {
 
 export function startDesktop(): void {
   app.setName("Candy");
-  const appDataRoot = process.env.CANDY_APP_DATA_ROOT;
+  const appDataRoot = process.env.CANDY_APP_DATA_ROOT ?? resolveDefaultAppDataRoot();
   if (appDataRoot !== undefined && isAbsolute(appDataRoot)) app.setPath("userData", appDataRoot);
   app.whenReady().then(async () => {
     configureCandyBrowserSession();
