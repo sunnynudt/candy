@@ -116,7 +116,6 @@ try {
   responsivenessEnvironment.CANDY_DEV_APP_SERVER_ENTRY = appServerEntrypoint;
   responsivenessEnvironment.CANDY_RESPONSIVENESS_NODE = process.execPath;
   responsivenessEnvironment.CANDY_RESPONSIVENESS_NATIVE_RUNNER = nativeRunner;
-  responsivenessEnvironment.CANDY_RESPONSIVENESS_FIXTURE_ROOT = fixtureRoot;
   responsivenessEnvironment.CANDY_RESPONSIVENESS_WORKSPACE = workspace;
   responsivenessEnvironment.CANDY_BROWSER_FIXTURE_URL = fixtureUrl;
   desktopMetrics = await runDesktopResponsiveness(

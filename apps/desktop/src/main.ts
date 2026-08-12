@@ -1724,13 +1724,6 @@ function responsivenessWorkspace(): string {
   return workspace;
 }
 
-function responsivenessFixtureRoot(): string {
-  const fixtureRoot = process.env.CANDY_RESPONSIVENESS_FIXTURE_ROOT;
-  if (fixtureRoot === undefined || !isAbsolute(fixtureRoot))
-    throw new Error("Desktop responsiveness fixture root is unavailable.");
-  return fixtureRoot;
-}
-
 function responsivenessNode(): string {
   const node = process.env.CANDY_RESPONSIVENESS_NODE;
   if (node === undefined || !isAbsolute(node))
@@ -1808,7 +1801,6 @@ async function runDesktopResponsivenessSmoke(): Promise<void> {
   if (process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE !== "1")
     throw new Error("Desktop responsiveness requires the deterministic app-server fixture.");
   const workspace = responsivenessWorkspace();
-  const fixtureRoot = responsivenessFixtureRoot();
   const node = responsivenessNode();
   if (!(await stat(workspace)).isDirectory())
     throw new Error("Desktop responsiveness workspace is not a directory.");
@@ -1850,10 +1842,10 @@ async function runDesktopResponsivenessSmoke(): Promise<void> {
   const cancellationSamples: number[] = [];
   for (let index = 0; index < 10; index += 1) {
     const taskId = `desktop-responsiveness-cancel-${index}`;
-    const validatorPidFile = join(fixtureRoot, `cancel-${index}.validator.pid`);
-    const pidFile = join(fixtureRoot, `cancel-${index}.pid`);
-    const readyFile = join(fixtureRoot, `cancel-${index}.ready`);
-    const heartbeatFile = join(fixtureRoot, `cancel-${index}.heartbeat`);
+    const validatorPidFile = join(workspace, `cancel-${index}.validator.pid`);
+    const pidFile = join(workspace, `cancel-${index}.pid`);
+    const readyFile = join(workspace, `cancel-${index}.ready`);
+    const heartbeatFile = join(workspace, `cancel-${index}.heartbeat`);
     const validator: ValidatorSpec = {
       executable: node,
       args: [

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(target_os = "macos")]
+use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -133,14 +135,41 @@ fn response_for_line(line: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn run_macos(request: RunRequest) -> String {
-    let profile = sandbox_profile(&request.workspace, &request.executable);
+    let workspace = match fs::canonicalize(&request.workspace) {
+        Ok(path) => path,
+        Err(_) => return error_response("invalid_path"),
+    };
+    let cwd = match fs::canonicalize(&request.cwd) {
+        Ok(path) => path,
+        Err(_) => return error_response("invalid_path"),
+    };
+    let executable = match fs::canonicalize(&request.executable) {
+        Ok(path) => path,
+        Err(_) => return error_response("invalid_path"),
+    };
+    if [&workspace, &cwd, &executable]
+        .iter()
+        .any(|path| !is_safe_profile_path(path))
+    {
+        return error_response("invalid_path");
+    }
+    if !cwd.starts_with(&workspace) {
+        return error_response("workspace_escape");
+    }
+    let Some(workspace) = workspace.to_str() else {
+        return error_response("invalid_path");
+    };
+    let Some(executable) = executable.to_str() else {
+        return error_response("invalid_path");
+    };
+    let profile = sandbox_profile(workspace, executable);
     let output = Command::new("/usr/bin/sandbox-exec")
         .arg("-p")
         .arg(profile)
         .arg("--")
-        .arg(&request.executable)
+        .arg(executable)
         .args(&request.args)
-        .current_dir(&request.cwd)
+        .current_dir(cwd)
         .env_clear()
         .envs(request.environment)
         .output();
@@ -169,7 +198,6 @@ fn run_macos(request: RunRequest) -> String {
 
 #[cfg(target_os = "macos")]
 fn sandbox_profile(workspace: &str, executable: &str) -> String {
-    let workspace = profile_string(workspace);
     let executable_parent = profile_string(
         Path::new(executable)
             .parent()
@@ -177,17 +205,24 @@ fn sandbox_profile(workspace: &str, executable: &str) -> String {
             .to_string_lossy()
             .as_ref(),
     );
+    let workspace = profile_string(workspace);
+    let executable = profile_string(executable);
     format!(
         "(version 1)\n\
-         (allow default)\n\
+         (deny default)\n\
+         (import \"system.sb\")\n\
          (deny network*)\n\
-         ; File and symlink containment is enforced by Candy's TypeScript\
-         ; workspace operations. This runner contributes OS no-network\
-         ; containment until a stronger seatbelt profile passes G2 review.\n\
-         (allow file-read* (subpath \"{}\"))\n\
-         (allow file-write* (subpath \"{}\"))\n\
-         (allow file-read* (subpath \"{}\"))",
-        workspace, workspace, executable_parent
+         (allow process-fork)\n\
+         (allow process-exec (literal \"{}\"))\n\
+         (allow file-read-metadata file-test-existence\n\
+             (literal \"/private\")\n\
+             (literal \"/private/var\")\n\
+             (literal \"/private/tmp\")\n\
+             (subpath \"/private/var/folders\"))\n\
+         (allow file-read* file-map-executable (subpath \"{}\"))\n\
+         (allow file-read* file-test-existence (subpath \"{}\"))\n\
+         (allow file-write* (subpath \"{}\"))",
+        executable, executable_parent, workspace, workspace
     )
 }
 
@@ -220,6 +255,15 @@ fn is_safe_environment_key(key: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn profile_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn is_safe_profile_path(path: &Path) -> bool {
+    path.to_str().is_some_and(|value| {
+        !value
+            .chars()
+            .any(|character| matches!(character, '\0' | '\n' | '\r'))
+    })
 }
 
 fn contains_forbidden_secret_material(value: &str) -> bool {
@@ -805,6 +849,33 @@ fn contains_reparse_tree(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{response_for_line, MAX_LINE_BYTES};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_profile_is_default_deny_and_scoped_to_validator_and_workspace() {
+        let profile = super::sandbox_profile(
+            "/private/var/folders/fixture/workspace",
+            "/Users/fixture/node/bin/node",
+        );
+        assert!(profile.contains("(deny default)"));
+        assert!(!profile.contains("(allow default)"));
+        assert!(profile.contains("(deny network*)"));
+        assert!(profile.contains("(allow process-exec (literal \"/Users/fixture/node/bin/node\"))"));
+        assert!(profile.contains("(literal \"/private/tmp\")"));
+        assert!(profile.contains("(subpath \"/private/var/folders/fixture/workspace\")"));
+        assert!(profile.contains("(allow file-write*"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rejects_control_characters_in_profile_paths() {
+        assert!(!super::is_safe_profile_path(std::path::Path::new(
+            "/private/var/folders/fixture/work\nspace",
+        )));
+        assert!(!super::is_safe_profile_path(std::path::Path::new(
+            "/private/var/folders/fixture/work\rspace",
+        )));
+    }
 
     #[test]
     fn rejects_secrets_without_echoing_input() {

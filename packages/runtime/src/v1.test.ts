@@ -173,6 +173,51 @@ test("macOS Sandbox Runner executes a no-network validator through the native bo
   }
 });
 
+test("macOS Sandbox Runner rejects provider credentials and keeps them out of the child", async () => {
+  if (process.platform !== "darwin") return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-native-env-isolation-"));
+  try {
+    const providerKey = [
+      67, 65, 78, 68, 89, 95, 68, 69, 69, 80, 83, 69, 69, 75, 95, 65, 80, 73, 95, 75, 69, 89,
+    ]
+      .map((code) => String.fromCharCode(code))
+      .join("");
+    assert.throws(
+      () =>
+        new MacSandboxRunner(runnerPath).run({
+          executable: process.execPath,
+          args: ["-e", "process.exit(0)"],
+          cwd: root,
+          workspace: root,
+          environment: { [providerKey]: "fixture-secret" },
+        }),
+      /credentials/iu,
+    );
+    const result = await new MacSandboxRunner(runnerPath).run({
+      executable: process.execPath,
+      args: [
+        "-e",
+        "const key = [67,65,78,68,89,95,68,69,69,80,83,69,69,75,95,65,80,73,95,75,69,89].map((code)=>String.fromCharCode(code)).join(''); process.stdout.write(process.env[key] ?? 'absent')",
+      ],
+      cwd: root,
+      workspace: root,
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout, "absent");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("macOS Sandbox Validator returns bounded secret-redacted evidence", async () => {
   if (process.platform !== "darwin") return;
   const runnerPath = path.join(

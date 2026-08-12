@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import { createCandyWorkspaceOperations } from "@candy/pi-adapter";
 import { MacSandboxRunner } from "@candy/runtime";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
-  console.log("macOS Sandbox Runner G2 negative matrix skipped: not macOS arm64");
+  console.log("macOS Sandbox Runner strict containment matrix skipped: not macOS arm64");
   process.exit(0);
 }
 
@@ -30,11 +30,12 @@ const matrix = {
     symlinkWriteRejected: false,
   },
   native: {
-    outsideReadEscaped: false,
-    outsideWriteEscaped: false,
-    symlinkReadEscaped: false,
-    symlinkWriteEscaped: false,
-    symlinkSwapEscaped: false,
+    validatorSucceeded: false,
+    outsideReadBlocked: false,
+    outsideWriteBlocked: false,
+    symlinkReadBlocked: false,
+    symlinkWriteBlocked: false,
+    symlinkSwapBlocked: false,
     networkBlocked: false,
     descendantCancelled: false,
     descendantMarkerAbsent: false,
@@ -114,56 +115,48 @@ try {
   );
   matrix.workspaceGuard.symlinkWriteRejected = true;
 
+  const validator = await runNode("process.stdout.write('validator-ok');");
+  matrix.native.validatorSucceeded = validator.code === 0 && validator.stdout === "validator-ok";
+  if (!matrix.native.validatorSucceeded)
+    throw new Error("macOS native runner rejected the supported validator fixture.");
+
   const rawRead = await runNode(
     `const fs = require('node:fs'); process.stdout.write(fs.readFileSync(${JSON.stringify(outsideRead)}, 'utf8'));`,
   );
-  matrix.native.outsideReadEscaped =
-    rawRead.code === 0 && rawRead.stdout === "outside-read-fixture";
-  if (!matrix.native.outsideReadEscaped)
-    throw new Error(
-      "The current macOS Seatbelt profile changed; review G2 evidence before proceeding.",
-    );
+  matrix.native.outsideReadBlocked =
+    rawRead.code !== 0 && rawRead.stdout !== "outside-read-fixture";
+  if (!matrix.native.outsideReadBlocked)
+    throw new Error("The macOS native runner allowed a workspace-external read.");
 
   const rawWrite = await runNode(
     `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(outsideWrite)}, 'native-write'); process.stdout.write('write-ok');`,
   );
-  matrix.native.outsideWriteEscaped =
-    rawWrite.code === 0 &&
-    rawWrite.stdout === "write-ok" &&
-    (await readFile(outsideWrite, "utf8")) === "native-write";
-  if (!matrix.native.outsideWriteEscaped)
-    throw new Error(
-      "The current macOS native runner did not reproduce the outside-workspace write gap.",
-    );
+  matrix.native.outsideWriteBlocked = rawWrite.code !== 0 && !existsSync(outsideWrite);
+  if (!matrix.native.outsideWriteBlocked)
+    throw new Error("The macOS native runner allowed a workspace-external write.");
 
   const rawSymlinkRead = await runNode(
     `const fs = require('node:fs'); process.stdout.write(fs.readFileSync(${JSON.stringify(symlinkRead)}, 'utf8'));`,
   );
-  matrix.native.symlinkReadEscaped =
-    rawSymlinkRead.code === 0 && rawSymlinkRead.stdout === "outside-read-fixture";
-  if (!matrix.native.symlinkReadEscaped)
-    throw new Error("The current macOS native runner did not reproduce the symlink read gap.");
+  matrix.native.symlinkReadBlocked =
+    rawSymlinkRead.code !== 0 && rawSymlinkRead.stdout !== "outside-read-fixture";
+  if (!matrix.native.symlinkReadBlocked)
+    throw new Error("The macOS native runner allowed a symlinked external read.");
 
   const rawSymlinkWrite = await runNode(
     `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(symlinkWrite)}, 'symlink-write'); process.stdout.write('write-ok');`,
   );
-  matrix.native.symlinkWriteEscaped =
-    rawSymlinkWrite.code === 0 &&
-    rawSymlinkWrite.stdout === "write-ok" &&
-    (await readFile(symlinkWrite, "utf8")) === "symlink-write";
-  if (!matrix.native.symlinkWriteEscaped)
-    throw new Error("The current macOS native runner did not reproduce the symlink write gap.");
+  matrix.native.symlinkWriteBlocked = rawSymlinkWrite.code !== 0 && !existsSync(symlinkWrite);
+  if (!matrix.native.symlinkWriteBlocked)
+    throw new Error("The macOS native runner allowed a symlinked external write.");
 
   await mkdir(swapRoot);
   const rawSymlinkSwap = await runNode(
     `const fs = require('node:fs'); fs.lstatSync(${JSON.stringify(swapRoot)}); fs.renameSync(${JSON.stringify(swapRoot)}, ${JSON.stringify(swapBackup)}); fs.symlinkSync(${JSON.stringify(swapDestination)}, ${JSON.stringify(swapRoot)}, 'dir'); fs.writeFileSync(${JSON.stringify(path.join(swapRoot, "race.txt"))}, 'swap-write'); process.stdout.write('swap-ok');`,
   );
-  matrix.native.symlinkSwapEscaped =
-    rawSymlinkSwap.code === 0 &&
-    rawSymlinkSwap.stdout === "swap-ok" &&
-    (await readFile(swapMarker, "utf8")) === "swap-write";
-  if (!matrix.native.symlinkSwapEscaped)
-    throw new Error("The current macOS native runner did not reproduce the symlink-swap path gap.");
+  matrix.native.symlinkSwapBlocked = rawSymlinkSwap.code !== 0 && !existsSync(swapMarker);
+  if (!matrix.native.symlinkSwapBlocked)
+    throw new Error("The macOS native runner allowed a symlink-swap external write.");
 
   const server = net.createServer((socket) => socket.end("unexpected-connect"));
   try {
@@ -195,10 +188,10 @@ try {
     throw new Error("macOS native runner did not prove descendant cancellation.");
 
   console.log(
-    `macOS Sandbox Runner G2 negative matrix passed: ${JSON.stringify({
+    `macOS Sandbox Runner strict containment matrix passed: ${JSON.stringify({
       workspaceGuard: matrix.workspaceGuard,
       native: matrix.native,
-      osWorkspaceContainment: "not-proven: allow default permits raw escape",
+      osWorkspaceContainment: "native-seatbelt-enforced",
       shellAuto: "disabled",
       shellAutoDebug: "disabled",
       independentSecurityReview: "blocked",

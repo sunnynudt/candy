@@ -3,20 +3,25 @@
 This is the narrow Rust process boundary permitted by ADR-0005. It owns no
 task, provider, credential, workspace-policy, approval, session, or UI logic.
 
-The macOS binary accepts the versioned JSONL `run` request, launches an
-absolute executable through `/usr/bin/sandbox-exec`, denies network access,
-clears the child environment, bounds output, and returns a typed completion
-response. On Windows, the same protocol launches a suspended absolute
-executable, assigns it to a Job Object before resume, enables
-`KILL_ON_JOB_CLOSE`, bounds output, rejects workspace/cwd reparse paths, and
-cleans up the owned process tree. The TypeScript caller separately enforces
-selected-workspace containment and provider-secret isolation.
+The macOS binary canonicalizes the workspace, cwd, and executable, rejects a
+cwd outside the workspace, then launches the exact executable through
+`/usr/bin/sandbox-exec` under a default-deny Seatbelt profile importing
+`system.sb`. The profile denies network access, permits only the validator
+executable and its runtime reads, and permits reads/writes under the
+canonicalized workspace. It also clears the child environment, bounds output,
+and returns a typed completion response. The TypeScript caller separately
+enforces selected-workspace policy and provider-secret isolation.
 
-This is not a completed G2 security review. The current macOS Seatbelt profile
-deliberately keeps the default filesystem policy while the Candy path guard
-supplies workspace containment. The Windows Job Object backend proves process
-ownership and cancellation, but protocol `network: false` is not OS network
-isolation and the native preflight does not prevent a command from creating a
-reparse point after launch. Stronger workspace containment, packaging, and
-security review remain open. Candy must keep shell-enabled Auto and Auto Debug
-unavailable until both native backends pass those checks.
+On Windows, the same protocol launches a suspended absolute executable,
+assigns it to a Job Object before resume, enables `KILL_ON_JOB_CLOSE`, bounds
+output, rejects workspace/cwd reparse paths, and cleans up the owned process
+tree. The Windows `network: false` field is protocol validation, not OS-level
+network isolation.
+
+The macOS strict-containment smoke proves supported validator execution,
+outside-workspace read/write denial, symlink and symlink-swap denial, loopback
+network denial, and detached-descendant cleanup on the acceptance host. This
+is still not a completed G2 security review: independent review, signed
+packaging, Windows OS-level containment, and final cross-platform evidence
+remain open. Candy must keep shell-enabled Auto and Auto Debug unavailable
+until both native backends pass those checks.

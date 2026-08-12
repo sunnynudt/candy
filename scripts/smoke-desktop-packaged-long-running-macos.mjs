@@ -25,7 +25,7 @@ const home = path.join(fixtureRoot, "home");
 const temporary = path.join(fixtureRoot, "tmp");
 const appData = path.join(fixtureRoot, "app-data");
 const workspace = path.join(fixtureRoot, "workspace");
-const marker = path.join(fixtureRoot, "validator-calls.txt");
+const marker = path.join(workspace, "validator-calls.txt");
 await mkdir(home, { recursive: true });
 await mkdir(temporary, { recursive: true });
 await mkdir(appData, { recursive: true });
