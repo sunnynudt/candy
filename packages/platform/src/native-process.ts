@@ -392,7 +392,9 @@ function environmentEntries(environment: Readonly<Record<string, string | undefi
 function containsActiveSecretMaterial(value: string, activeSecrets: readonly string[]): boolean {
   return activeSecrets.some((secret) => {
     if (secret.length === 0) return false;
-    let representation = secret;
+    if (value.includes(secret)) return true;
+    if (Buffer.byteLength(secret, "utf8") > MAX_PROTOCOL_LINE_BYTES) return false;
+    let representation = JSON.stringify(secret);
     while (Buffer.byteLength(representation, "utf8") <= MAX_PROTOCOL_LINE_BYTES) {
       if (value.includes(representation)) return true;
       const nextRepresentation = JSON.stringify(representation);

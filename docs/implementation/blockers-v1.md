@@ -180,5 +180,6 @@ Blocked external resources do not stop independent implementation. They do preve
 ## 2026-08-12 WP3 P1 nested JSON active-secret blocker
 
 - Independent QA reproduced a credential boundary failure on `fdf6b453`: quote/backslash content embedded through nested JSON representations in an argument passed the previous TypeScript one-layer scan and executed in the real macOS sandbox child. Output redaction did not prevent execution, so the previous WP3 technical/QA closure is revoked.
-- The required repair is now implemented as a bounded recursive JSON-representation guard before spawn. It must be independently verified against the saved nested fixture, including no child spawn and no workspace marker, before WP3 can leave `Blocked`.
+- The first repair was additionally found to skip raw active-secret values larger than the v1 request-line limit, allowing a secret-bearing request to reach `spawnProcess`; the Rust size rejection occurs too late to enforce isolation.
+- The current repair checks raw active-secret values unconditionally before spawn, then applies the bounded recursive JSON-representation guard only to subsequent representations. It must be independently verified against the saved nested fixture and oversized raw argument, including no child spawn and no workspace marker, before WP3 can leave `Blocked`.
 - Do not start WP4. Windows 11 Job Object/native evidence remains Pending, and G2, Shell Auto, and Shell Auto Debug remain Blocked/disabled.

@@ -12,8 +12,10 @@ import {
   NativeProcessRunnerUnavailableError,
   resolveNativeProcessRunnerPath,
 } from "./native-process.js";
+import { cleanChildEnvironment } from "./index.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
+const MAX_PROTOCOL_LINE_BYTES = 1_048_576;
 
 test("native runner path resolution is platform-owned and fail-closed", () => {
   const existing = new Set(["/opt/candy/candy-sandbox-runner.exe"]);
@@ -78,6 +80,28 @@ test("native runner rejects an exact active secret in command arguments before s
   assert.equal(spawnCalled, false);
 });
 
+test("native runner rejects oversized raw active secrets before injected spawn", async () => {
+  const canary = "q".repeat(MAX_OUTPUT_BYTES + 1);
+  let spawnCalled = false;
+  const runner = new NativeProcessRunner("/opt/candy/candy-sandbox-runner", "darwin", () => {
+    spawnCalled = true;
+    throw new Error("spawn must not be reached");
+  });
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      runner.run({
+        executable: "/usr/bin/node",
+        args: [canary],
+        cwd: "/tmp",
+        workspace: "/tmp",
+        activeSecrets: [canary],
+      }),
+    ),
+    /credentials/iu,
+  );
+  assert.equal(spawnCalled, false);
+});
+
 test("native runner rejects a nested JSON active secret before execution", async () => {
   if (process.platform !== "darwin") return;
   const runnerPath = path.resolve(
@@ -88,7 +112,8 @@ test("native runner rejects a nested JSON active secret before execution", async
     "debug",
     "candy-sandbox-runner",
   );
-  if (!existsSync(runnerPath)) return;
+  if (!existsSync(runnerPath))
+    throw new Error("macOS native runner binary is required for the nested-secret regression.");
   const workspace = await mkdtemp(path.join(os.tmpdir(), "candy-native-argument-boundary-"));
   const marker = path.join(workspace, "nested-value-marker");
   const canary = [
@@ -146,6 +171,14 @@ test("native runner rejects the deepest JSON representation before injected spaw
   const representations = jsonRepresentationsWithinProtocolLine(canary);
   const deepestRepresentation = representations.at(-1);
   assert.notEqual(deepestRepresentation, undefined);
+  assert.ok(
+    serializedNativeRequestBytes([deepestRepresentation as string], [canary]) <=
+      MAX_PROTOCOL_LINE_BYTES,
+  );
+  assert.ok(
+    serializedNativeRequestBytes([JSON.stringify(deepestRepresentation)], [canary]) >
+      MAX_PROTOCOL_LINE_BYTES,
+  );
   let spawnCalled = false;
   assert.throws(
     () =>
@@ -278,11 +311,29 @@ test("native runner cancels the Windows wrapper without passing a POSIX signal",
 function jsonRepresentationsWithinProtocolLine(value: string): string[] {
   const representations: string[] = [];
   let current = value;
-  while (Buffer.byteLength(current, "utf8") <= MAX_OUTPUT_BYTES) {
+  while (serializedNativeRequestBytes([current], [value]) <= MAX_PROTOCOL_LINE_BYTES) {
     representations.push(current);
     const next = JSON.stringify(current);
-    if (Buffer.byteLength(next, "utf8") > MAX_OUTPUT_BYTES) break;
+    if (serializedNativeRequestBytes([next], [value]) > MAX_PROTOCOL_LINE_BYTES) break;
     current = next;
   }
   return representations;
+}
+
+function serializedNativeRequestBytes(
+  args: readonly string[],
+  activeSecrets: readonly string[],
+): number {
+  const payload = JSON.stringify({
+    v: 1,
+    kind: "run",
+    requestId: `sandbox-${"0".repeat(13)}-${"f".repeat(13)}`,
+    executable: "/usr/bin/node",
+    args,
+    cwd: "/tmp",
+    workspace: "/tmp",
+    network: false,
+    environment: cleanChildEnvironment(process.env, activeSecrets),
+  });
+  return Buffer.byteLength(payload, "utf8");
 }
