@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { cleanChildEnvironment } from "./index.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
@@ -205,18 +204,46 @@ export function resolveNativeProcessRunnerPath(
   const environment = options.environment ?? process.env;
   const workingDirectory = options.cwd ?? process.cwd();
   const exists = options.exists ?? existsSync;
+  const targetPath = platform === "win32" ? path.win32 : path.posix;
   const nativeName = platform === "win32" ? "candy-sandbox-runner.exe" : "candy-sandbox-runner";
-  const moduleDirectory = path.dirname(fileURLToPath(moduleUrl));
+  const explicitOverride = environment.CANDY_SANDBOX_RUNNER;
+  if (explicitOverride !== undefined) {
+    return targetPath.isAbsolute(explicitOverride) && exists(explicitOverride)
+      ? explicitOverride
+      : undefined;
+  }
+  const moduleDirectory = resolveModuleDirectory(moduleUrl, platform);
+  if (moduleDirectory === undefined) return undefined;
   const candidates = [
-    environment.CANDY_SANDBOX_RUNNER,
-    path.resolve(moduleDirectory, `../native/${nativeName}`),
-    path.resolve(workingDirectory, `native/sandbox-runner/target/debug/${nativeName}`),
-    path.resolve(workingDirectory, `../../native/sandbox-runner/target/debug/${nativeName}`),
+    targetPath.resolve(moduleDirectory, `../native/${nativeName}`),
+    targetPath.resolve(workingDirectory, `native/sandbox-runner/target/debug/${nativeName}`),
+    targetPath.resolve(workingDirectory, `../../native/sandbox-runner/target/debug/${nativeName}`),
   ];
   return candidates.find(
-    (candidate): candidate is string =>
-      candidate !== undefined && path.isAbsolute(candidate) && exists(candidate),
+    (candidate): candidate is string => targetPath.isAbsolute(candidate) && exists(candidate),
   );
+}
+
+function resolveModuleDirectory(
+  moduleUrl: string,
+  platform: "darwin" | "win32",
+): string | undefined {
+  try {
+    const url = new URL(moduleUrl);
+    if (url.protocol !== "file:") return undefined;
+    if (platform === "win32") {
+      const pathname = decodeURIComponent(url.pathname).replaceAll("/", "\\");
+      const modulePath = url.hostname
+        ? `\\\\${url.hostname}${pathname}`
+        : /^[\\/]\p{L}:/u.test(pathname)
+          ? pathname.slice(1)
+          : pathname;
+      return path.win32.dirname(modulePath);
+    }
+    return path.posix.dirname(decodeURIComponent(url.pathname));
+  } catch {
+    return undefined;
+  }
 }
 
 export interface ProcessRequest {

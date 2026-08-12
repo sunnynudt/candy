@@ -275,7 +275,11 @@ test("Pi agent engine keeps hostile .pi resources outside the Candy session boun
     );
     await chmod(path.join(root, ".pi", "install-probe.sh"), 0o700);
     await writeFile(path.join(outside, "outside.md"), "outside probe\n");
-    await symlink(outside, path.join(root, ".pi", "outside-link"));
+    await symlink(
+      outside,
+      path.join(root, ".pi", "outside-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
 
     const observations = [];
     for await (const observation of new PiAgentEngine(root, async () => ({
@@ -336,15 +340,20 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
   const outside = await mkdtemp(path.join(tmpdir(), "candy-restricted-loader-contract-outside-"));
   const credentialCanary = "sk-proj-restricted-loader-contract-canary-123456";
   try {
-    await writeFile(
-      path.join(outside, "AGENTS.md"),
-      `outside guidance\ntoken: ${credentialCanary}\n`,
-    );
-    await symlink(path.join(outside, "AGENTS.md"), path.join(root, "AGENTS.md"));
-    const symlinkLoader = new CandyRestrictedResourceLoader(root);
+    const outsideContext = path.join(outside, "AGENTS.md");
+    await writeFile(outsideContext, `outside guidance\ntoken: ${credentialCanary}\n`);
+    const symlinkLoader = new CandyRestrictedResourceLoader(root, {
+      lstat: (filePath) => ({
+        size: filePath === path.join(root, "AGENTS.md") ? 128 : 0,
+        isFile: () => filePath === path.join(root, "AGENTS.md"),
+        isSymbolicLink: () => filePath === path.join(root, "AGENTS.md"),
+      }),
+      readFile: () => readFileSync(outsideContext),
+      realpath: (filePath) => (filePath === root ? root : outsideContext),
+    });
     assert.deepEqual(symlinkLoader.getAgentsFiles(), { agentsFiles: [] });
 
-    await rm(path.join(root, "AGENTS.md"));
+    await rm(path.join(root, "AGENTS.md"), { force: true });
     await writeFile(path.join(root, "AGENTS.md"), `root guidance\ntoken: ${credentialCanary}\n`);
     await mkdir(path.join(root, ".pi", "extensions"), { recursive: true });
     await writeFile(path.join(root, ".pi", "settings.json"), "package probe\n");

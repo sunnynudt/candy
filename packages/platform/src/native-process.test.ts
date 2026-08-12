@@ -34,6 +34,36 @@ test("native runner path resolution is platform-owned and fail-closed", () => {
     }),
     undefined,
   );
+  assert.equal(
+    resolveNativeProcessRunnerPath("file:///repo/apps/app-server/dist/main.js", {
+      platform: "win32",
+      environment: { CANDY_SANDBOX_RUNNER: "native\\runner.exe" },
+      cwd: "C:\\repo",
+      exists: () => true,
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveNativeProcessRunnerPath("file:///repo/apps/app-server/dist/main.js", {
+      platform: "win32",
+      environment: { CANDY_SANDBOX_RUNNER: "C:\\missing\\runner.exe" },
+      cwd: "C:\\repo",
+      exists: () => false,
+    }),
+    undefined,
+  );
+});
+
+test("native runner path resolution uses target Windows URL and path semantics", () => {
+  const existing = new Set(["C:\\repo\\apps\\app-server\\native\\candy-sandbox-runner.exe"]);
+  assert.equal(
+    resolveNativeProcessRunnerPath("file:///C:/repo/apps/app-server/dist/main.js", {
+      platform: "win32",
+      cwd: "C:\\repo",
+      exists: (candidate) => existing.has(candidate),
+    }),
+    "C:\\repo\\apps\\app-server\\native\\candy-sandbox-runner.exe",
+  );
 });
 
 test("native runner rejects unsupported platforms and secret-bearing environments before spawn", () => {

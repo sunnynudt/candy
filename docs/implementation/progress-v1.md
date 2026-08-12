@@ -51,6 +51,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Regression coverage includes the real macOS runner marker fixture, an injected-spawn no-execution fixture with quote/backslash input, the deepest representation that fits the v1 request-line limit, and an oversized raw active-secret argument. Rust, JSONL v1 fields, Runtime contracts, and cancellation semantics remain unchanged.
 - This repair checkpoint is implementation evidence only until the architect reopens the gate and the test agent reproduces the original nested fixture with no spawn and no marker. Windows 11 remains Pending; G2, Shell Auto, and Shell Auto Debug remain unchanged.
 
+## 2026-08-12 Windows 11 non-admin deterministic seam repair checkpoint
+
+- On the current Windows 11 Pro x64 non-Administrator session, the Pi resource-isolation fixtures no longer require file-symlink creation privileges: the real hostile workspace uses a directory junction, while the file-symlink `AGENTS.md` contract runs through Candy's injected filesystem seam and remains fail-closed. The tests still assert that `.pi` resources are neither discovered nor executed, symlinked context is rejected, and credential canaries do not enter requests or sessions.
+- `resolveNativeProcessRunnerPath` now honors a valid absolute `CANDY_SANDBOX_RUNNER` override before decoding the module URL, rejects relative or missing overrides without fallback, and resolves module/file URLs and candidate paths with the target platform's Windows or POSIX semantics. The native runner remains fail-closed for unsupported, relative, and missing paths.
+- With a clean `npm ci --ignore-scripts` and Node `22.23.2`/npm `10.9.8`, checkpoint validation passed: `npm run check:toolchain`, `npm run check` (126/126 tests), `npm run check:native`, `npm run smoke:native:windows`, `npm run smoke:tui-task`, and `npm run smoke:app-server`.
+- No real provider credential, external tool configuration, session, source upload, or public provider request was used. This is Windows deterministic implementation evidence only; true file-symlink/other reparse, OS-level network/workspace containment, signing, complete recovery/UI, Browser input-origin, live-provider, and final ACC-01..12 acceptance remain open.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint
