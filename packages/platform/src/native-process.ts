@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { cleanChildEnvironment } from "./index.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
+// Rust bounds each child stream to MAX_OUTPUT_BYTES before serde_json encoding.
+// A control character can expand to six JSON bytes, so both streams need a
+// larger protocol-frame bound than the raw child-output bound.
+const MAX_RESPONSE_BYTES = MAX_OUTPUT_BYTES * 12 + 4_096;
 
 export interface NativeProcessRequest {
   readonly executable: string;
@@ -41,10 +45,45 @@ interface NativeProcessCompletedResponse {
   readonly cancelled: boolean;
 }
 
+interface NativeProcessStream {
+  setEncoding(encoding: "utf8"): void;
+  on(event: "data", listener: (chunk: string) => void): this;
+}
+
+interface NativeProcessChild {
+  readonly pid?: number;
+  readonly stdin: { end(data: string): void };
+  readonly stdout: NativeProcessStream;
+  readonly stderr: NativeProcessStream;
+  on(event: "data", listener: (...args: readonly unknown[]) => void): this;
+  once(event: "error", listener: (error: Error) => void): this;
+  once(
+    event: "close",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): this;
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+interface NativeProcessSpawnOptions {
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly detached?: boolean;
+  readonly shell: false;
+  readonly windowsHide: true;
+  readonly stdio: readonly ["pipe", "pipe", "pipe"];
+}
+
+type NativeProcessSpawn = (
+  executable: string,
+  args: readonly string[],
+  options: NativeProcessSpawnOptions,
+) => NativeProcessChild;
+
 export class NativeProcessRunner {
   public constructor(
     private readonly runnerExecutable: string,
     private readonly platform = process.platform,
+    private readonly spawnProcess: NativeProcessSpawn = spawn as NativeProcessSpawn,
   ) {}
 
   public run(request: NativeProcessRequest): Promise<NativeProcessResult> {
@@ -74,11 +113,14 @@ export class NativeProcessRunner {
       network: false,
       environment,
     });
-    if (containsSandboxSecretMaterial(payload))
+    if (
+      containsSandboxSecretMaterial(payload) ||
+      containsActiveSecretMaterial(payload, request.activeSecrets ?? [])
+    )
       throw new Error("Provider credentials are forbidden in Sandbox Runner requests.");
 
     return new Promise((resolve, reject) => {
-      const child = spawn(this.runnerExecutable, [], {
+      const child = this.spawnProcess(this.runnerExecutable, [], {
         cwd: request.cwd,
         env: cleanChildEnvironment(process.env),
         ...(this.platform === "darwin" ? { detached: true } : {}),
@@ -100,7 +142,7 @@ export class NativeProcessRunner {
             // Fall through to the direct child termination path.
           }
         }
-        child.kill("SIGTERM");
+        child.kill();
       };
       const onAbort = (): void => {
         cancelled = true;
@@ -110,7 +152,7 @@ export class NativeProcessRunner {
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => {
-        stdout = appendBoundedOutput(stdout, chunk);
+        stdout = appendBoundedOutput(stdout, chunk, MAX_RESPONSE_BYTES);
       });
       child.stderr.on("data", (chunk: string) => {
         stderr = appendBoundedOutput(stderr, chunk);
@@ -298,9 +340,15 @@ function parseNativeProcessResponse(
   return response as NativeProcessCompletedResponse;
 }
 
-function appendBoundedOutput(current: string, chunk: string): string {
-  if (current.length >= MAX_OUTPUT_BYTES) return current;
-  return current + chunk.slice(0, MAX_OUTPUT_BYTES - current.length);
+function appendBoundedOutput(
+  current: string,
+  chunk: string,
+  maximumBytes = MAX_OUTPUT_BYTES,
+): string {
+  const remainingBytes = maximumBytes - Buffer.byteLength(current, "utf8");
+  if (remainingBytes <= 0) return current;
+  if (Buffer.byteLength(chunk, "utf8") <= remainingBytes) return current + chunk;
+  return current + Buffer.from(chunk, "utf8").subarray(0, remainingBytes).toString("utf8");
 }
 
 function assertSafeProcessEnvironment(environment: Readonly<Record<string, string>>): void {
@@ -314,4 +362,12 @@ function assertSafeProcessEnvironment(environment: Readonly<Record<string, strin
 
 function containsSandboxSecretMaterial(value: string): boolean {
   return /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(value);
+}
+
+function containsActiveSecretMaterial(value: string, activeSecrets: readonly string[]): boolean {
+  return activeSecrets.some((secret) => {
+    if (secret.length === 0) return false;
+    const serializedSecret = JSON.stringify(secret).slice(1, -1);
+    return value.includes(secret) || value.includes(serializedSecret);
+  });
 }
