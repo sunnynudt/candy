@@ -1,6 +1,6 @@
 # Candy V1 Implementation Progress
 
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 可持续更新的实施待办见 [Candy V1 待办与进度](todolist-v1.md)。其中 `☑️` 仅表示对应范围已经验证完成，`◐` 会明确列出剩余验收条件。
 
@@ -394,3 +394,10 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The source-driven matrix proves that the TypeScript `WorkspaceGuard` rejects outside-workspace reads/writes and symlink reads/writes. It separately proves that the raw macOS runner can read and write outside the workspace, follow a workspace symlink for reads/writes, and complete a post-`lstat` symlink swap into an outside directory. These native escape results are expected under the current Seatbelt `(allow default)` profile and mean OS-level workspace containment is **not proven**; `WorkspaceGuard` is policy validation, not OS isolation.
 - The same runner blocks a local loopback network connection and cancels a detached descendant process group; the delayed descendant marker remains absent after the cancellation window. These are bounded no-network and process-ownership observations, not a complete native security review.
 - No Rust/Seatbelt change was made because the matrix did not demonstrate a stronger OS boundary. The remaining workspace containment/race design, packaging/signing verification, and independent security review are `Blocked`; Shell Auto and Shell Auto Debug remain disabled. No live provider, credential, session, or external-tool configuration was used.
+
+## 2026-08-12 macOS packaged Browser smoke isolation regression fix
+
+- Reproduced `npm run smoke:browser:macos` from `b516739`: the packaged Browser journey itself completed, but the final recursive marker scan treated expected rendered-page retention in Electron's persistent Browser Profile/Partitions as a session or protocol leak.
+- `scripts/smoke-browser-macos.mjs` now launches the packaged app with temporary `HOME`/`TMPDIR` values and an explicit temporary Candy-owned `CANDY_APP_DATA_ROOT`. The smoke continues to scan stdout, stderr, the app-server JSONL path, and Candy-owned `sessions`, `state`, `attachments`, `worktrees`, and `downloads` data for the page marker.
+- Only the `browser-profile` and `Partitions` directories are excluded from the page-content scan because they are expected local Browser Profile persistence. This is not a session, state, attachment, worktree, downloads, stdout/stderr, or protocol exemption; site allowlisting, sensitive-operation confirmation, Take Control, download policy, prompt-injection, and marker assertions are unchanged.
+- The fixed `npm run smoke:browser:macos` passes on macOS `26.5.2` arm64 with Node `22.23.2` and packaged Electron `43.2.0`. This closes the deterministic smoke regression only; complete `ACC-09`, physical input-origin evidence, broader adversarial coverage, signing, native security review, live providers, and final V1 acceptance remain open.
