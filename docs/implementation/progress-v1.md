@@ -81,6 +81,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The app-server default change tracker is now `ResolvedWorkspaceChangeTracker`, which uses Git review when a Git baseline exists and non-Git review otherwise. The `workspace.changes` event carries `available: true` with the non-Git changed-file list; Desktop projects the same changed-files/diff UI. Git review behavior is unchanged.
 - Added runtime and app-server tests proving added/changed/removed detection and the full non-Git task journey. `npm run check` now passes 107 tests. This closes the ACC-08 non-Git change-review gap as deterministic evidence; non-Git Apply remains review-only (no patch contract), matching the product's Git-Apply scope.
 
+## 2026-08-12 Windows Browser download policy checkpoint
+
+- The Desktop Browser now implements the ACC-09 download contract instead of pure default-deny: `will-download` records a visible `denied` state and prevents the download unless the renderer explicitly confirms the exact URL (`browser.allowDownload`) for an already-allowed site. Confirmed downloads are saved under the Candy-owned app-data `downloads/` directory with a sanitized filename, tracked through `BrowserDownloadState` (denied/completed/failed, URL, filename, target path, bytes) exposed via `browser.downloads()` and `browser.downloads` events; nothing is auto-opened and downloaded bytes never enter the attachment store, session, protocol, or model context.
+- The packaged Windows Browser smoke now asserts: the initial download is default-denied with a visible state; `allowDownload` completes the same fixture URL into the Candy downloads directory; the file content matches the fixture and never contains the untrusted page marker. `npm run check` stays green at 107 tests. This closes the ACC-09 download-visible/configured-path/no-auto-open subset; automated upload remains unavailable and physical input-origin detection remains Blocked.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

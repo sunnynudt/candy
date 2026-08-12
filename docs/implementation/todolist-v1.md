@@ -41,6 +41,7 @@
   已完成：packaged Windows fixture 通过 allowlist 后加载本机页面，阻止不允许的 redirect、popup、permission 和 download，并验证显式 Take Control/return-to-agent revision；对凭据 URL、非 loopback HTTP、script URL、未授权 host、畸形 structured action、缺失 selector 和错误 target 做 fail-closed 检查；Browser profile 使用 Candy-owned persistent partition，页面没有 Candy preload 或 provider credential。
   已完成：packaged fixture 通过窄桥接执行 selector-scoped click/type/confirmed-submit，拒绝未确认 submit、stale revision、NUL/非法 CSS selector 和 Take Control 后的 user-owned action；截图写入 Candy AttachmentStore，snapshot 只返回不透明 `att_...` id。当前实现继续使用 ADR-0006 的显式 Take Control fallback。
   已完成：packaged Windows fixture 现包含 macOS 同等的对抗性页：prompt-injection 文本按不可信内容观察且 trap 未被自动触发、同 revision 双导航竞态只接受一个 revision-fenced 请求（slow 命中）、Take Control 后的冲突 action 被拒绝，且页面 marker 未进入 packaged stdout/stderr、app-server JSONL stdout 或 Candy 自有 session/state/协议数据（仅浏览器 profile/partition 缓存按设计保留页面数据）。
+  已完成：下载策略改为默认拒绝但状态可见，用户对已授权站点单次确认后保存到 Candy app-data `downloads/`（文件名净化），提供 `browser.downloads()`/事件展示 denied/completed/failed 状态，绝不自动打开或进入模型上下文；packaged Windows smoke 验证确认下载落盘且内容不含页面 marker。
   待完成：可靠的物理输入来源识别；完整 ACC-09/ACC-12 Browser 指标仍未完成。
 
 - ◐ 补齐 Windows 长运行/Auto Debug：用户 steering、审批等待、最终证据摘要及 Windows 原生 validator 集成。

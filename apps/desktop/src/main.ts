@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import path, { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -39,6 +39,7 @@ import {
   classifyWindowClose,
   credentialStoreLabel,
   type DesktopPreloadApi,
+  type BrowserDownloadState,
   type RendererTaskProjection,
   type WorkspaceSelection,
 } from "./contracts.js";
@@ -176,6 +177,9 @@ let browserNavigationDenied = false;
 let browserPopupDenied = false;
 let browserPermissionDenied = false;
 let browserDownloadPrevented = false;
+const browserDownloads = new Map<string, BrowserDownloadState>();
+const pendingDownloadAllowances = new Set<string>();
+let browserDownloadSequence = 0;
 let browserAttachments: AttachmentStore | undefined;
 let explicitQuit = false;
 let selectedWorkspacePath: string | undefined;
@@ -192,6 +196,19 @@ function assertBrowserHost(host: unknown): asserts host is string {
   }
   if (parsed.host !== host.toLowerCase() || parsed.pathname !== "/" || parsed.search || parsed.hash)
     throw new Error("Browser site host is invalid.");
+}
+
+function publishBrowserDownloads(): void {
+  mainWindow?.webContents.send("browser.downloads", [...browserDownloads.values()]);
+}
+
+function safeDownloadFilename(filename: string, fallback: number): string {
+  const base = path
+    .basename(filename)
+    .replace(/[\\/:*?"<>|\0]/gu, "_")
+    .trim();
+  if (base === "" || base === "." || base === "..") return `download-${fallback}`;
+  return base;
 }
 
 function parseCandyBrowserUrl(value: unknown): URL {
@@ -658,6 +675,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle("browser.return-control", (event) => {
     assertTrustedRenderer(event);
     return updateBrowserControl("agent");
+  });
+  ipcMain.handle("browser.allow-download", (event, urlValue: unknown) => {
+    assertTrustedRenderer(event);
+    const url = parseCandyBrowserUrl(urlValue);
+    if (!browserHosts.has(url.host.toLowerCase()))
+      throw new Error("Browser download target is not an allowed site.");
+    pendingDownloadAllowances.add(url.href);
+    void browserView?.webContents.downloadURL(url.href);
+  });
+  ipcMain.handle("browser.downloads", (event) => {
+    assertTrustedRenderer(event);
+    return [...browserDownloads.values()];
   });
   ipcMain.handle("workspace.current", (event): WorkspaceSelection | undefined => {
     assertTrustedRenderer(event);
@@ -1199,16 +1228,60 @@ export function isAllowedCandyBrowserUrl(
 
 export function configureCandyBrowserSession(): void {
   const paths = resolveAppPaths(app.getPath("userData"));
-  void paths;
+  const downloadsRoot = path.join(paths.root, "downloads");
   const browserSession = session.fromPartition("persist:candy-browser-v1");
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     browserPermissionDenied = true;
     callback(false);
   });
   browserSession.setPermissionCheckHandler(() => false);
-  browserSession.on("will-download", (event) => {
-    browserDownloadPrevented = true;
-    event.preventDefault();
+  browserSession.on("will-download", (event, item) => {
+    const url = item.getURL();
+    if (!pendingDownloadAllowances.has(url)) {
+      browserDownloadPrevented = true;
+      event.preventDefault();
+      const id = `download-${++browserDownloadSequence}`;
+      browserDownloads.set(id, {
+        id,
+        url,
+        filename: item.getFilename(),
+        state: "denied",
+      });
+      publishBrowserDownloads();
+      return;
+    }
+    pendingDownloadAllowances.delete(url);
+    const filename = safeDownloadFilename(item.getFilename(), browserDownloadSequence);
+    const targetPath = path.join(downloadsRoot, filename);
+    item.setSavePath(targetPath);
+    const id = `download-${++browserDownloadSequence}`;
+    const state: BrowserDownloadState = {
+      id,
+      url,
+      filename,
+      state: "failed",
+      targetPath,
+      receivedBytes: 0,
+      totalBytes: item.getTotalBytes(),
+    };
+    browserDownloads.set(id, state);
+    item.on("updated", () => {
+      browserDownloads.set(id, {
+        ...state,
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+      });
+      publishBrowserDownloads();
+    });
+    item.once("done", (_event, doneState) => {
+      browserDownloads.set(id, {
+        ...state,
+        state: doneState === "completed" ? "completed" : "failed",
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+      });
+      publishBrowserDownloads();
+    });
   });
 }
 
@@ -1930,6 +2003,7 @@ async function runDesktopResponsivenessSmoke(): Promise<void> {
 async function runBrowserSmoke(): Promise<void> {
   const fixtureUrl = process.env.CANDY_BROWSER_FIXTURE_URL;
   if (!fixtureUrl || !browserView) throw new Error("Browser smoke fixture is unavailable.");
+  const pageMarker = process.env.CANDY_BROWSER_SMOKE_MARKER ?? "";
   await new Promise((resolve) => globalThis.setTimeout(resolve, 500));
   const fixture = parseCandyBrowserUrl(fixtureUrl);
   const expectBrowserRejection = async (
@@ -2132,6 +2206,41 @@ async function runBrowserSmoke(): Promise<void> {
   await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
   await browserView.webContents.downloadURL(`${fixture.origin}/download`);
   await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
+  const deniedDownloads = await executeRenderer<readonly BrowserDownloadState[]>(
+    "window.candy.browser.downloads()",
+  );
+  if (
+    !browserDownloadPrevented ||
+    !deniedDownloads.some(
+      (download) => download.url === `${fixture.origin}/download` && download.state === "denied",
+    )
+  )
+    throw new Error("Browser download was not default-denied with a visible state.");
+  await executeRenderer(
+    `window.candy.browser.allowDownload(${JSON.stringify(`${fixture.origin}/download`)})`,
+  );
+  const downloadDeadline = Date.now() + 10_000;
+  let confirmed: BrowserDownloadState | undefined;
+  while (Date.now() < downloadDeadline) {
+    const downloads = await executeRenderer<readonly BrowserDownloadState[]>(
+      "window.candy.browser.downloads()",
+    );
+    confirmed = downloads.find(
+      (download) => download.url === `${fixture.origin}/download` && download.state === "completed",
+    );
+    if (confirmed !== undefined) break;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+  }
+  if (confirmed === undefined || confirmed.targetPath === undefined)
+    throw new Error("Confirmed Browser download did not complete to a Candy-owned path.");
+  const downloadsRoot = join(resolveAppPaths(app.getPath("userData")).root, "downloads");
+  if (!isAbsolute(confirmed.targetPath) || !confirmed.targetPath.startsWith(downloadsRoot))
+    throw new Error("Browser download escaped the Candy-owned downloads directory.");
+  const downloaded = await readFile(confirmed.targetPath, "utf8");
+  if (!downloaded.includes("browser download fixture"))
+    throw new Error("Confirmed Browser download content is missing.");
+  if (downloaded.includes(pageMarker))
+    throw new Error("Browser download content leaked the untrusted page marker.");
   try {
     await browserView.webContents.loadURL(`${fixture.origin}/redirect`);
   } catch {

@@ -65,7 +65,20 @@ export interface BrowserBridge {
   screenshot(): Promise<BrowserTabSnapshot>;
   takeControl(): Promise<BrowserTabSnapshot>;
   returnControlToAgent(): Promise<BrowserTabSnapshot>;
+  allowDownload(url: string): Promise<void>;
+  downloads(): Promise<readonly BrowserDownloadState[]>;
+  onDownloads(listener: (downloads: readonly BrowserDownloadState[]) => void): () => void;
   onUpdate(listener: (snapshot: BrowserTabSnapshot) => void): () => void;
+}
+
+export interface BrowserDownloadState {
+  readonly id: string;
+  readonly url: string;
+  readonly filename: string;
+  readonly state: "denied" | "completed" | "failed";
+  readonly targetPath?: string;
+  readonly receivedBytes?: number;
+  readonly totalBytes?: number;
 }
 
 export interface DesktopPreloadApi {

@@ -56,6 +56,19 @@ const api: DesktopPreloadApi = {
       ipcRenderer.invoke("browser.return-control") as Promise<
         Awaited<ReturnType<DesktopPreloadApi["browser"]["returnControlToAgent"]>>
       >,
+    allowDownload: (url) => ipcRenderer.invoke("browser.allow-download", url) as Promise<void>,
+    downloads: () =>
+      ipcRenderer.invoke("browser.downloads") as Promise<
+        Awaited<ReturnType<DesktopPreloadApi["browser"]["downloads"]>>
+      >,
+    onDownloads: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        downloads: Parameters<typeof listener>[0],
+      ) => listener(downloads);
+      ipcRenderer.on("browser.downloads", handler);
+      return () => ipcRenderer.removeListener("browser.downloads", handler);
+    },
     onUpdate: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
