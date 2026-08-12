@@ -145,6 +145,7 @@ Evidence includes task/lease generations, queue transitions, workspace identitie
 Required outcomes:
 
 - Read-only rejects file mutation and Shell execution.
+- A workspace fixture containing a Pi `.pi/extensions` entry proves Candy's session initialization neither discovers nor executes it; it cannot register a tool, command, hook, or side effect.
 - Auto permits contracted workspace operations but denies workspace escape and model-command network access through OS containment, not only policy prompts.
 - Symlink, junction, reparse-point, case, traversal, and race fixtures cannot write outside the allowed workspace.
 - Network, destructive actions, commits, pushes, releases, deployments, and sensitive external effects request the correct approval.

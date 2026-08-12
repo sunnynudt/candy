@@ -112,6 +112,8 @@ The Runtime depends on one narrow Agent Engine Interface that advances a complet
 
 Pi messages, tool definitions, model objects, session paths, and provider payloads never cross this seam. A Pi upgrade is complete only when adapter contract, session reload, cancellation, tool-policy, and event-order tests pass.
 
+Current source gap: `PiAgentEngine` calls Pi's `createAgentSession` without an explicit Resource Loader. Pi consequently constructs its default loader with the workspace trusted and can discover `cwd/.pi/extensions`. Candy does not surface the resulting extension capability or types, but it also does not yet hard-disable execution. A V1 hardening change must pass a Candy-owned restricted loader (at minimum Pi's `noExtensions: true` behavior, with an explicit decision for any non-executable context or skills) and prove a workspace extension cannot load. Until then, the no-plugin product boundary is an intended policy rather than an enforced source property.
+
 ### Browser Interface
 
 The existing `open`, `observe`, `act`, `setControl`, and `close` Interface remains task-oriented. Desktop supplies the Electron adapter; TUI supplies an explicit unavailable-capability adapter; tests use a deterministic in-memory page adapter.
