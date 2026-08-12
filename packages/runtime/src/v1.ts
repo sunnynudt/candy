@@ -1,10 +1,20 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cleanChildEnvironment } from "@candy/platform";
 
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
+const NON_GIT_IGNORED_DIRECTORIES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  "node_modules",
+  "target",
+  "dist",
+  "out",
+  "build",
+]);
 
 export type ActionKind =
   | "workspace.read"
@@ -1087,6 +1097,86 @@ export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
       return emptyWorkspaceChanges();
     }
   }
+}
+
+interface NonGitFileState {
+  readonly size: number;
+  readonly modifiedMs: number;
+}
+
+/**
+ * Review-only diff for a non-Git workspace. The baseline is a recursive file
+ * snapshot (relative path + size + mtime) captured at task creation; inspection
+ * compares the current tree and reports added/changed/removed relative paths
+ * without mutating anything. Binary-safe sizes are compared, and the patch text
+ * stays a review summary because there is no Git patch contract.
+ */
+export class NonGitWorkspaceChangeTracker implements WorkspaceChangeTracker {
+  readonly #baselines = new Map<string, Map<string, NonGitFileState>>();
+
+  public async captureBaseline(workspace: string): Promise<string | undefined> {
+    this.#baselines.set(workspace, await snapshotNonGitTree(workspace));
+    return undefined;
+  }
+
+  public async inspect(
+    workspace: string,
+    _baseCommit?: string,
+    activeSecrets: readonly string[] = [],
+  ): Promise<WorkspaceChangeSnapshot> {
+    const baseline = this.#baselines.get(workspace);
+    if (baseline === undefined) return emptyWorkspaceChanges();
+    const current = await snapshotNonGitTree(workspace);
+    const changed: string[] = [];
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const [relative, state] of current) {
+      const before = baseline.get(relative);
+      if (before === undefined) added.push(relative);
+      else if (before.size !== state.size || before.modifiedMs !== state.modifiedMs)
+        changed.push(relative);
+    }
+    for (const relative of baseline.keys()) {
+      if (!current.has(relative)) removed.push(relative);
+    }
+    const all = [...changed, ...added, ...removed].sort();
+    const patchText = redactWorkspacePatch(
+      all.map((relative) => `changed: ${relative}`).join("\n"),
+      activeSecrets,
+    );
+    return {
+      available: true,
+      tracked: all,
+      untracked: [],
+      patchText,
+      patchTruncated: Buffer.byteLength(patchText, "utf8") >= MAX_WORKSPACE_PATCH_BYTES,
+    };
+  }
+}
+
+async function snapshotNonGitTree(root: string): Promise<Map<string, NonGitFileState>> {
+  const snapshot = new Map<string, NonGitFileState>();
+  async function visit(directory: string, prefix: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (NON_GIT_IGNORED_DIRECTORIES.has(entry.name)) continue;
+        await visit(absolute, relative);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const metadata = await stat(absolute).catch(() => undefined);
+      if (metadata === undefined) continue;
+      snapshot.set(relative, {
+        size: metadata.size,
+        modifiedMs: Math.trunc(metadata.mtimeMs),
+      });
+    }
+  }
+  await visit(root, "");
+  return snapshot;
 }
 
 export class GitWorktreeManager {

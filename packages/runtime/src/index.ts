@@ -413,6 +413,7 @@ export {
   GitWorkspaceChangeTracker,
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
+  NonGitWorkspaceChangeTracker,
   LongRunningTaskRunner,
   LongRunningControlError,
   MacSandboxRunner,

@@ -825,6 +825,55 @@ test("app-server publishes the reviewed workspace changes before task completion
   }
 });
 
+test("app-server reviews added, changed, and removed files in a non-Git workspace", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-nongit-journey-"));
+  await writeFile(path.join(workspace, "README.md"), "base\n");
+  await writeFile(path.join(workspace, "old.txt"), "base\n");
+  const engine = {
+    async *runTurn(input: AgentTurnInput) {
+      if (input.cwd !== undefined) {
+        await writeFile(path.join(input.cwd, "README.md"), "changed\n");
+        await writeFile(path.join(input.cwd, "new.txt"), "new\n");
+        await rm(path.join(input.cwd, "old.txt"));
+      }
+      yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+    },
+  };
+  const controller = new AppServerController({ engine });
+  try {
+    await controller.dispatch(
+      command("task-nongit", "create-nongit", 0, {
+        type: "task.create",
+        prompt: "review non-Git workspace",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+      }),
+    );
+    const background: ProtocolMessage[] = [];
+    await controller.dispatch(
+      command("task-nongit", "run-nongit", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    await waitForCompletion(background, "task-nongit");
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    const changes = background.find(
+      (message): message is Extract<ProtocolMessage, { readonly kind: "event" }> =>
+        message.kind === "event" && message.event.type === "workspace.changes",
+    );
+    if (changes === undefined || changes.event.type !== "workspace.changes")
+      throw new Error(
+        `Non-Git workspace changes were not published: ${background
+          .map((message) => (message.kind === "event" ? message.event.type : message.kind))
+          .join(",")}`,
+      );
+    assert.equal(changes.event.available, true);
+    assert.deepEqual(changes.event.tracked, ["README.md", "new.txt", "old.txt"]);
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+});
+
 test("app-server applies reviewed changes through the reviewed command seam", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-app-server-apply-"));
   const applyCalls: Array<{
@@ -1419,18 +1468,8 @@ test("app-server resolves Candy-owned image attachments into the selected MiniMa
       (message) => background.push(message),
     );
     await imagesObserved;
-    for (
-      let attempt = 0;
-      attempt < 10 &&
-      !background.some(
-        (message) =>
-          message.kind === "event" &&
-          message.event.type === "snapshot" &&
-          message.event.snapshot.state === "completed",
-      );
-      attempt += 1
-    )
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForCompletion(background, "task-image");
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     assert.equal(observedImages, 1);
     assert.equal(
       background.some(

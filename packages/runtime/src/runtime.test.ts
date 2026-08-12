@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,6 +9,7 @@ import {
   CandyRuntime,
   DeterministicAgentEngine,
   InMemorySessionStore,
+  NonGitWorkspaceChangeTracker,
   ReadOnlyWorkspaceTool,
   TaskController,
   TaskScheduler,
@@ -33,6 +34,29 @@ test("deterministic agent engine drives a complete read-only turn", async () => 
     { type: "assistant.delta", text: "fixture response" },
     { type: "turn.completed", taskId: "task-1", at: 1_000 },
   ]);
+});
+
+test("non-Git change tracker reports added, changed, and removed files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-nongit-"));
+  try {
+    await mkdir(path.join(root, "src"));
+    await writeFile(path.join(root, "src", "keep.txt"), "base\n");
+    await writeFile(path.join(root, "README.md"), "base\n");
+    const tracker = new NonGitWorkspaceChangeTracker();
+    assert.equal(await tracker.captureBaseline(root), undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(path.join(root, "README.md"), "changed\n");
+    await writeFile(path.join(root, "new.txt"), "new\n");
+    await rm(path.join(root, "src", "keep.txt"));
+    const changes = await tracker.inspect(root);
+    assert.equal(changes.available, true);
+    assert.deepEqual(changes.tracked, ["README.md", "new.txt", "src/keep.txt"]);
+    assert.match(changes.patchText, /changed: README\.md/u);
+    assert.match(changes.patchText, /changed: new\.txt/u);
+    assert.match(changes.patchText, /changed: src\/keep\.txt/u);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
 });
 
 test("deterministic agent engine honors cancellation", async () => {

@@ -37,6 +37,7 @@ import {
   LongRunningTaskRunner,
   MacSandboxRunner,
   MacSandboxValidator,
+  NonGitWorkspaceChangeTracker,
   WindowsJobObjectRunner,
   WindowsJobObjectValidator,
   WorkspaceHandoff,
@@ -47,6 +48,7 @@ import {
   type RecoverableAgentEngine,
   type ValidatorResult,
   type MacSandboxValidatorCommand,
+  type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
   planGitWorktree,
 } from "@candy/runtime";
@@ -54,6 +56,29 @@ import {
 interface PiTurnEngine {
   runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
   recoverPrompt(taskId: string, cwd: string): Promise<string | undefined>;
+}
+
+class ResolvedWorkspaceChangeTracker implements WorkspaceChangeTracker {
+  public constructor(
+    private readonly git: WorkspaceChangeTracker,
+    private readonly nonGit: WorkspaceChangeTracker,
+  ) {}
+
+  public async captureBaseline(workspace: string): Promise<string | undefined> {
+    const baseline = await this.git.captureBaseline(workspace);
+    if (baseline !== undefined) return baseline;
+    await this.nonGit.captureBaseline(workspace);
+    return undefined;
+  }
+
+  public async inspect(
+    workspace: string,
+    baseCommit?: string,
+    activeSecrets?: readonly string[],
+  ): Promise<WorkspaceChangeSnapshot> {
+    if (baseCommit !== undefined) return this.git.inspect(workspace, baseCommit, activeSecrets);
+    return this.nonGit.inspect(workspace, baseCommit, activeSecrets);
+  }
 }
 
 export class PiAppServerEngine implements RecoverableAgentEngine {
@@ -201,7 +226,12 @@ export class AppServerController {
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
     this.#attachments = options.attachments;
     this.#validatorRunner = options.validatorRunner;
-    this.#changeTracker = options.changeTracker ?? new GitWorkspaceChangeTracker();
+    this.#changeTracker =
+      options.changeTracker ??
+      new ResolvedWorkspaceChangeTracker(
+        new GitWorkspaceChangeTracker(),
+        new NonGitWorkspaceChangeTracker(),
+      );
     this.#activeSecrets = options.activeSecrets;
     this.#applyChanges = options.applyChanges;
     this.#worktreeRoot = options.worktreeRoot;
