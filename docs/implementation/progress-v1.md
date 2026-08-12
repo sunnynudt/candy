@@ -86,6 +86,11 @@ Windows 11 x64 implementation and acceptance now continue on the current Windows
 - The Desktop Browser now implements the ACC-09 download contract instead of pure default-deny: `will-download` records a visible `denied` state and prevents the download unless the renderer explicitly confirms the exact URL (`browser.allowDownload`) for an already-allowed site. Confirmed downloads are saved under the Candy-owned app-data `downloads/` directory with a sanitized filename, tracked through `BrowserDownloadState` (denied/completed/failed, URL, filename, target path, bytes) exposed via `browser.downloads()` and `browser.downloads` events; nothing is auto-opened and downloaded bytes never enter the attachment store, session, protocol, or model context.
 - The packaged Windows Browser smoke now asserts: the initial download is default-denied with a visible state; `allowDownload` completes the same fixture URL into the Candy downloads directory; the file content matches the fixture and never contains the untrusted page marker. `npm run check` stays green at 107 tests. This closes the ACC-09 download-visible/configured-path/no-auto-open subset; automated upload remains unavailable and physical input-origin detection remains Blocked.
 
+## 2026-08-12 Windows provider isolation checkpoint
+
+- Added an app-server fixture proving ACC-06 provider isolation: a DeepSeek task that throws a provider error (`provider_error` after `ProviderContractError`) does not block a concurrently running MiniMax task; the MiniMax task completes, writes its local file, and the local read succeeds while the DeepSeek task is surfaced as an actionable `provider_error`. The engine records both model calls.
+- `npm run check` now passes 108 tests. This is deterministic evidence that provider failure classification and task scheduling keep DeepSeek rate limiting isolated from MiniMax and local reads; real cross-provider concurrency under live rate limits and the full dual-platform matrix remain Blocked.
+
 ## 2026-08-10 Windows 11 deterministic worktree checkpoint
 
 - The current development host is Windows 11 Pro x64. After a clean `npm ci --ignore-scripts`, the complete deterministic gate passes: format, lint, typecheck, 88 tests, protocol boundaries, exact Pi closure, and lifecycle policy. The durable TUI task and app-server JSONL smokes also pass under Node `22.23.2`.

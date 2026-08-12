@@ -8,6 +8,7 @@ import test from "node:test";
 import type { PiAgentEngineInput } from "@candy/pi-adapter";
 import { type CommandEnvelope, type EventEnvelope, type ProtocolMessage } from "@candy/protocol";
 import { DEFAULT_CANDY_MODEL, SQLiteTaskStore } from "@candy/platform";
+import { ProviderContractError } from "@candy/pi-adapter";
 import {
   AttachmentStore,
   LongRunningControlError,
@@ -1364,6 +1365,101 @@ test("app-server preserves actionable provider error codes without exposing mess
     }
   } finally {
     controller.close();
+  }
+});
+
+test("app-server keeps DeepSeek rate limiting isolated from MiniMax and local reads", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-provider-isolation-"));
+  const calls: string[] = [];
+  const engine = {
+    async *runTurn(input: AgentTurnInput) {
+      calls.push(`${input.model}:${input.prompt}`);
+      if (input.model === "deepseek-v4-flash")
+        throw new ProviderContractError("DeepSeek rate limit", "provider_error");
+      if (input.model === "MiniMax-M3") {
+        await writeFile(path.join(input.cwd ?? workspace, "minimax.txt"), "ok\n");
+      }
+      yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+    },
+  };
+  const controller = new AppServerController({ engine });
+  const background: ProtocolMessage[] = [];
+  try {
+    await controller.dispatch(
+      command("task-deepseek-limit", "create-ds", 0, {
+        type: "task.create",
+        prompt: "deepseek turn",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+        model: "deepseek-v4-flash",
+      }),
+    );
+    await controller.dispatch(
+      command("task-minimax-ok", "create-mm", 0, {
+        type: "task.create",
+        prompt: "minimax turn",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+        model: "MiniMax-M3",
+      }),
+    );
+    await controller.dispatch(
+      command("task-deepseek-limit", "run-ds", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    await controller.dispatch(
+      command("task-minimax-ok", "run-mm", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const bothDone =
+        background.some(
+          (message) =>
+            message.kind === "event" &&
+            message.event.type === "snapshot" &&
+            message.event.snapshot.taskId === "task-minimax-ok" &&
+            message.event.snapshot.state === "completed",
+        ) &&
+        background.some(
+          (message) =>
+            message.kind === "event" &&
+            message.event.type === "task.error" &&
+            message.event.code === "provider_error",
+        );
+      if (bothDone) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    const miniMaxCompleted = background.some(
+      (message) =>
+        message.kind === "event" &&
+        message.event.type === "snapshot" &&
+        message.event.snapshot.taskId === "task-minimax-ok" &&
+        message.event.snapshot.state === "completed",
+    );
+    assert.equal(miniMaxCompleted, true);
+    assert.equal(
+      background.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "task.error" &&
+          message.event.code === "provider_error",
+      ),
+      true,
+      JSON.stringify(
+        background.map((message) =>
+          message.kind === "event"
+            ? `${message.event.type}:${"code" in message.event ? message.event.code : ""}`
+            : message.kind,
+        ),
+      ),
+    );
+    assert.ok(calls.some((call) => call.startsWith("MiniMax-M3:")));
+    assert.ok(calls.some((call) => call.startsWith("deepseek-v4-flash:")));
+    const localRead = await readFile(path.join(workspace, "minimax.txt"), "utf8");
+    assert.equal(localRead, "ok\n");
+  } finally {
+    controller.close();
+    await rm(workspace, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
