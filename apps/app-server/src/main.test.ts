@@ -176,6 +176,166 @@ test("app-server creates, runs, streams and durably completes one task", async (
   }
 });
 
+test("app-server exposes Personal Preview Shell only in a Task Worktree and waits for approval", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-shell-"));
+  const { repository, base } = createGitFixture(root);
+  const worktreeRoot = path.join(root, "worktrees");
+  const calls: unknown[] = [];
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    worktreeRoot,
+    bashRunner: {
+      run: async (request) => {
+        calls.push(request);
+        return { code: 0, signal: null, stdout: "ok\n", stderr: "", cancelled: false };
+      },
+    },
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        if (!input.trustedShell || input.shellApproval === undefined)
+          throw new Error("shell missing");
+        yield { type: "tool.started" as const, taskId: input.taskId, tool: "candy_bash" };
+        const approved = await input.shellApproval(
+          { command: "git status --short", cwd: input.cwd! },
+          new AbortController().signal,
+        );
+        if (!approved) throw new Error("denied");
+        yield {
+          type: "tool.completed" as const,
+          taskId: input.taskId,
+          tool: "candy_bash",
+          ok: true,
+        };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  try {
+    const created = await controller.dispatch(
+      command("shell-task", "create", 0, {
+        type: "task.create",
+        prompt: "inspect",
+        approvalProfile: "auto",
+        trustedShell: true,
+        workspacePath: repository,
+      }),
+    );
+    const createdSnapshot = created.find(
+      (message) => message.kind === "event" && message.event.type === "snapshot",
+    );
+    assert.equal(createdSnapshot?.kind, "event");
+    if (createdSnapshot?.kind !== "event" || createdSnapshot.event.type !== "snapshot")
+      throw new Error("missing snapshot");
+    assert.equal(createdSnapshot.event.snapshot.trustedShell, true);
+    await controller.dispatch(command("shell-task", "run", 0, { type: "task.run" }), (message) =>
+      background.push(message),
+    );
+    const waiting = await waitForSnapshotState(background, "shell-task", "waiting_approval");
+    assert.equal(waiting.event.snapshot.shellApproval?.command, "git status --short");
+    await controller.dispatch(
+      command("shell-task", "approve", waiting.revision, {
+        type: "approval.respond",
+        approvalId: waiting.event.snapshot.approvalId!,
+        decision: "approve",
+      }),
+      (message) => background.push(message),
+    );
+    await waitForSnapshotState(background, "shell-task", "completed");
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+  assert.equal(base.length > 0, true);
+  assert.equal(calls.length, 0);
+});
+
+test("app-server rejects Personal Preview Shell before creating a Worktree for non-Git workspaces", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-shell-nongit-"));
+  const workspace = path.join(root, "workspace");
+  mkdirSync(workspace);
+  const worktreeRoot = path.join(root, "worktrees");
+  const controller = new AppServerController({
+    worktreeRoot,
+    bashRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+  });
+  try {
+    await assert.rejects(
+      controller.dispatch(
+        command("shell-nongit", "create", 0, {
+          type: "task.create",
+          prompt: "inspect",
+          approvalProfile: "auto",
+          trustedShell: true,
+          workspacePath: workspace,
+        }),
+      ),
+      /Git Task Worktree/iu,
+    );
+    assert.equal(existsSync(worktreeRoot), false);
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server cancels a pending Personal Preview Shell approval without replay", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-shell-cancel-"));
+  const { repository } = createGitFixture(root);
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    worktreeRoot: path.join(root, "worktrees"),
+    engine: {
+      async *runTurn(input: AgentTurnInput, signal) {
+        if (!input.shellApproval) throw new Error("shell missing");
+        await input.shellApproval({ command: "git status --short", cwd: input.cwd! }, signal);
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    bashRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+  });
+  try {
+    await controller.dispatch(
+      command("shell-cancel", "create", 0, {
+        type: "task.create",
+        prompt: "inspect",
+        approvalProfile: "auto",
+        trustedShell: true,
+        workspacePath: repository,
+      }),
+    );
+    await controller.dispatch(command("shell-cancel", "run", 0, { type: "task.run" }), (message) =>
+      background.push(message),
+    );
+    const waiting = await waitForSnapshotState(background, "shell-cancel", "waiting_approval");
+    const cancelled = await controller.dispatch(
+      command("shell-cancel", "cancel", waiting.revision, { type: "task.cancel" }),
+      (message) => background.push(message),
+    );
+    const snapshot = cancelled.at(-1);
+    assert.ok(snapshot?.kind === "event" && snapshot.event.type === "snapshot");
+    if (snapshot?.kind === "event" && snapshot.event.type === "snapshot") {
+      assert.equal(snapshot.event.snapshot.state, "cancelled");
+      assert.equal(snapshot.event.snapshot.shellApproval, undefined);
+    }
+    assert.equal(
+      background.filter(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "snapshot" &&
+          message.event.snapshot.state === "waiting_approval",
+      ).length,
+      1,
+    );
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server runs a task in its selected workspace instead of the child cwd", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-selected-workspace-"));
   const received: string[] = [];

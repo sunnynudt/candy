@@ -49,11 +49,19 @@ export interface TaskSnapshot {
   readonly worktreePath?: string;
   readonly ownerId?: string;
   readonly approvalId?: string;
+  readonly trustedShell?: boolean;
+  readonly shellApproval?: ShellApprovalRequest;
   readonly progress?: TaskProgress;
   readonly transcript?: readonly {
     readonly role: "user" | "assistant" | "tool";
     readonly text: string;
   }[];
+}
+
+export interface ShellApprovalRequest {
+  readonly command: string;
+  readonly cwd: string;
+  readonly timeout?: number;
 }
 
 export interface SnapshotCommand {
@@ -68,6 +76,7 @@ export interface CreateTaskCommand {
   readonly validator?: ValidatorSpec;
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
+  readonly trustedShell?: boolean;
 }
 
 export interface ValidatorSpec {
@@ -301,6 +310,9 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
   }
   if (value.workspaceBaseline !== undefined)
     assertBaseCommit(value.workspaceBaseline, "snapshot.workspaceBaseline");
+  if (value.trustedShell !== undefined && typeof value.trustedShell !== "boolean")
+    throw new ProtocolValidationError("invalid_message", "snapshot.trustedShell is invalid.");
+  if (value.shellApproval !== undefined) validateShellApproval(value.shellApproval);
   if (
     value.workspaceState !== undefined &&
     value.workspaceState !== "local" &&
@@ -380,6 +392,21 @@ function validateTaskProgress(value: unknown): asserts value is TaskProgress {
   }
 }
 
+function validateShellApproval(value: unknown): asserts value is ShellApprovalRequest {
+  if (!isRecord(value))
+    throw new ProtocolValidationError("invalid_message", "snapshot.shellApproval is invalid.");
+  assertString(value.command, "snapshot.shellApproval.command");
+  assertWorkspacePath(value.cwd, "snapshot.shellApproval.cwd");
+  if (
+    value.timeout !== undefined &&
+    (typeof value.timeout !== "number" || !Number.isFinite(value.timeout) || value.timeout <= 0)
+  )
+    throw new ProtocolValidationError(
+      "invalid_message",
+      "snapshot.shellApproval.timeout is invalid.",
+    );
+}
+
 function validateCommand(value: unknown): asserts value is RuntimeCommand {
   if (!isRecord(value) || typeof value.type !== "string") {
     throw new ProtocolValidationError("invalid_message", "Unsupported command payload.");
@@ -410,6 +437,18 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
       throw new ProtocolValidationError(
         "invalid_message",
         "command.approvalProfile is unsupported.",
+      );
+    }
+    if (value.trustedShell !== undefined && typeof value.trustedShell !== "boolean") {
+      throw new ProtocolValidationError(
+        "invalid_message",
+        "command.trustedShell must be a boolean.",
+      );
+    }
+    if (value.trustedShell === true && value.approvalProfile !== "auto") {
+      throw new ProtocolValidationError(
+        "invalid_message",
+        "Personal Preview Shell requires the Auto approval profile.",
       );
     }
     if (

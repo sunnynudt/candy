@@ -11,6 +11,11 @@ export interface AgentTurnInput {
   readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly AgentImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  readonly trustedShell?: boolean;
+  readonly shellApproval?: (
+    request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
+    signal: AbortSignal,
+  ) => Promise<boolean>;
 }
 
 export interface AgentImageInput {

@@ -30,6 +30,7 @@ import {
   parseDeepSeekSseLine,
   ProviderContractError,
 } from "./index.js";
+import { createCandyBashOperations } from "./index.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
@@ -483,6 +484,168 @@ test("Candy workspace operations keep Pi edit/write inside the selected director
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
   }
+});
+
+test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktree", async () => {
+  const calls: unknown[] = [];
+  let approvalRequest: unknown;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    activeSecrets: ["fixture-secret"],
+    onApproval: async (request) => {
+      approvalRequest = request;
+      return true;
+    },
+    runner: {
+      run: async (request) => {
+        calls.push(request);
+        return {
+          code: 0,
+          signal: null,
+          stdout: "fixture-secret output",
+          stderr: "",
+          cancelled: false,
+        };
+      },
+    },
+  });
+  const chunks: Buffer[] = [];
+  const result = await operations.exec("npm test", "C:\\task-worktree", {
+    onData: (chunk) => chunks.push(chunk),
+    timeout: 30,
+  });
+  assert.deepEqual(result, { exitCode: 0 });
+  assert.deepEqual(approvalRequest, { command: "npm test", cwd: "C:\\task-worktree", timeout: 30 });
+  const request = calls[0] as {
+    executable: string;
+    args: readonly string[];
+    cwd: string;
+    workspace: string;
+    activeSecrets?: readonly string[];
+  };
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    {
+      executable: request.executable,
+      args: request.args,
+      cwd: request.cwd,
+      workspace: request.workspace,
+      activeSecrets: request.activeSecrets,
+    },
+    {
+      executable: "C:\\Program Files\\Git\\bin\\bash.exe",
+      args: ["--noprofile", "--norc", "-c", "npm test"],
+      cwd: "C:\\task-worktree",
+      workspace: "C:\\task-worktree",
+      activeSecrets: ["fixture-secret"],
+    },
+  );
+  assert.equal(Buffer.concat(chunks).toString(), "[REDACTED] output");
+});
+
+test("Candy Bash operations deny before runner execution and reject cwd escape", async () => {
+  let runnerCalled = false;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    onApproval: async () => false,
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        throw new Error("must not run");
+      },
+    },
+  });
+  await assert.rejects(
+    operations.exec("dir", "C:\\task-worktree", { onData: () => undefined }),
+    /denied/iu,
+  );
+  assert.equal(runnerCalled, false);
+  await assert.rejects(
+    operations.exec("dir", "C:\\other", { onData: () => undefined }),
+    /Task Worktree/iu,
+  );
+});
+
+test("Candy Bash operations reject credential-shaped commands before approval or spawn", async () => {
+  let approved = false;
+  let runnerCalled = false;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    onApproval: async () => {
+      approved = true;
+      return true;
+    },
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        throw new Error("must not run");
+      },
+    },
+  });
+  await assert.rejects(
+    operations.exec("echo Bearer fixture-secret-value-012345", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /credentials/iu,
+  );
+  assert.equal(approved, false);
+  assert.equal(runnerCalled, false);
+});
+
+test("Candy Bash operations abort the native runner on timeout", async () => {
+  let runnerSignal: AbortSignal | undefined;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    onApproval: async () => true,
+    runner: {
+      run: async (request) => {
+        runnerSignal = request.signal;
+        await new Promise<void>((resolve) => {
+          request.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { code: null, signal: null, stdout: "", stderr: "", cancelled: true };
+      },
+    },
+  });
+  await assert.rejects(
+    operations.exec("timeout-test", "C:\\task-worktree", {
+      onData: () => undefined,
+      timeout: 0.01,
+    }),
+    /timeout:0\.01/iu,
+  );
+  assert.equal(runnerSignal?.aborted, true);
+});
+
+test("Candy Bash operations propagate task cancellation to the native runner", async () => {
+  const taskAbort = new AbortController();
+  let runnerSignal: AbortSignal | undefined;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    onApproval: async () => true,
+    runner: {
+      run: async (request) => {
+        runnerSignal = request.signal;
+        await new Promise<void>((resolve) => {
+          request.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { code: null, signal: null, stdout: "", stderr: "", cancelled: true };
+      },
+    },
+  });
+  const execution = operations.exec("cancel-test", "C:\\task-worktree", {
+    onData: () => undefined,
+    signal: taskAbort.signal,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  taskAbort.abort();
+  await assert.rejects(execution, /aborted/iu);
+  assert.equal(runnerSignal?.aborted, true);
 });
 
 test("MiniMax Pi engine sends image turns through the domestic M3 provider", async () => {

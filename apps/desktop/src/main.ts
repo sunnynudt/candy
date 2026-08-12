@@ -505,6 +505,7 @@ function emptyProjection(taskId: string): RendererTaskProjection {
     revision: 0,
     approvalProfile: "read-only",
     model: DEFAULT_CANDY_MODEL,
+    trustedShell: false,
     workspaceState: "local",
     changedFiles: [],
     trackedFiles: [],
@@ -518,7 +519,7 @@ function emptyProjection(taskId: string): RendererTaskProjection {
 function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
   const current = projections.get(event.taskId) ?? emptyProjection(event.taskId);
   if (event.event.type === "snapshot") {
-    return {
+    const next: RendererTaskProjection = {
       ...current,
       state: event.event.snapshot.state,
       revision: event.revision,
@@ -541,6 +542,12 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
       ...(event.event.snapshot.approvalId === undefined
         ? {}
         : { approvalId: event.event.snapshot.approvalId }),
+      ...(event.event.snapshot.trustedShell === undefined
+        ? {}
+        : { trustedShell: event.event.snapshot.trustedShell }),
+      ...(event.event.snapshot.shellApproval === undefined
+        ? {}
+        : { shellApproval: event.event.snapshot.shellApproval }),
       ...(event.event.snapshot.progress === undefined
         ? {}
         : { progress: event.event.snapshot.progress }),
@@ -548,6 +555,11 @@ function projectionFromEvent(event: EventEnvelope): RendererTaskProjection {
         ? {}
         : { transcript: event.event.snapshot.transcript }),
     };
+    if (event.event.snapshot.approvalId === undefined)
+      Reflect.deleteProperty(next as unknown as Record<string, unknown>, "approvalId");
+    if (event.event.snapshot.shellApproval === undefined)
+      Reflect.deleteProperty(next as unknown as Record<string, unknown>, "shellApproval");
+    return next;
   }
   if (event.event.type === "task.created")
     return {
@@ -754,11 +766,16 @@ function registerIpcHandlers(): void {
       model: unknown,
       attachmentIds: unknown,
       validator: unknown,
+      trustedShell: unknown,
     ) => {
       assertTrustedRenderer(event);
       validatePrompt(prompt);
       if (profile !== "read-only" && profile !== "auto")
         throw new Error("Invalid approval profile.");
+      if (trustedShell !== undefined && typeof trustedShell !== "boolean")
+        throw new Error("Invalid Personal Preview Shell setting.");
+      if (trustedShell === true && profile !== "auto")
+        throw new Error("Personal Preview Shell requires Auto approval.");
       if (selectedWorkspacePath === undefined) throw new Error("Choose a workspace first.");
       if (validator !== undefined) assertValidatorSpec(validator);
       if (
@@ -800,6 +817,7 @@ function registerIpcHandlers(): void {
           ...(selectedValidator === undefined ? {} : { validator: selectedValidator }),
           model: selectedModel,
           attachmentIds: selectedAttachments,
+          ...(trustedShell === true ? { trustedShell: true } : {}),
         },
       });
       return projections.get(taskId) ?? projection;
@@ -1079,7 +1097,7 @@ requestAnimationFrame(recordFrame);`
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><title>Candy</title>
 <style>body{font:14px system-ui;margin:0;color:#202124;background:#f7f7f8}main{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{padding:20px;border-right:1px solid #ddd;background:#fff;overflow:auto}section{padding:20px;overflow:auto}textarea,input{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px}textarea{height:140px}button,select{margin:8px 4px 8px 0;padding:7px 10px}pre{white-space:pre-wrap;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px}.muted{color:#6b7280}.card{border:1px solid #ddd;border-radius:6px;padding:10px;margin:14px 0}.status{font-size:12px}</style></head>
- <body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskProgress" class="muted"></div><div id="taskActions"></div><button id="applyChanges" disabled>Apply changes</button><button id="discardWorktree" disabled>Discard worktree</button></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
+ <body><main><aside><h1>Candy</h1><p class="muted">Local-first, one agent per task</p><div class="card"><strong>Local Workspace</strong><button id="chooseWorkspace">Choose folder</button><div id="workspacePath" class="muted">No workspace selected.</div></div><div class="card"><strong>Trusted credentials</strong><div><label for="deepseekKey">DeepSeek API key</label><input id="deepseekKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveDeepSeek">Save</button><button id="deleteDeepSeek">Delete</button><span id="deepseekStatus" class="status muted"></span></div><div><label for="minimaxKey">MiniMax Token Plan key</label><input id="minimaxKey" type="password" autocomplete="off" placeholder="Stored in ${credentialStore}"><button id="saveMiniMax">Save</button><button id="deleteMiniMax">Delete</button><span id="minimaxStatus" class="status muted"></span></div></div><div class="card"><strong>Optional validator</strong><label for="validatorExecutable">Absolute executable</label><input id="validatorExecutable" placeholder="e.g. /usr/bin/env"><label for="validatorArgs">Arguments as JSON array</label><input id="validatorArgs" placeholder='["npm","test"]' value="[]"><div class="muted">Runs without Candy provider credentials and with network denied.</div></div><label for="profile">Approval profile</label><select id="profile"><option value="read-only">Read-only</option><option value="auto">Auto (gated)</option></select><label><input id="trustedShell" type="checkbox"> Personal Preview Shell (Windows user permissions)</label><div class="muted">No complete OS file or network isolation. Commands may access files outside the workspace or the network. Job Object handles process ownership/cancellation only. This is not G2.</div><label for="model">Model</label><select id="model"><option value="deepseek-v4-flash">DeepSeek V4 Flash</option><option value="deepseek-v4-pro">DeepSeek V4 Pro</option><option value="MiniMax-M3">MiniMax M3 (image)</option></select><textarea id="prompt" placeholder="Describe the coding task"></textarea><button id="attach">Attach image</button><span id="attachments" class="muted"></span><button id="create">Create task</button><div id="taskStatus"></div><div id="taskProgress" class="muted"></div><div id="taskActions"></div><button id="applyChanges" disabled>Apply changes</button><button id="discardWorktree" disabled>Discard worktree</button></aside><section><h2>Transcript</h2><div id="transcript" class="muted">No task selected.</div><h2>Changed files</h2><pre id="diff">No diff yet.</pre></section></main>
 <script nonce="${nonce}">
 (() => {
   ${probeScript}
@@ -1091,6 +1109,8 @@ requestAnimationFrame(recordFrame);`
   const credentialInputs = { deepseek: document.getElementById('deepseekKey'), 'minimax-cn': document.getElementById('minimaxKey') };
   const credentialStatus = { deepseek: document.getElementById('deepseekStatus'), 'minimax-cn': document.getElementById('minimaxStatus') };
   const profile = document.getElementById('profile');
+  const trustedShell = document.getElementById('trustedShell');
+  profile.addEventListener('change', () => { trustedShell.disabled = profile.value !== 'auto'; if (trustedShell.disabled) trustedShell.checked = false; });
   const model = document.getElementById('model');
   const attach = document.getElementById('attach');
   const attachments = document.getElementById('attachments');
@@ -1158,6 +1178,9 @@ requestAnimationFrame(recordFrame);`
     }
     current = projection;
     taskStatus.textContent = projection.taskId + ' · ' + projection.state + ' · revision ' + projection.revision + ' · ' + (projection.workspaceState === 'worktree' ? 'Task Worktree' : 'Local');
+    if (projection.state === 'waiting_approval' && projection.shellApproval) {
+      taskStatus.textContent += ' · Shell approval: ' + projection.shellApproval.command + ' · cwd ' + projection.shellApproval.cwd + (projection.shellApproval.timeout ? ' · timeout ' + projection.shellApproval.timeout + 's' : '');
+    }
     taskProgress.textContent = projection.progress
       ? 'Run progress · round ' + projection.progress.rounds + ' · evidence ' + projection.progress.evidenceCount + ' · ' + projection.progress.stopReason
       : '';
@@ -1187,7 +1210,7 @@ requestAnimationFrame(recordFrame);`
   create.addEventListener('click', async () => {
     if (!prompt.value.trim()) return;
     if (!workspace) { taskStatus.textContent = 'Choose a workspace first.'; return; }
-    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds, readValidator())); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
+    try { render(await window.candy.tasks.create(prompt.value, profile.value, model.value, attachmentIds, readValidator(), trustedShell.checked)); prompt.value = ''; attachmentIds = []; attachments.textContent = ''; } catch (error) { taskStatus.textContent = 'Create failed: ' + error.message; }
   });
   attach.addEventListener('click', async () => { const id = await window.candy.attachments.pickImage(); if (id) { attachmentIds.push(id); attachments.textContent = attachmentIds.length + ' image attached'; } });
   steerButton.addEventListener('click', async () => {

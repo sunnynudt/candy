@@ -130,6 +130,58 @@ test("task lifecycle commands and state events remain versioned and secret-free"
   );
 });
 
+test("Personal Preview Shell is explicit and cannot be enabled for read-only tasks", () => {
+  const command = {
+    v: 1,
+    kind: "command",
+    commandId: "shell-create-1",
+    taskId: "shell-task",
+    expectedRevision: 0,
+    command: {
+      type: "task.create",
+      prompt: "run the tests",
+      approvalProfile: "auto",
+      trustedShell: true,
+      workspacePath: process.cwd(),
+    },
+  } as const;
+  assert.doesNotThrow(() => validateProtocolMessage(command));
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...command,
+        command: { ...command.command, approvalProfile: "read-only" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.code === "invalid_message",
+  );
+});
+
+test("shell approval snapshots carry only bounded command preview fields", () => {
+  const event = {
+    v: 1,
+    kind: "event",
+    taskId: "shell-task",
+    sequence: 1,
+    revision: 2,
+    event: {
+      type: "snapshot",
+      snapshot: {
+        taskId: "shell-task",
+        revision: 2,
+        state: "waiting_approval",
+        trustedShell: true,
+        shellApproval: {
+          command: "npm test",
+          cwd: process.cwd(),
+          timeout: 30,
+        },
+      },
+    },
+  } as const;
+  assert.doesNotThrow(() => validateProtocolMessage(event));
+});
+
 test("queued task reorder commands carry only the destination task id", () => {
   const command = {
     v: 1,

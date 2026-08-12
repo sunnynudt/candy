@@ -82,7 +82,7 @@ const api: DesktopPreloadApi = {
     pickImage: () => ipcRenderer.invoke("attachment.pick-image") as Promise<string | undefined>,
   },
   tasks: {
-    create: (prompt, approvalProfile, model, attachmentIds, validator) =>
+    create: (prompt, approvalProfile, model, attachmentIds, validator, trustedShell) =>
       ipcRenderer.invoke(
         "task.create",
         prompt,
@@ -90,6 +90,7 @@ const api: DesktopPreloadApi = {
         model,
         attachmentIds,
         validator,
+        trustedShell,
       ) as Promise<Awaited<ReturnType<DesktopPreloadApi["tasks"]["create"]>>>,
     snapshot: (taskId) =>
       ipcRenderer.invoke("task.snapshot", taskId) as Promise<

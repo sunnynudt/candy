@@ -99,3 +99,9 @@
 
 - ☑️ Windows 凭据界面平台标识：Windows Desktop 不再错误提示 `macOS Keychain`，而是显示 `Windows Credential Manager`；非 Windows 平台保留准确的系统存储标签。
   证据：Windows `npm run check` 93/93、`smoke:tui-task` 和 `smoke:app-server` 于 2026-08-10 通过。该 UI 修正不替代真实 OS 凭据存储或 Desktop 启动验收。
+## 2026-08-13 Windows Personal Preview checkpoint
+
+- WP1 Pi Bash adapter: implemented and deterministically verified with Pi `0.84.1`; live execution remains fail-closed because the fixed Git Bash path is absent on this host.
+- WP2 Trusted Shell approval: implemented as an explicit Auto-only task capability with bounded command/cwd/timeout approval, deny/cancel/restart no-replay behavior, and credential rejection before approval/spawn.
+- WP3 Task Worktree: implemented and covered by Git fixture review/Apply/Discard tests; non-Git Personal Preview tasks are rejected before Worktree creation.
+- Verification: TypeScript build plus `scripts/run-tests.mjs` passed 136/136. This is not a complete G2 or Windows V1 release claim.

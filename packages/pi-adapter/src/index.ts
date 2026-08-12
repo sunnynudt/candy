@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
+import { cleanChildEnvironment, type NativeProcessResult } from "@candy/platform";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
@@ -375,6 +377,120 @@ export interface CandyWorkspaceToolOperations {
   readonly mkdir: (directory: string) => Promise<void>;
 }
 
+export interface CandyBashOperationsOptions {
+  readonly runner: {
+    run(request: {
+      readonly executable: string;
+      readonly args: readonly string[];
+      readonly cwd: string;
+      readonly workspace: string;
+      readonly environment?: Readonly<Record<string, string>>;
+      readonly activeSecrets?: readonly string[];
+      readonly signal?: AbortSignal;
+    }): Promise<NativeProcessResult>;
+  };
+  readonly bashPath?: string;
+  readonly exists?: (absolutePath: string) => boolean;
+  readonly activeSecrets?: readonly string[];
+  readonly onApproval: (
+    request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
+    signal: AbortSignal,
+  ) => Promise<boolean>;
+}
+
+const WINDOWS_GIT_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
+
+export function createCandyBashOperations(
+  workspaceRoot: string,
+  options: CandyBashOperationsOptions,
+): piSdk.BashOperations {
+  const root = path.resolve(workspaceRoot);
+  const bashPath =
+    options.bashPath ?? (process.platform === "win32" ? WINDOWS_GIT_BASH_PATH : "/bin/bash");
+  return {
+    exec: async (command, cwd, execution) => {
+      if (path.resolve(cwd) !== root)
+        throw new Error("Trusted Shell cwd must be the Task Worktree.");
+      if (!path.isAbsolute(bashPath)) throw new Error("Trusted Shell executable is invalid.");
+      if (!(options.exists ?? existsSync)(bashPath))
+        throw new Error(`Git Bash was not found at ${bashPath}.`);
+      if (
+        execution.timeout !== undefined &&
+        (!Number.isFinite(execution.timeout) || execution.timeout <= 0)
+      )
+        throw new Error("Invalid timeout.");
+      if (
+        containsCredentialMaterial(command) ||
+        (options.activeSecrets ?? []).some(
+          (secret) => secret.length > 0 && command.includes(secret),
+        )
+      )
+        throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+      const approved = await options.onApproval(
+        {
+          command,
+          cwd: root,
+          ...(execution.timeout === undefined ? {} : { timeout: execution.timeout }),
+        },
+        execution.signal ?? new AbortController().signal,
+      );
+      if (!approved) throw new Error("Shell command denied by the user.");
+      const controller = new AbortController();
+      const abort = (): void => controller.abort(execution.signal?.reason);
+      const timeoutHandle =
+        execution.timeout === undefined
+          ? undefined
+          : setTimeout(() => controller.abort(new Error("timeout")), execution.timeout * 1000);
+      if (execution.signal?.aborted) abort();
+      else execution.signal?.addEventListener("abort", abort, { once: true });
+      try {
+        const result = await options.runner.run({
+          executable: bashPath,
+          args: ["--noprofile", "--norc", "-c", command],
+          cwd: root,
+          workspace: root,
+          environment: Object.fromEntries(
+            Object.entries(cleanChildEnvironment(process.env, options.activeSecrets ?? [])).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
+          signal: controller.signal,
+        });
+        const output = redactBashOutput(
+          `${result.stdout}${result.stderr}`,
+          options.activeSecrets ?? [],
+        );
+        if (output.length > 0) execution.onData(Buffer.from(output));
+        if (result.cancelled) {
+          if (
+            controller.signal.reason instanceof Error &&
+            controller.signal.reason.message === "timeout"
+          )
+            throw new Error(`timeout:${execution.timeout}`);
+          throw new Error("aborted");
+        }
+        return { exitCode: result.code };
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        execution.signal?.removeEventListener("abort", abort);
+      }
+    },
+  };
+}
+
+function redactBashOutput(value: string, activeSecrets: readonly string[]): string {
+  return activeSecrets
+    .reduce(
+      (result, secret) => (secret.length === 0 ? result : result.split(secret).join("[REDACTED]")),
+      value,
+    )
+    .replace(
+      /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/gu,
+      "[REDACTED]",
+    );
+}
+
 /**
  * File operations shared by Pi's public read/edit/write definitions. Pi still
  * owns tool schemas and rendering; Candy owns the workspace boundary.
@@ -404,7 +520,15 @@ export function createCandyWorkspaceOperations(
   };
 }
 
-function createCandyWorkspaceTools(workspaceRoot: string, approvalProfile: "read-only" | "auto") {
+function createCandyWorkspaceTools(
+  workspaceRoot: string,
+  approvalProfile: "read-only" | "auto",
+  shell?: {
+    readonly runner: CandyBashOperationsOptions["runner"];
+    readonly activeSecrets?: readonly string[];
+    readonly onApproval: CandyBashOperationsOptions["onApproval"];
+  },
+) {
   const operations = createCandyWorkspaceOperations(workspaceRoot);
   const read = piSdk.createReadToolDefinition(workspaceRoot, {
     operations: { readFile: operations.readFile, access: operations.access },
@@ -442,6 +566,22 @@ function createCandyWorkspaceTools(workspaceRoot: string, approvalProfile: "read
         promptSnippet: "Create or overwrite files inside the selected workspace",
       } as unknown as piSdk.ToolDefinition,
     );
+    if (shell !== undefined) {
+      const bash = piSdk.createBashToolDefinition(workspaceRoot, {
+        operations: createCandyBashOperations(workspaceRoot, {
+          runner: shell.runner,
+          ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
+          onApproval: shell.onApproval,
+        }),
+        exposeSessionEnvironment: false,
+      });
+      tools.push({
+        ...bash,
+        name: "candy_bash",
+        label: "Trusted Shell",
+        promptSnippet: "Run an approved command in the selected Task Worktree",
+      } as unknown as piSdk.ToolDefinition);
+    }
   }
   return tools;
 }
@@ -584,6 +724,8 @@ export interface PiAgentEngineInput {
   readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly PiImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  readonly trustedShell?: boolean;
+  readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
 }
 
 export interface PiImageInput {
@@ -613,6 +755,7 @@ export class PiAgentEngine {
     private readonly sessionRoot: string,
     private readonly acquireSecret: SecretLeaseProvider,
     private readonly provider: CandyProvider = "deepseek",
+    private readonly bashRunner?: CandyBashOperationsOptions["runner"],
   ) {}
 
   public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
@@ -717,6 +860,13 @@ export class PiAgentEngine {
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
         input.approvalProfile ?? "read-only",
+        input.trustedShell && this.bashRunner !== undefined
+          ? {
+              runner: this.bashRunner,
+              activeSecrets: [lease.secret],
+              onApproval: input.shellApproval ?? (async () => false),
+            }
+          : undefined,
       );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
@@ -823,8 +973,12 @@ export class PiAgentEngine {
 
 /** Pi-backed MiniMax M3 path. It is explicit so image turns cannot silently use DeepSeek. */
 export class MiniMaxPiAgentEngine extends PiAgentEngine {
-  public constructor(sessionRoot: string, acquireSecret: SecretLeaseProvider) {
-    super(sessionRoot, acquireSecret, "minimax-cn");
+  public constructor(
+    sessionRoot: string,
+    acquireSecret: SecretLeaseProvider,
+    bashRunner?: CandyBashOperationsOptions["runner"],
+  ) {
+    super(sessionRoot, acquireSecret, "minimax-cn", bashRunner);
   }
 }
 

@@ -1,5 +1,5 @@
 import type { CandyModelId, CredentialName, CredentialPresence } from "@candy/platform";
-import type { TaskProgress, ValidatorSpec } from "@candy/protocol";
+import type { ShellApprovalRequest, TaskProgress, ValidatorSpec } from "@candy/protocol";
 import type { BrowserAction, BrowserTabSnapshot } from "@candy/runtime";
 
 export interface RendererTaskProjection {
@@ -21,6 +21,8 @@ export interface RendererTaskProjection {
   readonly workspaceState: "local" | "worktree";
   readonly worktreePath?: string;
   readonly approvalId?: string;
+  readonly trustedShell: boolean;
+  readonly shellApproval?: ShellApprovalRequest;
   readonly progress?: TaskProgress;
   readonly changedFiles: readonly string[];
   readonly trackedFiles: readonly string[];
@@ -95,6 +97,7 @@ export interface DesktopPreloadApi {
       model?: CandyModelId,
       attachmentIds?: readonly string[],
       validator?: ValidatorSpec,
+      trustedShell?: boolean,
     ): Promise<RendererTaskProjection>;
     snapshot(taskId: string): Promise<RendererTaskProjection>;
     send(command: {

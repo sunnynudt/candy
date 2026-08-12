@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@candy/platform": "0.0.0",
     "@earendil-works/pi-coding-agent": "0.84.1"
   }
 }

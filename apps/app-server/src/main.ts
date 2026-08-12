@@ -98,6 +98,8 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       ...(input.approvalProfile === undefined ? {} : { approvalProfile: input.approvalProfile }),
       ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
       ...(input.images === undefined ? {} : { images: input.images }),
+      ...(input.trustedShell === undefined ? {} : { trustedShell: input.trustedShell }),
+      ...(input.shellApproval === undefined ? {} : { shellApproval: input.shellApproval }),
     };
     const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
     for await (const observation of engine.runTurn(piInput, signal)) {
@@ -150,6 +152,22 @@ export interface AppServerControllerOptions {
   readonly applyChanges?: ApplyChangesRunner;
   readonly worktreeRoot?: string;
   readonly worktreeManager?: TaskWorktreeManager;
+  readonly bashRunner?: {
+    run(request: {
+      readonly executable: string;
+      readonly args: readonly string[];
+      readonly cwd: string;
+      readonly workspace: string;
+      readonly activeSecrets?: readonly string[];
+      readonly signal?: AbortSignal;
+    }): Promise<{
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly cancelled: boolean;
+    }>;
+  };
 }
 
 interface AppServerValidator {
@@ -190,6 +208,12 @@ interface PendingRun {
   readonly emit: Emit;
 }
 
+interface PendingShellApproval {
+  readonly request: { readonly command: string; readonly cwd: string; readonly timeout?: number };
+  readonly approvalId: string;
+  readonly resolve: (approved: boolean) => void;
+}
+
 /**
  * Durable task command loop used by Desktop and the app-server smoke path.
  * Prompts remain in the Pi-owned session path in the real engine; this
@@ -213,6 +237,8 @@ export class AppServerController {
   readonly #active = new Map<string, ActiveTask>();
   readonly #pendingRuns: PendingRun[] = [];
   readonly #requestedRuns = new Set<string>();
+  readonly #bashRunner: AppServerControllerOptions["bashRunner"];
+  readonly #shellApprovals = new Map<string, PendingShellApproval>();
   readonly #sequences = new Map<string, number>();
   #closed = false;
   #storeClosed = false;
@@ -223,6 +249,7 @@ export class AppServerController {
       options.engine ?? new DeterministicAgentEngine(new SystemClock(), "Candy fixture response");
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
     this.#attachments = options.attachments;
+    this.#bashRunner = options.bashRunner;
     this.#validatorRunner = options.validatorRunner;
     this.#changeTracker =
       options.changeTracker ??
@@ -257,11 +284,17 @@ export class AppServerController {
 
     if (command.type === "task.create") {
       if (existing) throw new Error(`Task ${message.taskId} already exists.`);
+      if (command.trustedShell === true && this.#bashRunner === undefined)
+        throw new Error("Personal Preview Shell is unavailable on this installation.");
+      if (command.trustedShell === true && command.approvalProfile !== "auto")
+        throw new Error("Personal Preview Shell requires the auto approval profile.");
       if (!path.isAbsolute(command.workspacePath))
         throw new Error("Task workspace must be an absolute path.");
       if (!(await stat(command.workspacePath)).isDirectory())
         throw new Error("Task workspace is not a directory.");
       const workspaceBaseline = await this.#changeTracker.captureBaseline(command.workspacePath);
+      if (command.trustedShell === true && workspaceBaseline === undefined)
+        throw new Error("Personal Preview Shell requires a Git Task Worktree.");
       let worktreePath: string | undefined;
       if (command.approvalProfile === "auto" && workspaceBaseline !== undefined) {
         const plan = this.planForTask(message.taskId, command.workspacePath, workspaceBaseline);
@@ -285,6 +318,7 @@ export class AppServerController {
         command.validator,
         workspaceBaseline,
         worktreePath,
+        command.trustedShell === true,
       );
       this.#prompts.set(message.taskId, command.prompt);
       this.#store.appendTranscript(message.taskId, [{ role: "user", text: command.prompt }]);
@@ -471,6 +505,25 @@ export class AppServerController {
         throw new Error("Task is not waiting for approval.");
       if (command.approvalId !== approvalIdFor(existing.taskId, existing.revision))
         throw new Error("Approval request is stale.");
+      const shellApproval = this.#shellApprovals.get(message.taskId);
+      if (shellApproval !== undefined) {
+        this.#shellApprovals.delete(message.taskId);
+        const active = this.#active.get(message.taskId);
+        if (command.decision === "deny") {
+          const paused = this.#store.transition(message.taskId, message.expectedRevision, "paused");
+          shellApproval.resolve(false);
+          active?.abort.abort(new LongRunningControlError("user_stop"));
+          return [this.stateChanged(paused, "approval"), this.snapshot(paused)];
+        }
+        const running = this.#store.transition(
+          message.taskId,
+          message.expectedRevision,
+          "running",
+          this.#ownerId,
+        );
+        shellApproval.resolve(true);
+        return [this.stateChanged(running, "approval"), this.snapshot(running)];
+      }
       const active = this.#active.get(message.taskId);
       if (active) await active.done;
       if (command.decision === "deny") {
@@ -674,6 +727,19 @@ export class AppServerController {
         cwd: executionPath,
         approvalProfile: metadata.approvalProfile,
         ...(images === undefined ? {} : { images }),
+        ...(metadata.trustedShell && metadata.worktreePath !== undefined
+          ? {
+              trustedShell: true,
+              shellApproval: (
+                request: {
+                  readonly command: string;
+                  readonly cwd: string;
+                  readonly timeout?: number;
+                },
+                approvalSignal: AbortSignal,
+              ) => this.requestShellApproval(taskId, request, approvalSignal, emit),
+            }
+          : {}),
       },
       signal,
     )) {
@@ -686,6 +752,76 @@ export class AppServerController {
         emit(this.event(taskId, current.revision, event));
       }
     }
+  }
+
+  private requestShellApproval(
+    taskId: string,
+    request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
+    signal: AbortSignal,
+    emit: Emit,
+  ): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    const current = this.#store.get(taskId);
+    if (!current || current.state !== "running" || current.worktreePath === undefined)
+      return Promise.resolve(false);
+    if (path.resolve(request.cwd) !== path.resolve(current.worktreePath))
+      throw new Error("Trusted Shell approval cwd must be the Task Worktree.");
+    if (request.command.length === 0 || /[\0\r\n]/u.test(request.command))
+      throw new Error("Trusted Shell command is invalid.");
+    if (
+      request.timeout !== undefined &&
+      (!Number.isFinite(request.timeout) || request.timeout <= 0)
+    )
+      throw new Error("Trusted Shell timeout is invalid.");
+    const activeSecrets = this.#activeSecrets?.() ?? [];
+    if (
+      containsAppServerCredentialMaterial(request.command) ||
+      activeSecrets.some((secret) => secret.length > 0 && request.command.includes(secret))
+    )
+      throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+    const waiting = this.#store.transition(
+      taskId,
+      current.revision,
+      "waiting_approval",
+      this.#ownerId,
+    );
+    const approvalId = approvalIdFor(taskId, waiting.revision);
+    let settled = false;
+    let resolveApproval!: (approved: boolean) => void;
+    const result = new Promise<boolean>((resolve) => {
+      resolveApproval = (approved) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(approved);
+      };
+    });
+    const onAbort = (): void => {
+      this.#shellApprovals.delete(taskId);
+      resolveApproval(false);
+      const latest = this.#store.get(taskId);
+      if (latest?.state === "waiting_approval") {
+        const reason =
+          signal.reason instanceof LongRunningControlError
+            ? signal.reason.stopReason
+            : "crash_interrupted";
+        const nextState =
+          reason === "cancelled" ? "cancelled" : reason === "user_stop" ? "paused" : "interrupted";
+        const stopped = this.#store.transition(taskId, latest.revision, nextState);
+        emit(
+          this.stateChanged(
+            stopped,
+            nextState === "cancelled" || nextState === "paused" ? "user" : "error",
+          ),
+        );
+        emit(this.snapshot(stopped));
+      }
+    };
+    this.#shellApprovals.set(taskId, { request, approvalId, resolve: resolveApproval });
+    signal.addEventListener("abort", onAbort, { once: true });
+    emit(this.stateChanged(waiting, "approval"));
+    emit(this.snapshot(waiting));
+    return result;
   }
 
   private async runValidator(
@@ -896,6 +1032,10 @@ export class AppServerController {
         ...(metadata.state === "waiting_approval"
           ? { approvalId: approvalIdFor(metadata.taskId, metadata.revision) }
           : {}),
+        ...(metadata.trustedShell ? { trustedShell: true } : {}),
+        ...(this.#shellApprovals.get(metadata.taskId)?.request === undefined
+          ? {}
+          : { shellApproval: this.#shellApprovals.get(metadata.taskId)!.request }),
         ...(progress === undefined ? {} : { progress: toTaskProgress(progress) }),
         ...(transcript === undefined ? {} : { transcript }),
       },
@@ -1020,6 +1160,12 @@ function redactWorkspacePatch(value: string, activeSecrets: readonly string[]): 
   );
 }
 
+function containsAppServerCredentialMaterial(value: string): boolean {
+  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
+    value,
+  );
+}
+
 function sanitizeEvidenceSummary(value: string, activeSecrets: readonly string[]): string {
   return redactWorkspacePatch(value, activeSecrets)
     .replace(
@@ -1102,10 +1248,17 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
         : deterministicRecoverySmoke
           ? createDeterministicRecoveryEngine()
           : new PiAppServerEngine(
-              new PiAgentEngine(paths.sessions, async () => {
-                const lease = resolveCredential("deepseek");
-                return lease ? { secret: lease.value, release: lease.release } : undefined;
-              }),
+              new PiAgentEngine(
+                paths.sessions,
+                async () => {
+                  const lease = resolveCredential("deepseek");
+                  return lease ? { secret: lease.value, release: lease.release } : undefined;
+                },
+                "deepseek",
+                process.platform === "win32" && sandboxRunner !== undefined
+                  ? new NativeProcessRunner(sandboxRunner)
+                  : undefined,
+              ),
               new PiAgentEngine(
                 paths.sessions,
                 async () => {
@@ -1113,11 +1266,17 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
                   return lease ? { secret: lease.value, release: lease.release } : undefined;
                 },
                 "minimax-cn",
+                process.platform === "win32" && sandboxRunner !== undefined
+                  ? new NativeProcessRunner(sandboxRunner)
+                  : undefined,
               ),
             ),
     ownerId: `app-server:${process.pid}`,
     ...(smokeEngine ? {} : { activeSecrets: resolveActiveProviderSecrets }),
     worktreeRoot: paths.worktrees,
+    ...(process.platform === "win32" && sandboxRunner !== undefined
+      ? { bashRunner: new NativeProcessRunner(sandboxRunner) }
+      : {}),
     ...(sandboxRunner === undefined
       ? {}
       : {

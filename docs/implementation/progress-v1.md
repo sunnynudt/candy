@@ -65,6 +65,14 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - The ten-run Windows subset records TUI/Desktop p95 `905/1370 ms`, Runtime projection `1 ms`, cancellation-to-process-tree termination `12 ms`, Browser Take Control `1 ms`, and renderer frame-gap `17 ms`, with no event-loss run. Packaged Browser action/security, recovery, handoff, coding journey/transcript, and Credential Manager synthetic fixtures passed.
 - This is current-HEAD Windows deterministic and packaged-development evidence, not a complete V1 acceptance claim. Unsigned Desktop installation, true file-symlink/other reparse and OS-level G2 containment, physical Browser input-origin, full recovery/UI/ACC-12, live MiniMax/Token Plan, signing, and product-owner acceptance remain blocked or incomplete. No real provider credential or other tool configuration was read or used.
 
+## 2026-08-13 Windows Personal Preview WP1-WP3 implementation checkpoint
+
+- Added the narrow Pi `0.84.1` Bash adapter. It reuses `createBashToolDefinition()` and `noTools: "builtin"`, never calls Pi's local Bash backend, fixes Windows execution to `C:\Program Files\Git\bin\bash.exe --noprofile --norc -c <command>`, and delegates the process to Candy's Native Process Runner with the allowlisted child environment and `exposeSessionEnvironment: false`.
+- Added explicit Personal Preview Shell task state and approval projection. The Desktop checkbox is opt-in and Auto-only; every command approval shows bounded command/cwd/timeout fields; deny, cancel, timeout, stale approval, restart, and credential-shaped command paths fail closed without replay.
+- Enforced the Git Task Worktree boundary before Worktree creation and during approval/execution. Non-Git workspaces are rejected before creating a Worktree; Local Workspace never receives the Trusted Shell tool; existing review, Apply, and Discard handoff behavior remains unchanged.
+- Deterministic verification passed: TypeScript build and `scripts/run-tests.mjs` passed **136/136**. Evidence is recorded in `docs/evidence/windows-personal-preview-2026-08-13.md`.
+- The required fixed Git Bash executable is absent on the current host, so live Shell execution is intentionally blocked by fail-closed behavior. This checkpoint does not claim live Provider evidence, Windows Release Pass, complete G2, or final V1 acceptance.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint
