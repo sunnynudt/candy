@@ -4,6 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { Entry } from "@napi-rs/keyring";
 
+export {
+  NativeProcessRunner,
+  NativeProcessRunnerUnavailableError,
+  ProcessSupervisor,
+  ProcessSupervisorUnavailableError,
+  resolveNativeProcessRunnerPath,
+} from "./native-process.js";
+export type {
+  NativeProcessRequest,
+  NativeProcessResult,
+  NativeProcessRunnerPathOptions,
+  ProcessRequest,
+  ProcessResult,
+} from "./native-process.js";
+
 export interface Clock {
   now(): number;
 }

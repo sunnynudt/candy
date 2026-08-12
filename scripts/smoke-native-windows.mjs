@@ -4,7 +4,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
 import path from "node:path";
-import { WindowsJobObjectRunner, WindowsJobObjectValidator } from "@candy/runtime";
+import { NativeProcessRunner } from "@candy/platform";
+import { CommandValidator } from "@candy/runtime";
 
 if (process.platform !== "win32") {
   console.log("native Windows Job Object smoke skipped: not Windows");
@@ -149,14 +150,14 @@ try {
   assert.equal(normal.response?.code, 0);
   assert.equal(normal.response?.stdout, "native-job-ok");
 
-  const validator = await new WindowsJobObjectValidator(
-    new WindowsJobObjectRunner(runner),
-    workspace,
+  const validator = await new CommandValidator(new NativeProcessRunner(runner)).run(
     {
       executable: process.execPath,
       args: ["-e", "process.stdout.write('native-job-validator-ok')"],
     },
-  ).run(new globalThis.AbortController().signal);
+    workspace,
+    new globalThis.AbortController().signal,
+  );
   assert.equal(validator.ok, true);
   assert.equal(validator.evidence, "native-job-validator-ok");
 

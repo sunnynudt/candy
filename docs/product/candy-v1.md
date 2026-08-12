@@ -213,6 +213,8 @@ A Long-running Task starts from an explicit outcome, constraints, and verificati
 
 Auto Debug is a Long-running Task that reuses Pi's agent loop and Candy's normal tools. It gathers observable failure evidence, edits the project, reruns the same validator, and stops when verification succeeds or execution cannot safely continue. Validators may be tests, builds, explicit commands, or browser-visible assertions.
 
+Command and build validators use Candy's common `CommandValidator` for bounded, redacted evidence and completion semantics. The platform adapter owns only the native process boundary: the existing versioned JSONL contract, no-network request, runner location, and macOS/Windows cancellation strategy. This separation does not enable Shell Auto or Shell Auto Debug; those remain disabled until the independent G2 evidence passes on both platforms.
+
 Candy pauses Auto Debug when it needs a new approval, detects repeated lack of progress, reaches an optional user budget, loses its execution owner, or receives a user stop. It never auto-commits, pushes, releases, deploys, or creates a second workflow engine.
 
 ## V1 product value

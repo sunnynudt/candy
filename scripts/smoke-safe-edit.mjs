@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createCandyWorkspaceOperations } from "@candy/pi-adapter";
-import { MacSandboxRunner, MacSandboxValidator } from "@candy/runtime";
+import { NativeProcessRunner } from "@candy/platform";
+import { CommandValidator } from "@candy/runtime";
 
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("The local safe-edit smoke requires macOS arm64.");
@@ -43,10 +44,14 @@ try {
   if (!before.includes("value: number = 1")) throw new Error("Fixture read step failed.");
   await operations.writeFile(source, "export const value: number = 2;\n");
 
-  const result = await new MacSandboxValidator(new MacSandboxRunner(runner), root, {
-    executable: process.execPath,
-    args: ["--experimental-strip-types", "--test", "src/value.test.ts"],
-  }).run(new globalThis.AbortController().signal);
+  const result = await new CommandValidator(new NativeProcessRunner(runner)).run(
+    {
+      executable: process.execPath,
+      args: ["--experimental-strip-types", "--test", "src/value.test.ts"],
+    },
+    root,
+    new globalThis.AbortController().signal,
+  );
   if (!result.ok) throw new Error("Fixture validator failed.");
 
   const diff = execFileSync("git", ["-C", root, "diff", "--", "src/value.ts"], {

@@ -5,7 +5,12 @@ import { appendFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { SQLiteTaskStore } from "@candy/platform";
+import {
+  NativeProcessRunner,
+  ProcessSupervisor,
+  ProcessSupervisorUnavailableError,
+  SQLiteTaskStore,
+} from "@candy/platform";
 import {
   ApplyChangesService,
   ApplyChangesGuard,
@@ -16,14 +21,11 @@ import {
   FixedValidator,
   GitWorkspaceChangeTracker,
   LongRunningControlError,
-  MacSandboxRunner,
-  MacSandboxValidator,
+  CommandValidator,
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
   ProviderConcurrencyGate,
-  ProcessSupervisor,
-  ProcessSupervisorUnavailableError,
   SerialMutationLane,
   WorkspaceHandoff,
   planGitWorktree,
@@ -158,7 +160,7 @@ test("macOS Sandbox Runner executes a no-network validator through the native bo
   if (!existsSync(runnerPath)) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-native-validator-"));
   try {
-    const result = await new MacSandboxRunner(runnerPath).run({
+    const result = await new NativeProcessRunner(runnerPath).run({
       executable: process.execPath,
       args: ["-e", "process.stdout.write('validator-ok')"],
       cwd: root,
@@ -193,7 +195,7 @@ test("macOS Sandbox Runner rejects provider credentials and keeps them out of th
       .join("");
     assert.throws(
       () =>
-        new MacSandboxRunner(runnerPath).run({
+        new NativeProcessRunner(runnerPath).run({
           executable: process.execPath,
           args: ["-e", "process.exit(0)"],
           cwd: root,
@@ -202,7 +204,7 @@ test("macOS Sandbox Runner rejects provider credentials and keeps them out of th
         }),
       /credentials/iu,
     );
-    const result = await new MacSandboxRunner(runnerPath).run({
+    const result = await new NativeProcessRunner(runnerPath).run({
       executable: process.execPath,
       args: [
         "-e",
@@ -231,9 +233,7 @@ test("macOS Sandbox Validator returns bounded secret-redacted evidence", async (
   if (!existsSync(runnerPath)) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-native-validator-evidence-"));
   try {
-    const result = await new MacSandboxValidator(
-      new MacSandboxRunner(runnerPath),
-      root,
+    const result = await new CommandValidator(new NativeProcessRunner(runnerPath)).run(
       {
         executable: process.execPath,
         args: [
@@ -241,9 +241,11 @@ test("macOS Sandbox Validator returns bounded secret-redacted evidence", async (
           "process.stdout.write([102,105,120,116,117,114,101,45,115,101,99,114,101,116].map((code)=>String.fromCharCode(code)).join(''))",
         ],
       },
+      root,
+      new AbortController().signal,
       {},
       ["fixture-secret"],
-    ).run(new AbortController().signal);
+    );
     assert.equal(result.ok, true);
     assert.equal(result.evidence, "[REDACTED]");
     assert.doesNotMatch(result.fingerprint, /fixture-secret/u);

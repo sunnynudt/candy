@@ -170,3 +170,9 @@ Blocked external resources do not stop independent implementation. They do preve
 - The app-server now captures a Git HEAD baseline at task creation and emits a versioned `workspace.changes` event after the Pi turn. Desktop renders the actual changed-file list and patch, including tracked and untracked paths; the protocol rejects escaping paths.
 - The change path redacts active provider secrets before the event boundary. Deterministic verification passes format, lint, typecheck, 63 tests, boundary/version/lifecycle checks, native check, app-server JSONL smoke, safe-edit smoke, and Desktop smoke under Node `22.23.2`.
 - G4 remains `In progress`: Desktop Apply Changes, persisted baseline/restart recovery, dirty/base/conflict and Windows matrices are not implemented or accepted. No live-provider or final-release gate changes.
+
+## 2026-08-12 WP3 native-process boundary checkpoint
+
+- The native-process refactor is complete within the approved scope: Runtime owns the platform-neutral `CommandRunner` port and common `CommandValidator`; Platform owns the JSONL v1 client, runner path resolution, environment/secret rejection, bounded output, and OS-specific cancellation; app-server performs only composition-root injection.
+- No Rust crate, JSONL v1 field/version, native error code, no-network request, secret scrub contract, or cancellation result semantic was intentionally changed. The implementation checkpoint still requires full deterministic verification and independent QA before downstream work is accepted.
+- `G2-SANDBOX`, `G2-PRIVILEGE`, `G0-WIN`, signing, live-provider, Browser, and final ACC blockers remain unchanged. Shell Auto and Shell Auto Debug stay disabled; this checkpoint does not authorize WP4 or any release activity.

@@ -36,6 +36,14 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Deterministic validation for this checkpoint: Node `22.23.2`, npm `10.9.8`, incremental lint with zero new errors, build, six TUI surface/controller tests, and the exact Pi boundary check. The complete repository check remains the release gate for this commit; no native files changed, so no Rust test was required.
 - Evidence boundary: local FakeTerminal tests do not claim macOS raw-mode, Ctrl+C, exception recovery, paste, Chinese input, resize, IME, or Windows 11 real-terminal acceptance. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-12 WP3 native-process boundary checkpoint
+
+- `@candy/runtime` now exposes only the platform-neutral `CommandRunner` port and common `CommandValidator` for command-validator execution. The validator retains the existing bounded, active-secret-redacted evidence and cancellation result contract.
+- Added `@candy/platform`'s `native-process` adapter. It centralizes the existing JSONL v1 client, absolute runner path resolution, safe child-environment construction, request secret rejection, bounded output, and macOS process-group / Windows direct cancellation strategy. The Rust crate, JSONL fields/version, no-network flag, and native error semantics were not changed.
+- `apps/app-server` now injects the concrete `NativeProcessRunner` and `CommandValidator` at the composition root. `smoke-safe-edit`, `smoke-sandbox-macos`, and `smoke-native-windows` use the same split; no Electron packaging or Browser host adapter was widened.
+- Deterministic source validation added platform-owned path/platform rejection coverage. Full `npm run check`, `cargo test --locked`, and the available macOS native/smoke checks remain required before this checkpoint can be marked independently QA-verified.
+- Evidence boundary: this is an implementation boundary checkpoint, not G2, Windows 11, signed packaging, independent security review, Shell Auto, Shell Auto Debug, or final V1 acceptance evidence.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint

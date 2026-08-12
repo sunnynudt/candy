@@ -5,7 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createCandyWorkspaceOperations } from "@candy/pi-adapter";
-import { MacSandboxRunner } from "@candy/runtime";
+import { NativeProcessRunner } from "@candy/platform";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   console.log("macOS Sandbox Runner strict containment matrix skipped: not macOS arm64");
@@ -50,7 +50,7 @@ if (!existsSync(runnerPath)) {
   );
 }
 
-const runner = new MacSandboxRunner(runnerPath);
+const runner = new NativeProcessRunner(runnerPath);
 const operations = createCandyWorkspaceOperations(workspace);
 const outsideRead = path.join(outside, "read.txt");
 const outsideWrite = path.join(outside, "native-write.txt");

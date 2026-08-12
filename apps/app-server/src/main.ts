@@ -1,12 +1,13 @@
-import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { stat, writeFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import {
+  NativeProcessRunner,
   resolveAppPaths,
   resolveCredential,
   resolveDefaultAppDataRoot,
+  resolveNativeProcessRunnerPath,
   SQLiteTaskStore,
   SystemClock,
   type CandyModelId,
@@ -29,25 +30,22 @@ import {
 import {
   ApplyChangesBlockedError,
   ApplyChangesService,
+  CommandValidator,
   DeterministicAgentEngine,
   AttachmentStore,
   GitWorktreeManager,
   GitWorkspaceChangeTracker,
   LongRunningControlError,
   LongRunningTaskRunner,
-  MacSandboxRunner,
-  MacSandboxValidator,
   NonGitWorkspaceChangeTracker,
-  WindowsJobObjectRunner,
-  WindowsJobObjectValidator,
   WorkspaceHandoff,
   type AgentObservation,
   type AgentTurnInput,
   type ApplyChangesInput,
   type GitWorktreePlan,
   type RecoverableAgentEngine,
+  type CommandValidatorCommand,
   type ValidatorResult,
-  type MacSandboxValidatorCommand,
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
   planGitWorktree,
@@ -156,7 +154,7 @@ export interface AppServerControllerOptions {
 
 interface AppServerValidator {
   run(
-    command: MacSandboxValidatorCommand,
+    command: CommandValidatorCommand,
     workspace: string,
     signal: AbortSignal,
   ): Promise<AppServerValidatorResult>;
@@ -1085,7 +1083,11 @@ function createCodingJourneyEngine(): RecoverableAgentEngine {
 
 export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
   const paths = resolveAppPaths(resolveDefaultAppDataRoot());
-  const sandboxRunner = resolveSandboxRunner();
+  const sandboxRunner = resolveNativeProcessRunnerPath(import.meta.url);
+  const commandValidator =
+    sandboxRunner === undefined
+      ? undefined
+      : new CommandValidator(new NativeProcessRunner(sandboxRunner));
   const deterministicRecoverySmoke = process.env.CANDY_DETERMINISTIC_RECOVERY_SMOKE === "1";
   const longRunningSmoke = process.env.CANDY_LONG_RUNNING_SMOKE === "1";
   const codingJourneySmoke = process.env.CANDY_CODING_JOURNEY_SMOKE === "1";
@@ -1120,19 +1122,15 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
       ? {}
       : {
           validatorRunner: {
-            run: (command, workspace, signal) => {
-              if (process.platform === "win32")
-                return new WindowsJobObjectValidator(
-                  new WindowsJobObjectRunner(sandboxRunner),
-                  workspace,
-                  command,
-                ).run(signal);
-              return new MacSandboxValidator(
-                new MacSandboxRunner(sandboxRunner),
-                workspace,
+            run: (command, workspace, signal) =>
+              commandValidator?.run(
                 command,
-              ).run(signal);
-            },
+                workspace,
+                signal,
+                {},
+                resolveActiveProviderSecrets(),
+              ) ??
+              Promise.reject(new Error("Validator execution is unavailable on this installation.")),
           },
         }),
   });
@@ -1165,21 +1163,6 @@ function resolveActiveProviderSecrets(): readonly string[] {
     lease.release();
   }
   return secrets;
-}
-
-function resolveSandboxRunner(): string | undefined {
-  const nativeName =
-    process.platform === "win32" ? "candy-sandbox-runner.exe" : "candy-sandbox-runner";
-  const candidates = [
-    process.env.CANDY_SANDBOX_RUNNER,
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), `../native/${nativeName}`),
-    path.resolve(process.cwd(), `native/sandbox-runner/target/debug/${nativeName}`),
-    path.resolve(process.cwd(), `../../native/sandbox-runner/target/debug/${nativeName}`),
-  ];
-  return candidates.find(
-    (candidate): candidate is string =>
-      candidate !== undefined && path.isAbsolute(candidate) && existsSync(candidate),
-  );
 }
 
 function mapPiObservation(observation: PiAgentObservation): AgentObservation {
