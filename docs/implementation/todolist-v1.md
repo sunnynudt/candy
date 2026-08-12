@@ -1,8 +1,8 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-11
+更新日期：2026-08-12
 基线分支：`codex/candy-v1-foundation`
-本工作包起始提交：`7ed1e945fea830a364c6c0b0d09137630b20abc6`
+本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -22,15 +22,15 @@
 
 - ◐ 建立 Windows reparse-point 测试前置条件并验证防逃逸。
   已完成：普通 Windows 用户会话下的目录 junction 覆盖，确认 Pi 工作区边界拒绝经 junction 访问的外部文件；原生 runner 预检拒绝 workspace/cwd reparse component，并在本机 smoke 中拒绝真实 junction、完成 fixture 清理。
-  当前未完成/阻塞：2026-08-10 的真实 symlink 探针返回“Administrator privilege required”；探针目录已从 `%TEMP%` 清理。需要启用 Developer Mode 或取得等效授权后，补齐 symlink、其他 reparse point、运行期 race/path escape 和清理流程的真实 Windows 矩阵。
+  当前未完成/阻塞：普通非管理员会话仍无法创建真实文件 symlink，2026-08-10 的探针返回“Administrator privilege required”；探针目录已从 `%TEMP%` 清理。当前合约通过注入 filesystem seam 保留文件 symlink 拒绝断言，真实 symlink、其他 reparse point、运行期 race/path escape 和清理流程矩阵仍需 Developer Mode 或等效授权。
 
 - ☑️ 在干净依赖目录重跑完整门禁、TUI/App Server smoke 与原生检查。
   证据：`npm ci --ignore-scripts` 后 `npm run check`（93 个测试）以及 TUI/App Server smoke 通过；Windows `npm run check:native` 以退出码 0 通过。Rust 编译器仍报告未使用代码警告，不影响检查结果；Windows G2 的实际 Job Object 与安全验收仍单列为未完成项。
 
 - ◐ 将 `G0-WIN` 更新为 Windows 验收进行中，并执行 Windows 确定性矩阵。
   已完成：已确认当前主机为 Windows 11 Pro x64，`G0-WIN` 已更新为 `In progress`。
-  已完成：ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `789 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1045 ms`（目标 <= `5000 ms`），Runtime event 到可见 Desktop projection p95 `1 ms`（目标 <= `200 ms`），用户取消到任务进程树终止 p95 `15 ms`（目标 <= `5000 ms`），Browser Take Control 到禁用 agent action p95 `1 ms`（目标 <= `500 ms`），三任务并发 renderer frame gap p95 `21 ms`（目标 <= `1000 ms`）且 10 轮 `9/9/9=>9/9/9` 无事件丢失；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除。
-  待完成：Runtime event 到 UI、取消、Browser Take Control、三任务并发冻结/丢事件等 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
+  已完成：当前 HEAD 的 ACC-12 Windows 确定性子集完成 10 轮测量：TUI cold start p95 `905 ms`（目标 <= `2000 ms`），Desktop cold start 到 task-list smoke p95 `1370 ms`（目标 <= `5000 ms`），Runtime event 到可见 Desktop projection p95 `1 ms`（目标 <= `200 ms`），用户取消到任务进程树终止 p95 `12 ms`（目标 <= `5000 ms`），Browser Take Control 到禁用 agent action p95 `1 ms`（目标 <= `500 ms`），三任务并发 renderer frame gap p95 `17 ms`（目标 <= `1000 ms`）且 10 轮 `9/9/9=>9/9/9` 无事件丢失；脱敏报告为 `out/acceptance/windows/responsiveness-latest.md`，由 `.gitignore` 排除。
+  待完成：Provider stream stop、完整 UI/recovery、物理 Browser input-origin、完整 ACC-12 指标，以及 ACC-01、ACC-02、ACC-05、ACC-06、ACC-08、ACC-11 的完整 Windows 矩阵。
 
 - ◐ 完成 Windows G2：Job Object 所有权、完整后代进程取消、命令无网络/工作区隔离、Windows reparse 防逃逸与安全评审。在验收前，Windows Shell Auto 和 Shell Auto Debug 必须保持禁用。
   已完成：Rust runner 以 suspended process 创建后先加入 Job Object，设置 `KILL_ON_JOB_CLOSE` 后恢复；Windows native smoke 通过正常完成、`network:true` fail-closed、workspace 逃逸、junction reparse 拒绝和 runner 取消后的后代清理；app-server 已接入 Windows `.exe` runner/validator 路径，独立 user-cancel smoke 也验证了任务取消后的 validator 后代清理。
@@ -49,7 +49,7 @@
   已完成：新增 `smoke:desktop:packaged:long-running:windows`，packaged Windows Desktop 现通过真实 approval 等待（`waiting_approval` + 正确 approvalId）、steering 下一轮、validator-only 完成、最终证据摘要（`validator-pass`）与 renderer 投影；该步骤已接入 `npm run acceptance:windows`。
   待完成：OS 级命令 containment、安全评审、签名后打包证据与真实 Provider 取消延迟。
 
-- ◐ 补齐 Windows ACC-03 核心编码旅程与重开 transcript。  已完成：SQLite schema v10 新增 `task_transcripts`，app-server 持久化 user/assistant/tool 有界 transcript 并在 snapshot 中恢复；修复 Desktop app-server 重启时旧进程 exit handler 清空新 child 的竞态；新增 packaged Windows coding-journey smoke（create → 流式 → 编辑 → validator → diff 审查 → Apply → 重启后完整 transcript 恢复），验证本地变更未提交、Git index 未动、无 commit。  待完成：真实 DeepSeek/MiniMax 驱动的 ACC-03/04 live 旅程与签名 Desktop 复验。
+- ◐ 补齐 Windows ACC-03 核心编码旅程与重开 transcript。 已完成：SQLite schema v10 新增 `task_transcripts`，app-server 持久化 user/assistant/tool 有界 transcript 并在 snapshot 中恢复；修复 Desktop app-server 重启时旧进程 exit handler 清空新 child 的竞态；新增 packaged Windows coding-journey smoke（create → 流式 → 编辑 → validator → diff 审查 → Apply → 重启后完整 transcript 恢复），验证本地变更未提交、Git index 未动、无 commit。 待完成：真实 DeepSeek/MiniMax 驱动的 ACC-03/04 live 旅程与签名 Desktop 复验。
 
 - ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
   已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。
@@ -63,9 +63,9 @@
   待完成：DeepSeek Candy 账户本次已存在，smoke 未触碰该真实账户；对该固定账户补做替换/删除需要用户授权的可恢复测试窗口或专用空账户。Windows 正式安装/下载、签名和完整响应性矩阵仍未完成；active validator interruption、用户取消、owner crash interruption、non-owner read-only fencing、attachment restart recovery、bounded three-slot concurrency、packaged active-owner/tool recovery 和 packaged sequential cross-client handoff 已有本机 smoke 证据。该开发态 smoke 不替代 Windows 签名、恢复或完整 Desktop 验收。
 
 - ☑ 重新生成当前提交的 Windows 验收证据。
-  已完成：在干净提交 `b1c88f7a9628c56f081382d054e00b49bb4cd3cc` 上执行 `npm run acceptance:windows`，19/19 个确定性步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
-  ACC-12 确定性子集本次全部通过：TUI/Desktop cold start p95 `789/1045 ms`，Runtime projection、取消终止、Take Control 与三任务并发 frame gap/event-loss 四项新增 Windows 指标均 Pass；完整 ACC-12 仍要求真实 Provider 取消延迟与完整 UI/recovery 证据。
-  未完成：报告仍明确保留 Windows 签名/正式安装、完整 Browser、完整 G2 安全、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
+  已完成：在干净提交 `b7cab12a8ecfd18d46c2813653e19dd978143ee4` 上执行 `npm run acceptance:windows`，22/22 个确定性/native/packaged 步骤通过，包含 queued/active crash recovery、用户取消长运行 validator、attachment restart recovery、non-owner read-only fencing、bounded three-slot concurrency、未签名 packaged Desktop、packaged active-owner/tool recovery、packaged sequential cross-client handoff、packaged coding journey/transcript recovery、扩展后的 Browser action/security fixture 和 packaged Credential Manager fixture smoke；脱敏报告为 `out/acceptance/windows/latest.md`，由 `.gitignore` 排除。
+  ACC-12 确定性子集本次全部通过：TUI/Desktop cold start p95 `905/1370 ms`，Runtime projection `1 ms`、取消终止 `12 ms`、Take Control `1 ms` 与三任务并发 frame gap `17 ms`，10 轮均 `9/9/9=>9/9/9` 无事件丢失；完整 ACC-12 仍要求真实 Provider 取消延迟与完整 UI/recovery 证据。
+  未完成：报告仍明确保留 Windows 签名/正式安装、真实 Credential Manager 完整生命周期、完整 Browser physical input-origin/ACC-09、完整 G2 OS containment、安全评审、live MiniMax/Token Plan、完整 ACC-01..12 和 product-owner acceptance 阻塞；不可替代完整 Windows 验收或跨平台结果。
 
 - ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
 

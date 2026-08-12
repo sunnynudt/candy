@@ -58,6 +58,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - With a clean `npm ci --ignore-scripts` and Node `22.23.2`/npm `10.9.8`, checkpoint validation passed: `npm run check:toolchain`, `npm run check` (126/126 tests), `npm run check:native`, `npm run smoke:native:windows`, `npm run smoke:tui-task`, and `npm run smoke:app-server`.
 - No real provider credential, external tool configuration, session, source upload, or public provider request was used. This is Windows deterministic implementation evidence only; true file-symlink/other reparse, OS-level network/workspace containment, signing, complete recovery/UI, Browser input-origin, live-provider, and final ACC-01..12 acceptance remain open.
 
+## 2026-08-12 Windows 11 current-HEAD acceptance regeneration
+
+- On clean current HEAD `b7cab12a8ecfd18d46c2813653e19dd978143ee4`, the verified local Electron `43.2.0` Windows x64 runtime was selected through `ELECTRON_OVERRIDE_DIST_PATH=D:\candy\out\electron-dist`; the packaged development bundle remained explicitly unsigned.
+- `npm run acceptance:windows` passed all 22/22 steps with Node `v22.23.2`, npm `10.9.8`, Electron `43.2.0`, and lockfile SHA-256 `929848f85b3b11cc362c727848c8a2319d9771d9ff4780044a9333b829c57944`. The sanitized report is `out/acceptance/windows/latest.md` (gitignored); the responsiveness report is `out/acceptance/windows/responsiveness-latest.md`.
+- The ten-run Windows subset records TUI/Desktop p95 `905/1370 ms`, Runtime projection `1 ms`, cancellation-to-process-tree termination `12 ms`, Browser Take Control `1 ms`, and renderer frame-gap `17 ms`, with no event-loss run. Packaged Browser action/security, recovery, handoff, coding journey/transcript, and Credential Manager synthetic fixtures passed.
+- This is current-HEAD Windows deterministic and packaged-development evidence, not a complete V1 acceptance claim. Unsigned Desktop installation, true file-symlink/other reparse and OS-level G2 containment, physical Browser input-origin, full recovery/UI/ACC-12, live MiniMax/Token Plan, signing, and product-owner acceptance remain blocked or incomplete. No real provider credential or other tool configuration was read or used.
+
 Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint
