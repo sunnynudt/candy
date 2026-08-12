@@ -19,7 +19,7 @@ Updated: 2026-08-12
 
 Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is `Pass` only when its mapped acceptance evidence is complete.
 
-Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The ten-run Windows cold-start subset is complete, but the full ACC-12 matrix and the macOS `26.5.2` Apple Silicon measurement are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
+Windows 11 x64 implementation and acceptance now continue on the current Windows 11 Pro x64 host. The deterministic ten-run Windows ACC-12 subset is complete, but the full ACC-12 matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both required for the final cross-platform V1 release claim. See `G0-WIN` in `docs/implementation/blockers-v1.md` for the active checklist.
 
 ## 2026-08-11 Windows release packaging pipeline checkpoint
 

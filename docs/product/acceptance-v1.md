@@ -208,7 +208,7 @@ Required outcomes:
 
 Targets are measured over ten runs on each acceptance machine, excluding provider and public-network latency:
 
-Execution order follows host availability: complete the ten-run measurement on the current `ENV-MAC` macOS `26.5.2` Apple Silicon machine first. The identical `ENV-WIN` measurement remains a `G0-WIN` pending task until a Windows 11 x64 host is available. Both measurements remain required before a final cross-platform V1 release claim.
+Execution order follows host availability. The checked-in Windows 11 Pro x64 evidence includes the deterministic ten-run ACC-12 subset, so `G0-WIN` is in progress rather than pending for lack of a host. The remaining Windows matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both still required before a final cross-platform V1 release claim.
 
 | Metric                                                   | V1 acceptance target                                       |
 | -------------------------------------------------------- | ---------------------------------------------------------- |

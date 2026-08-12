@@ -89,10 +89,10 @@ app-server -----------------+-----> platform
 desktop main/preload/renderer -----> protocol
 desktop main ----------------------> platform
 desktop main owns Browser implementation
-platform ---- versioned JSONL stdio ----> native sandbox-runner
+app-server selects the native runner ----> runtime/v1 ---- versioned JSONL stdio ----> native sandbox-runner
 ```
 
-Composition roots create concrete adapters and inject them. `runtime` does not import Electron, Pi, a provider SDK, or an operating-system implementation. `protocol` contains no I/O or business policy.
+Composition roots create concrete Pi, Browser, and credential adapters. `runtime` does not import Electron, Pi, or a provider SDK. In the current source, `runtime/src/v1.ts` does contain the TypeScript clients for the native macOS and Windows runner protocols, and the app-server selects the relevant client; this is a narrow process-control exception, not a second Runtime implementation. `protocol` contains no I/O or business policy.
 
 ## External and internal seams
 
@@ -120,13 +120,28 @@ Every action names a tab and the revision of the observation it was planned from
 
 ### Platform Interface
 
-The Platform package supplies focused Modules for application-data paths, credential access, process control, transactional leases, and platform capability reporting. macOS and Windows are production adapters; in-memory implementations are test adapters. Callers never branch directly on `process.platform` outside this package.
+`@candy/platform` currently supplies Candy-owned application-data paths, OS credential-store access, SQLite task persistence and leases, and child-environment hygiene. It provides the shared semantics for those capabilities while the active OS binding supplies the platform detail.
+
+It is not yet the sole facade for every platform concern. `runtime/src/v1.ts` currently contains the macOS Sandbox Runner client, Windows Job Object Runner client, and POSIX-only process supervisor; `apps/app-server` branches to select the native validator and runner filename; Electron main has narrow packaging and capture branches. These branches are limited to native/process or packaging mechanics, but the source does not satisfy a stricter rule that every `process.platform` branch lives in `@candy/platform`.
+
+### Current cross-platform source alignment
+
+This snapshot describes the checked-in implementation as of 2026-08-12, not an acceptance or release claim.
+
+| Capability | Shared implementation | OS-specific adaptation | Current boundary/status |
+| --- | --- | --- | --- |
+| App data, sessions, attachments, state, Browser profile, and worktrees | `resolveAppPaths` and the same Candy-owned SQLite/session layout | macOS uses `~/Library/Application Support/Candy`; Windows uses `%LOCALAPPDATA%`/`%APPDATA%` and `path.win32` | Implemented in `@candy/platform`; TUI, Desktop, and app-server resolve the same root. |
+| Credentials and child environments | `CredentialStore`, secret leases, provider resolution, and child-environment cleaning | `@napi-rs/keyring` binds to Keychain or Credential Manager | Renderer sees presence only; no separate provider implementation per OS. |
+| Task/runtime, Pi, providers, protocol, scheduling, persistence schema, and approval policy | Shared TypeScript packages (`runtime`, `pi-adapter`, `protocol`, and `platform`) | None in the normal model/task control path | OS differences must not change task, provider, approval, or session semantics. |
+| Workspace paths and Git worktrees | Shared worktree/Apply logic with an injectable `PathSeam` | Native Node path operations on the host; `path.win32` is injected by Windows-path tests; macOS canonical-path handling covers `/var` aliases | This is a shared algorithm with explicit path semantics, not duplicate worktree code. |
+| Native command containment and process-tree lifetime | One versioned JSONL contract and one Rust crate | macOS uses a default-deny Seatbelt profile and process-group cancellation; Windows uses `CreateProcessW` plus a Job Object and reparse-point checks | This is intentionally a separate native backend, but its TypeScript clients and selection still live in `runtime`/app-server. G2 remains incomplete: Windows has no proven OS-level no-network containment, and both platforms still need the remaining packaging/security evidence. |
+| Desktop runtime packaging and Browser surface | Shared Electron main/preload/protocol and Browser policy | Packaged app-server selects `node.exe` on Windows versus `bin/node` on macOS; macOS has a narrow screenshot-capture branch | These are packaging/UI-host details, not separate product runtimes. |
 
 ## Process topology
 
 ### TUI
 
-The TUI loads Runtime, Pi Adapter, and the native Platform adapter in one Node process. It never starts Pi interactive mode. Browser capability is unavailable. A TUI process may execute tasks only after acquiring the same persisted global slot and per-task ownership leases used by Desktop.
+The TUI loads Runtime, Pi Adapter, and `@candy/platform` services in one Node process. It never starts Pi interactive mode. Its current interactive task path passes the `read-only` approval profile and does not configure the native Sandbox Runner; Browser capability is unavailable. A TUI process may execute tasks only after acquiring the same persisted global slot and per-task ownership leases used by Desktop.
 
 ### Desktop
 

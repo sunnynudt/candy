@@ -50,7 +50,7 @@ Candy TUI
   -> selected Primary Model
 ```
 
-The TUI runs the runtime in-process. It may reuse `pi-tui` rendering components, but it does not run Pi interactive mode.
+The TUI runs the runtime in-process. The current implementation renders through Candy's own `node:readline` loop; it does not import `@earendil-works/pi-tui` or run Pi interactive mode. `pi-tui` is present only as a transitive package in the pinned Pi dependency closure, not as Candy's active UI dependency.
 
 ### Desktop
 
