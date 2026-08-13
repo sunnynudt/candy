@@ -54,6 +54,7 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 
 - The default macOS runner now accepts the current Tahoe `26.x` arm64 host at or above `26.5.2` and records the exact version. The exact `26.5.2` runner is explicit and writes a separate `baseline-latest.md` report.
 - Current-host evidence is not retroactive proof of exact `26.5.2` behavior. Native containment, terminal, Keychain, Electron, recovery, and provider gates remain bounded by the host where they ran.
+- On published revision `ace1c12fbd9115be34f66aca74107180499b5e4b`, the current MacBook Pro run on Tahoe `26.6.1` arm64 passed `21/21`; the report is `out/acceptance/macos/latest.md`. The exact-baseline command was also checked and blocked before execution on `26.6.1`, with separate evidence in `out/acceptance/macos/baseline-latest.md`.
 - No product/security blocker is cleared by changing the evidence policy; it removes an unnecessary preflight block for current-host development while preserving the compatibility regression claim.
 
 ## 2026-08-13 TUI workspace-selection checkpoint
