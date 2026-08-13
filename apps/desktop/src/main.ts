@@ -996,6 +996,8 @@ export function createDesktopWindow(): BrowserWindow {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
     },
   });
+  if (process.env.CANDY_DESKTOP_RESPONSIVENESS === "1")
+    window.webContents.setBackgroundThrottling(false);
   const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
