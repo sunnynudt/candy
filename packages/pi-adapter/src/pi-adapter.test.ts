@@ -492,6 +492,7 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,
+    pathSeam: path.win32,
     activeSecrets: ["fixture-secret"],
     onApproval: async (request) => {
       approvalRequest = request;
@@ -549,6 +550,7 @@ test("Candy Bash operations deny before runner execution and reject cwd escape",
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,
+    pathSeam: path.win32,
     onApproval: async () => false,
     runner: {
       run: async () => {
@@ -574,6 +576,7 @@ test("Candy Bash operations reject credential-shaped commands before approval or
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,
+    pathSeam: path.win32,
     onApproval: async () => {
       approved = true;
       return true;
@@ -600,6 +603,7 @@ test("Candy Bash operations abort the native runner on timeout", async () => {
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,
+    pathSeam: path.win32,
     onApproval: async () => true,
     runner: {
       run: async (request) => {
@@ -627,6 +631,7 @@ test("Candy Bash operations propagate task cancellation to the native runner", a
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,
+    pathSeam: path.win32,
     onApproval: async () => true,
     runner: {
       run: async (request) => {

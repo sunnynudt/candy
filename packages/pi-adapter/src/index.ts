@@ -377,6 +377,11 @@ export interface CandyWorkspaceToolOperations {
   readonly mkdir: (directory: string) => Promise<void>;
 }
 
+export interface CandyBashPathSeam {
+  readonly resolve: (...paths: string[]) => string;
+  readonly isAbsolute: (value: string) => boolean;
+}
+
 export interface CandyBashOperationsOptions {
   readonly runner: {
     run(request: {
@@ -392,6 +397,7 @@ export interface CandyBashOperationsOptions {
   readonly bashPath?: string;
   readonly exists?: (absolutePath: string) => boolean;
   readonly activeSecrets?: readonly string[];
+  readonly pathSeam?: CandyBashPathSeam;
   readonly onApproval: (
     request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
     signal: AbortSignal,
@@ -404,14 +410,15 @@ export function createCandyBashOperations(
   workspaceRoot: string,
   options: CandyBashOperationsOptions,
 ): piSdk.BashOperations {
-  const root = path.resolve(workspaceRoot);
+  const pathImpl = options.pathSeam ?? path;
+  const root = pathImpl.resolve(workspaceRoot);
   const bashPath =
     options.bashPath ?? (process.platform === "win32" ? WINDOWS_GIT_BASH_PATH : "/bin/bash");
   return {
     exec: async (command, cwd, execution) => {
-      if (path.resolve(cwd) !== root)
+      if (pathImpl.resolve(cwd) !== root)
         throw new Error("Trusted Shell cwd must be the Task Worktree.");
-      if (!path.isAbsolute(bashPath)) throw new Error("Trusted Shell executable is invalid.");
+      if (!pathImpl.isAbsolute(bashPath)) throw new Error("Trusted Shell executable is invalid.");
       if (!(options.exists ?? existsSync)(bashPath))
         throw new Error(`Git Bash was not found at ${bashPath}.`);
       if (
