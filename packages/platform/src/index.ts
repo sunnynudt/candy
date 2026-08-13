@@ -366,6 +366,44 @@ export class SQLiteTaskStore {
     return this.require(taskId);
   }
 
+  /** Change a task's model only while no turn is active, then advance its fence. */
+  public updateModel(taskId: string, expectedRevision: number, model: CandyModelId): TaskMetadata {
+    assertTaskId(taskId);
+    assertModelId(model);
+    const current = this.require(taskId);
+    if (current.state === "running" || current.state === "waiting_approval")
+      throw new Error("Task model cannot change during an active turn.");
+    const result = this.#database
+      .prepare(
+        "UPDATE task_metadata SET revision = revision + 1, model_id = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+      )
+      .run(model, taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /** Change task attachment ids only while no turn is active, then advance its fence. */
+  public updateAttachments(
+    taskId: string,
+    expectedRevision: number,
+    attachmentIds: readonly string[],
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    assertAttachmentIds(attachmentIds);
+    const current = this.require(taskId);
+    if (current.state === "running" || current.state === "waiting_approval")
+      throw new Error("Task attachments cannot change during an active turn.");
+    const result = this.#database
+      .prepare(
+        "UPDATE task_metadata SET revision = revision + 1, attachment_ids = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+      )
+      .run(JSON.stringify(attachmentIds), taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
   /** Persist the associated Task Worktree path (or clear it after handoff). */
   public updateWorktree(taskId: string, worktreePath?: string): TaskMetadata {
     assertTaskId(taskId);
@@ -626,6 +664,11 @@ function assertTaskId(taskId: string): void {
 function assertAttachmentIds(ids: readonly string[]): void {
   if (ids.some((id) => !/^att_[a-f0-9]{64}$/u.test(id)))
     throw new Error("Attachment id is invalid.");
+}
+
+function assertModelId(model: CandyModelId): void {
+  if (model !== "deepseek-v4-flash" && model !== "deepseek-v4-pro" && model !== "MiniMax-M3")
+    throw new Error("Model id is invalid.");
 }
 
 function assertWorkspacePath(workspacePath: string): string {

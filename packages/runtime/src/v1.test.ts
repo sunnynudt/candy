@@ -257,13 +257,20 @@ test("macOS Sandbox Validator returns bounded secret-redacted evidence", async (
 test("attachment store hashes image bytes, keeps binary outside session, and rejects video", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-attachments-"));
   const store = new AttachmentStore(root, () => 100);
-  const metadata = await store.put("image", "image/png", new TextEncoder().encode("image-fixture"));
+  const metadata = await store.put(
+    "image",
+    "image/png",
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
   assert.equal(metadata.id.length, 68);
   assert.equal((await store.get(metadata.id)).metadata.sha256, metadata.sha256);
   assert.deepEqual(await store.getImagePayload(metadata.id), {
     id: metadata.id,
     mimeType: "image/png",
-    data: Buffer.from("image-fixture").toString("base64"),
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   });
   writeFileSync(path.join(root, `${metadata.id}.bin`), "tampered");
   await assert.rejects(store.get(metadata.id), /integrity/u);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -643,3 +643,254 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
 async function readWorkspaceFile(workspace: string, fileName: string): Promise<string> {
   return readFile(path.join(workspace, fileName), "utf8");
 }
+
+const VALID_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
+test("interactive TUI selects each explicit model and persists the canonical id", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-models-"));
+  const terminal = new FakeTerminal();
+  const observed: string[] = [];
+  const cases = [
+    ["deepseek-flash", "deepseek-v4-flash"],
+    ["deepseek-pro", "deepseek-v4-pro"],
+    ["minimax-m3", "MiniMax-M3"],
+  ] as const;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          observed.push(input.model);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: `model ${input.model}` };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const [alias, model] of cases) {
+      terminal.emitInput(":new");
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, /new task ready/u);
+      terminal.emitInput(`:model ${alias}`);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`model selected: ${model}`, "u"));
+      terminal.emitInput(`run ${alias}`);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`model ${model}`, "u"));
+    }
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(
+      observed,
+      cases.map(([, model]) => model),
+    );
+    assert.deepEqual(
+      store
+        .list()
+        .map((task) => task.model)
+        .sort(),
+      cases.map(([, model]) => model).sort(),
+    );
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects a model switch during an active turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-model-active-"));
+  const terminal = new FakeTerminal();
+  let release: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          await started;
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":model deepseek-flash");
+    terminal.emitInput("\r");
+    terminal.emitInput("long model turn");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /long model turn/u);
+    terminal.emitInput(":model minimax-m3");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /model switch rejected:.*active turn/u);
+    assert.match(output, /model switch rejected/u);
+    release?.();
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI sends Candy-owned image attachments and recovers them after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-attachments-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-workspace-"));
+  const imagePath = path.join(path.dirname(root), "candy-tui-attachment-fixture.png");
+  await writeFile(imagePath, VALID_PNG);
+  const firstTerminal = new FakeTerminal();
+  const firstImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  let taskId: string | undefined;
+  try {
+    const firstRun = new InteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          firstImages.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "image accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput(`:attach ${imagePath}`);
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /attachment staged: att_[a-f0-9]{64}/u);
+    firstTerminal.emitInput(":model minimax-m3");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /model selected: MiniMax-M3/u);
+    firstTerminal.emitInput(":new");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /new task ready/u);
+    firstTerminal.emitInput("describe the attached image");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /image accepted/u);
+    taskId = [...firstOutput.matchAll(/created (task-[a-z0-9]+)/gu)].at(-1)?.[1];
+    assert.ok(taskId);
+    assert.equal(firstImages.length, 1);
+    assert.equal(firstImages[0]?.[0]?.mimeType, "image/png");
+    assert.equal(firstImages[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    const firstStore = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const saved = firstStore.get(taskId);
+    assert.ok(saved);
+    assert.equal(saved.model, "MiniMax-M3");
+    assert.equal(saved.attachmentIds.length, 1);
+    const attachmentId = saved.attachmentIds[0];
+    assert.ok(attachmentId);
+    firstStore.close();
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const secondImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+    const secondRun = new InteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          secondImages.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "recovered image" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(`:use ${taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
+    secondTerminal.emitInput(":attachments");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${attachmentId}\\timage/png`, "u"));
+    secondTerminal.emitInput("continue with the saved image");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /recovered image/u);
+    assert.equal(secondImages.length, 1);
+    assert.equal(secondImages[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+    await rm(imagePath, { force: true });
+  }
+});
+
+test("interactive TUI rejects unsafe or invalid attachment paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-workspace-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-outside-"));
+  const terminal = new FakeTerminal();
+  const workspaceImage = path.join(workspace, "workspace.png");
+  const appDataImage = path.join(root, "app-data.png");
+  const invalidMime = path.join(outside, "not-image.txt");
+  const corruptImage = path.join(outside, "corrupt.png");
+  const video = path.join(outside, "clip.mp4");
+  const oversized = path.join(outside, "oversized.png");
+  const linked = path.join(root, "linked.png");
+  const linkTarget = path.join(outside, "target.png");
+  await writeFile(workspaceImage, VALID_PNG);
+  await writeFile(appDataImage, VALID_PNG);
+  await writeFile(invalidMime, VALID_PNG);
+  await writeFile(corruptImage, "not a png");
+  await writeFile(video, "video");
+  await writeFile(oversized, Buffer.alloc(10 * 1024 * 1024 + 1));
+  await writeFile(linkTarget, VALID_PNG);
+  try {
+    await symlink(linkTarget, linked);
+  } catch {
+    // Windows test hosts may not grant symlink creation; the other path gates remain covered.
+  }
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const rejected = async (filePath: string, pattern: RegExp): Promise<void> => {
+      terminal.emitInput(`:attach ${filePath}`);
+      terminal.emitInput("\r");
+      const output = await waitForOutput(terminal, pattern);
+      assert.match(output, pattern);
+    };
+    await rejected(workspaceImage, /workspace attachment paths are not allowed/iu);
+    await rejected(appDataImage, /Candy application-data attachment paths are not allowed/iu);
+    await rejected(invalidMime, /unsupported image MIME type/iu);
+    await rejected(corruptImage, /image content is corrupt/iu);
+    await rejected(video, /video attachments are unavailable/iu);
+    await rejected(oversized, /attachment exceeds the 10485760-byte limit/iu);
+    if (await readFile(linked).catch(() => undefined))
+      await rejected(linked, /symbolic links are not allowed/iu);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});

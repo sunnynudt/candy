@@ -437,6 +437,7 @@ export {
   ApplyChangesBlockedError,
   ApplyChangesService,
   AttachmentStore,
+  MAX_ATTACHMENT_BYTES,
   ApprovalPolicy,
   BrowserControlError,
   BrowserRevisionError,

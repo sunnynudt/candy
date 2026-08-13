@@ -1,15 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   type FileDeleteApprovalRequest,
   PI_COMPATIBILITY_VERSION,
+  MiniMaxPiAgentEngine,
   PiAgentEngine,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
 } from "@candy/pi-adapter";
 import {
+  type CandyModelId,
   DEFAULT_CANDY_MODEL,
   NativeProcessRunner,
   resolveAppPaths,
@@ -21,12 +24,14 @@ import {
   type TaskMetadata,
 } from "@candy/platform";
 import {
+  AttachmentStore,
   CommandValidator,
   CandyRuntime,
   DeterministicAgentEngine,
   GitWorkspaceChangeTracker,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
+  MAX_ATTACHMENT_BYTES,
   TaskController,
   TaskScheduler,
   UnavailableBrowserCapability,
@@ -100,6 +105,7 @@ export interface InteractiveTuiOptions {
   readonly appDataRoot?: string;
   readonly workspacePath?: string;
   readonly engine?: TuiAgentEngine;
+  readonly attachmentStore?: AttachmentStore;
   readonly terminal?: CandyTuiTerminal;
   readonly changeTracker?: WorkspaceChangeTracker;
   readonly validator?: TuiValidator;
@@ -139,6 +145,7 @@ export class InteractiveTui {
   readonly #workspacePath: string;
   readonly #terminal: CandyTuiTerminal | undefined;
   readonly #store: SQLiteTaskStore;
+  readonly #attachments: AttachmentStore;
   readonly #scheduler: TaskScheduler;
   readonly #changeTracker: WorkspaceChangeTracker;
   readonly #validator: TuiValidator | undefined;
@@ -162,6 +169,8 @@ export class InteractiveTui {
   #resolveExit: (() => void) | undefined = undefined;
   #closing = false;
   #approvalProfile: "read-only" | "auto" = "read-only";
+  #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
+  #selectedAttachmentIds: string[] = [];
   #validatorCommand: CommandValidatorCommand | undefined;
 
   public constructor(options: InteractiveTuiOptions = {}) {
@@ -170,6 +179,7 @@ export class InteractiveTui {
     this.#terminal = options.terminal;
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
+    this.#attachments = options.attachmentStore ?? new AttachmentStore(paths.attachments);
     this.#changeTracker =
       options.changeTracker ??
       new ResolvedWorkspaceChangeTracker(
@@ -188,12 +198,19 @@ export class InteractiveTui {
       );
     }
     this.#scheduler = new TaskScheduler(3, 5, this.#store);
-    this.#engine =
-      options.engine ??
-      new PiAgentEngine(paths.sessions, async () => {
+    if (options.engine !== undefined) {
+      this.#engine = options.engine;
+    } else {
+      const deepseek = new PiAgentEngine(paths.sessions, async () => {
         const lease = resolveCredential("deepseek");
         return lease ? { secret: lease.value, release: lease.release } : undefined;
       });
+      const minimax = new MiniMaxPiAgentEngine(paths.sessions, async () => {
+        const lease = resolveCredential("minimax-cn");
+        return lease ? { secret: lease.value, release: lease.release } : undefined;
+      });
+      this.#engine = new TuiModelRouter(deepseek, minimax);
+    }
   }
 
   public async run(): Promise<void> {
@@ -211,7 +228,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :use <task-id>, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :use <task-id>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
     this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -247,6 +264,16 @@ export class InteractiveTui {
       this.newTask(trimmed.slice(4).trim());
     } else if (trimmed.startsWith(":use ")) {
       this.useTask(trimmed.slice(5).trim());
+    } else if (trimmed === ":model" || trimmed.startsWith(":model ")) {
+      this.configureModel(trimmed.slice(6).trim());
+    } else if (trimmed === ":attach" || trimmed.startsWith(":attach ")) {
+      void this.attachPath(trimmed.slice(7).trim()).catch((error: unknown) => {
+        this.write(`attachment rejected: ${safeError(error)}\n`);
+      });
+    } else if (trimmed === ":attachments") {
+      void this.showAttachments().catch((error: unknown) => {
+        this.write(`attachments unavailable: ${safeError(error)}\n`);
+      });
     } else if (trimmed === ":tasks") {
       this.printTasks();
     } else if (trimmed.startsWith(":profile ")) {
@@ -297,6 +324,12 @@ export class InteractiveTui {
       this.write("prompt rejected: credential-shaped content is forbidden\n");
       return;
     }
+    if (this.#selectedAttachmentIds.length > 0 && this.#selectedModel !== "MiniMax-M3") {
+      this.write(
+        "image attachments require explicit :model minimax-m3; switch models before creating the task\n",
+      );
+      return;
+    }
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
@@ -304,11 +337,12 @@ export class InteractiveTui {
       taskId,
       this.#approvalProfile,
       queueOrder,
-      DEFAULT_CANDY_MODEL,
-      [],
+      this.#selectedModel,
+      this.#selectedAttachmentIds,
       this.#workspacePath,
       this.#validatorCommand,
     );
+    this.#selectedAttachmentIds = [];
     const controller = new TaskController(taskId, this.#approvalProfile, this.#store);
     this.#controllers.set(taskId, controller);
     this.#prompts.set(taskId, prompt);
@@ -384,6 +418,142 @@ export class InteractiveTui {
       return;
     }
     this.create(prompt);
+  }
+
+  private configureModel(value: string): void {
+    const current = this.currentTask();
+    const currentModel = current?.snapshot().model ?? this.#selectedModel;
+    if (value === "") {
+      this.write(`model: ${currentModel}\n`);
+      return;
+    }
+    const model = parseModelId(value);
+    if (model === undefined) {
+      this.write("model rejected: choose deepseek-flash, deepseek-pro, or minimax-m3\n");
+      return;
+    }
+    if (this.#selectedAttachmentIds.length > 0 && model !== "MiniMax-M3" && current === undefined) {
+      this.write("model rejected: image attachments require explicit :model minimax-m3\n");
+      return;
+    }
+    if (current === undefined) {
+      this.#selectedModel = model;
+      this.write(`model selected: ${model}\n`);
+      return;
+    }
+    const snapshot = current.snapshot();
+    const metadata = this.#store.get(snapshot.taskId);
+    if (metadata === undefined) {
+      this.write(`model switch rejected: task ${snapshot.taskId} metadata is unavailable\n`);
+      return;
+    }
+    if (snapshot.state === "running" || snapshot.state === "waiting_approval") {
+      this.write(`model switch rejected: task ${snapshot.taskId} has an active turn\n`);
+      return;
+    }
+    if (snapshot.state === "queued") {
+      this.write(`model switch rejected: task ${snapshot.taskId} is queued\n`);
+      return;
+    }
+    if (metadata.attachmentIds.length > 0 && model !== "MiniMax-M3") {
+      this.write("model rejected: image attachments require explicit :model minimax-m3\n");
+      return;
+    }
+    try {
+      const updated = this.#store.updateModel(snapshot.taskId, snapshot.revision, model);
+      this.#controllers.set(
+        snapshot.taskId,
+        new TaskController(snapshot.taskId, updated.approvalProfile, this.#store),
+      );
+      this.#selectedModel = model;
+      this.write(`model selected: ${model} for ${snapshot.taskId}\n`);
+    } catch (error) {
+      this.write(`model switch rejected: ${safeError(error)}\n`);
+    }
+  }
+
+  private async attachPath(value: string): Promise<void> {
+    if (value === "") throw new Error("Attachment path is required.");
+    if (!path.isAbsolute(value)) throw new Error("Attachment paths must be absolute.");
+    const current = this.currentTask();
+    const snapshot = current?.snapshot();
+    const taskMetadata = snapshot === undefined ? undefined : this.#store.get(snapshot.taskId);
+    if (snapshot !== undefined) {
+      if (snapshot.state === "running" || snapshot.state === "waiting_approval")
+        throw new Error("Attachments cannot change during an active turn.");
+      if (snapshot.state === "queued")
+        throw new Error("Attachments cannot change on a queued task.");
+      if (snapshot.model !== "MiniMax-M3")
+        throw new Error("Image attachments require explicit :model minimax-m3.");
+    }
+    const candidate = path.resolve(value);
+    const source = await lstat(candidate);
+    if (source.isSymbolicLink()) throw new Error("Symbolic links are not allowed for attachments.");
+    if (!source.isFile()) throw new Error("Attachment path must be a regular file.");
+    const canonical = await realpath(candidate);
+    const canonicalWorkspace = await realpath(this.#workspacePath).catch(() => this.#workspacePath);
+    const canonicalAppData = await realpath(this.#appDataRoot).catch(() => this.#appDataRoot);
+    if (isPathInside(this.#workspacePath, candidate) || isPathInside(canonicalWorkspace, canonical))
+      throw new Error("Workspace attachment paths are not allowed.");
+    if (isPathInside(this.#appDataRoot, candidate) || isPathInside(canonicalAppData, canonical))
+      throw new Error("Candy application-data attachment paths are not allowed.");
+    if (isVideoAttachmentPath(candidate))
+      throw new Error("Video attachments are unavailable until their provider gate passes.");
+    const mimeType = attachmentMimeType(candidate);
+    const file = await stat(candidate);
+    if (file.size > MAX_ATTACHMENT_BYTES)
+      throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
+    const content = await readFile(candidate);
+    const activeSecrets = this.#activeSecretsProvider?.() ?? [];
+    const contentBuffer = Buffer.from(content);
+    if (
+      containsCredentialMaterial(contentBuffer.toString("utf8")) ||
+      activeSecrets.some(
+        (secret) => secret.length > 0 && contentBuffer.includes(Buffer.from(secret)),
+      )
+    ) {
+      throw new Error("Attachment content contains credential material.");
+    }
+    const attachment = await this.#attachments.put("image", mimeType, content);
+    if (snapshot === undefined) {
+      if (!this.#selectedAttachmentIds.includes(attachment.id))
+        this.#selectedAttachmentIds.push(attachment.id);
+      this.write(`attachment staged: ${attachment.id}\n`);
+      return;
+    }
+    if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
+    if (!taskMetadata.attachmentIds.includes(attachment.id)) {
+      const updated = this.#store.updateAttachments(snapshot.taskId, snapshot.revision, [
+        ...taskMetadata.attachmentIds,
+        attachment.id,
+      ]);
+      this.#controllers.set(
+        snapshot.taskId,
+        new TaskController(snapshot.taskId, updated.approvalProfile, this.#store),
+      );
+    }
+    this.write(`attachment added: ${attachment.id}\n`);
+  }
+
+  private async showAttachments(): Promise<void> {
+    const current = this.currentTask();
+    const taskId = current?.snapshot().taskId;
+    const currentMetadata = taskId === undefined ? undefined : this.#store.get(taskId);
+    const ids = currentMetadata?.attachmentIds ?? this.#selectedAttachmentIds;
+    if (ids.length === 0) {
+      this.write("attachments: none\n");
+      return;
+    }
+    const lines = [`attachments${taskId === undefined ? "" : ` ${taskId}`}`];
+    for (const id of ids) {
+      try {
+        const attachment = await this.#attachments.get(id);
+        lines.push(`${id}\t${attachment.metadata.mimeType}\t${attachment.metadata.bytes} bytes`);
+      } catch {
+        lines.push(`${id}\tunavailable`);
+      }
+    }
+    this.write(`${lines.join("\n")}\n`);
   }
 
   private configureValidator(value: string): void {
@@ -663,6 +833,15 @@ export class InteractiveTui {
           { role: "user", text: transcriptText(explicitPrompt) },
         ]);
       }
+      const attachments =
+        taskSnapshot.attachmentIds.length === 0
+          ? undefined
+          : await Promise.all(
+              taskSnapshot.attachmentIds.map((id) => this.#attachments.getImagePayload(id)),
+            );
+      if (attachments !== undefined && taskSnapshot.model !== "MiniMax-M3") {
+        throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
+      }
       for await (const observation of this.#engine.runTurn(
         {
           taskId,
@@ -676,6 +855,11 @@ export class InteractiveTui {
                   this.requestFileDeleteApproval(taskId, request, signal),
               }
             : {}),
+          ...(attachments === undefined
+            ? {}
+            : {
+                images: attachments.map(({ mimeType, data }) => ({ mimeType, data })),
+              }),
         },
         abort.signal,
       )) {
@@ -866,6 +1050,70 @@ function createNativeTuiValidator(): TuiValidator | undefined {
   };
 }
 
+class TuiModelRouter implements TuiAgentEngine {
+  public constructor(
+    private readonly deepseek: TuiAgentEngine,
+    private readonly minimax: TuiAgentEngine,
+  ) {}
+
+  public runTurn(
+    input: PiAgentEngineInput,
+    signal: AbortSignal,
+  ): AsyncIterable<PiAgentObservation> {
+    return (input.model === "MiniMax-M3" ? this.minimax : this.deepseek).runTurn(input, signal);
+  }
+
+  public recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
+    return this.deepseek.recoverPrompt?.(taskId, cwd) ?? Promise.resolve(undefined);
+  }
+}
+
+function parseModelId(value: string): CandyModelId | undefined {
+  switch (value.toLowerCase()) {
+    case "deepseek-flash":
+    case "deepseek-v4-flash":
+      return "deepseek-v4-flash";
+    case "deepseek-pro":
+    case "deepseek-v4-pro":
+      return "deepseek-v4-pro";
+    case "minimax-m3":
+      return "MiniMax-M3";
+    default:
+      return undefined;
+  }
+}
+
+function attachmentMimeType(
+  filePath: string,
+): "image/png" | "image/jpeg" | "image/gif" | "image/webp" {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      throw new Error("Unsupported image MIME type.");
+  }
+}
+
+function isVideoAttachmentPath(filePath: string): boolean {
+  return new Set([".avi", ".mkv", ".mov", ".mp4", ".webm"]).has(
+    path.extname(filePath).toLowerCase(),
+  );
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const normalize = (value: string): string =>
+    process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const relative = path.relative(normalize(root), normalize(candidate));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
 function formatPaths(paths: readonly string[]): string {
   return paths.length === 0 ? "(none)" : paths.join(", ");
 }
@@ -936,7 +1184,12 @@ function redactSensitive(value: string, activeSecrets: readonly string[]): strin
 }
 
 function safeError(error: unknown): string {
-  if (error instanceof Error && /credentials|cancelled|unavailable/iu.test(error.message))
+  if (
+    error instanceof Error &&
+    /credentials|cancelled|unavailable|attachment|image|workspace|symbolic|MIME|video|model|active turn|queued/iu.test(
+      error.message,
+    )
+  )
     return error.message;
   return "runtime error";
 }

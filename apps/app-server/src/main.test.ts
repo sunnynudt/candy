@@ -1693,7 +1693,10 @@ test("app-server resolves Candy-owned image attachments into the selected MiniMa
   const attachment = await attachmentStore.put(
     "image",
     "image/png",
-    new TextEncoder().encode("fixture-image"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
   );
   const controller = new AppServerController({ engine, attachments: attachmentStore });
   const background: ProtocolMessage[] = [];

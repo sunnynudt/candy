@@ -5,6 +5,8 @@ import path from "node:path";
 import { cleanChildEnvironment } from "@candy/platform";
 
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const NON_GIT_IGNORED_DIRECTORIES = new Set([
   ".git",
   ".hg",
@@ -140,9 +142,11 @@ export class AttachmentStore {
     content: Uint8Array,
   ): Promise<AttachmentMetadata> {
     if (kind === "video")
-      throw new Error("Video input is unavailable until its provider gate passes.");
-    if (!mimeType.startsWith("image/"))
-      throw new Error("Image attachments require an image MIME type.");
+      throw new Error("Video attachments are unavailable until their provider gate passes.");
+    if (!IMAGE_MIME_TYPES.has(mimeType)) throw new Error("Unsupported image MIME type.");
+    if (content.byteLength > MAX_ATTACHMENT_BYTES)
+      throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
+    if (!isValidImageContent(mimeType, content)) throw new Error("Image content is corrupt.");
     const sha256 = createHash("sha256").update(content).digest("hex");
     const id = `att_${sha256}`;
     await mkdir(this.root, { recursive: true });
@@ -174,8 +178,10 @@ export class AttachmentStore {
     if (
       metadata.id !== id ||
       metadata.kind !== "image" ||
-      !metadata.mimeType.startsWith("image/") ||
+      !IMAGE_MIME_TYPES.has(metadata.mimeType) ||
       metadata.bytes !== content.byteLength ||
+      content.byteLength > MAX_ATTACHMENT_BYTES ||
+      !isValidImageContent(metadata.mimeType, content) ||
       metadata.sha256 !== createHash("sha256").update(content).digest("hex")
     ) {
       throw new Error("Attachment integrity check failed.");
@@ -209,6 +215,105 @@ export class AttachmentStore {
     }
     return removed;
   }
+}
+
+function isValidImageContent(mimeType: string, content: Uint8Array): boolean {
+  switch (mimeType) {
+    case "image/png":
+      return isValidPng(content);
+    case "image/jpeg":
+      return (
+        content.byteLength >= 4 &&
+        content[0] === 0xff &&
+        content[1] === 0xd8 &&
+        content.at(-2) === 0xff &&
+        content.at(-1) === 0xd9
+      );
+    case "image/gif":
+      return (
+        content.byteLength >= 11 &&
+        (ascii(content, 0, 6) === "GIF87a" || ascii(content, 0, 6) === "GIF89a") &&
+        (content[6] ?? 0) + ((content[7] ?? 0) << 8) !== 0 &&
+        (content[8] ?? 0) + ((content[9] ?? 0) << 8) !== 0 &&
+        content.at(-1) === 0x3b
+      );
+    case "image/webp":
+      return (
+        content.byteLength >= 16 &&
+        ascii(content, 0, 4) === "RIFF" &&
+        ascii(content, 8, 4) === "WEBP" &&
+        readUint32LittleEndian(content, 4) + 8 <= content.byteLength
+      );
+    default:
+      return false;
+  }
+}
+
+function isValidPng(content: Uint8Array): boolean {
+  if (
+    content.byteLength < 33 ||
+    ![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+      (value, index) => content[index] === value,
+    )
+  )
+    return false;
+  let offset = 8;
+  let header = false;
+  while (offset + 12 <= content.byteLength) {
+    const length = readUint32BigEndian(content, offset);
+    const end = offset + 12 + length;
+    if (end > content.byteLength) return false;
+    const type = ascii(content, offset + 4, 4);
+    if (
+      readUint32BigEndian(content, offset + 8 + length) !== crc32(content, offset + 4, 4 + length)
+    )
+      return false;
+    if (type === "IHDR") {
+      if (
+        length !== 13 ||
+        readUint32BigEndian(content, offset + 8) === 0 ||
+        readUint32BigEndian(content, offset + 12) === 0
+      )
+        return false;
+      header = true;
+    }
+    if (type === "IEND") return header && length === 0 && end === content.byteLength;
+    offset = end;
+  }
+  return false;
+}
+
+function ascii(content: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...content.subarray(offset, offset + length));
+}
+
+function readUint32BigEndian(content: Uint8Array, offset: number): number {
+  return (
+    (((content[offset] ?? 0) << 24) |
+      ((content[offset + 1] ?? 0) << 16) |
+      ((content[offset + 2] ?? 0) << 8) |
+      (content[offset + 3] ?? 0)) >>>
+    0
+  );
+}
+
+function readUint32LittleEndian(content: Uint8Array, offset: number): number {
+  return (
+    ((content[offset] ?? 0) |
+      ((content[offset + 1] ?? 0) << 8) |
+      ((content[offset + 2] ?? 0) << 16) |
+      ((content[offset + 3] ?? 0) << 24)) >>>
+    0
+  );
+}
+
+function crc32(content: Uint8Array, offset: number, length: number): number {
+  let crc = 0xffffffff;
+  for (const value of content.subarray(offset, offset + length)) {
+    crc ^= value;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 export interface BrowserTabSnapshot {
