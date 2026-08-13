@@ -11,6 +11,12 @@ import {
 } from "@candy/pi-adapter";
 import { KeyringCredentialStore } from "@candy/platform";
 
+// Declared before the top-level `await runGate(...)` below: module evaluation
+// pauses at that await, so constants used inside `runGate` must be initialized
+// first or image turns fail with a TDZ ReferenceError.
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const resultRoot = path.join(root, "out", "acceptance", "live");
 const provider = readArgument("--provider");
@@ -472,6 +478,3 @@ function readArgument(name) {
   const index = process.argv.indexOf(name);
   return index === -1 ? undefined : process.argv[index + 1];
 }
-
-const ONE_PIXEL_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
