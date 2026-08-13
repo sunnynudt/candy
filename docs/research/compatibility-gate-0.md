@@ -5,7 +5,7 @@
 - 适用范围：Candy V1 技术定版前的 Pi 0.84.1、DeepSeek、MiniMax、Node.js、TypeScript、npm 与 Electron 兼容性核查
 - 证据规则：只使用供应商官方文档、官方源码/tag、官方 npm 注册表和官方运行时文档；用户截图仅作为待核对线索，不作为 API 合同
 
-> 当前决策（2026-08-10）：ADR-0008 以当前 macOS `26.5.2` Apple Silicon 验收机器取代了 ADR-0007 的 Sequoia 15+ 谓词；窄 Rust Sandbox Runner、显式 Browser 接管回退与 Electron `43.2.0` Gate 基线保持不变。这些决策不替代本报告列出的真实凭证与双平台验证。
+> 当前决策（2026-08-13）：ADR-0009 以当前 macOS Tahoe `26.x` Apple Silicon 主机（当前为 `26.6.1`）作为 primary acceptance host，并保留精确 `26.5.2` 作为兼容性回归基线，取代 ADR-0008 的单一 exact-version preflight；窄 Rust Sandbox Runner、显式 Browser 接管回退与 Electron `43.2.0` Gate 基线保持不变。这些决策不替代本报告列出的真实凭证与双平台验证。
 
 ## 1. 结论摘要
 
@@ -231,7 +231,7 @@ Windows 11 与 macOS 均有 Node 22 官方 64 位发行路径；Electron 也支�
 
 ### ✅ G0-R2：Electron major 已随最低 macOS 决策冻结
 
-- Candy V1 已在 ADR-0008 将 macOS 验收目标定为 `26.5.2` Apple Silicon，并在技术方案中固定 Electron `43.2.0`。
+- Candy V1 已在 ADR-0009 将当前 macOS Tahoe `26.x` Apple Silicon 设为 primary acceptance host，并保留 `26.5.2` Apple Silicon 兼容性回归基线；技术方案继续固定 Electron `43.2.0`。
 - Electron major 不再是方案阻塞项；签名、打包、app-server 子进程和双平台真机验证仍属于 release Gate。
 
 ## 9. 建议的最小首切合同

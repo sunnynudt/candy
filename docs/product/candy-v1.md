@@ -2,7 +2,7 @@
 
 ## Product statement
 
-Candy is a standalone, DeepSeek-first coding product for the current macOS `26.5.2` Apple Silicon acceptance baseline and Windows 11. It uses domestic models to provide a Codex-class core coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each task has one agent, while multiple independent tasks may run concurrently within a bounded limit.
+Candy is a standalone, DeepSeek-first coding product for the current macOS Tahoe `26.x` Apple Silicon host and Windows 11. The primary macOS host is currently `26.6.1`; exact macOS `26.5.2` compatibility remains a separately tracked regression baseline. Candy uses domestic models to provide a Codex-class core coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each task has one agent, while multiple independent tasks may run concurrently within a bounded limit.
 
 It provides:
 
@@ -24,7 +24,7 @@ Candy V1 is:
 - bounded to three concurrent tasks by default and five at most;
 - TypeScript for product and control-plane code, with one audited Rust native-helper exception for OS command sandboxing and Windows process-tree ownership;
 - BYOK for DeepSeek and MiniMax domestic Token Plan;
-- supported on macOS `26.5.2` on Apple Silicon and Windows 11.
+- supported on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11; the exact host version is recorded in acceptance evidence.
 
 Candy V1 does not include:
 
@@ -109,7 +109,7 @@ The execution lock contains:
 
 A client without a task's lock may inspect that task's saved state but cannot start or continue its execution.
 
-Normal task exit releases its lock. Crash recovery must detect stale locks safely on macOS `26.5.2` Apple Silicon and Windows 11.
+Normal task exit releases its lock. Crash recovery must detect stale locks safely on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11; the exact `26.5.2` regression baseline remains separately tracked.
 
 Cross-client continuation means:
 
@@ -272,7 +272,7 @@ Candy V1 has no remote telemetry or automatic crash upload.
 
 ## V1 acceptance
 
-[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is the authoritative definition of complete. Each implementation slice must pass its mapped Acceptance Gates with reviewable evidence on macOS `26.5.2` Apple Silicon and Windows 11. V1 release requires every mandatory product journey, live provider contract, security invariant, recovery case, and responsiveness target to pass with zero open P0/P1 defects.
+[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is the authoritative definition of complete. Each implementation slice must pass its mapped Acceptance Gates with reviewable evidence on the current macOS Tahoe `26.x` Apple Silicon primary host and Windows 11. The exact `26.5.2` matrix is a separate compatibility regression gate when that compatibility claim is required. V1 release requires every mandatory product journey, live provider contract, security invariant, recovery case, and responsiveness target to pass with zero open P0/P1 defects.
 
 Real provider tests follow the [Live Provider Credential Procedure](../testing/live-provider-credentials.md). Existing Claude Code or OpenCode configurations may be inspected only through a user-authorized redacted audit; Candy never treats them as runtime credential sources or automatically imports their tokens.
 
@@ -286,7 +286,7 @@ Implement and verify only:
 4. stream the response;
 5. execute one read-only tool call;
 6. persist the session in Candy's application-data directory;
-7. load the same session on macOS `26.5.2` Apple Silicon and Windows 11;
+7. load the same session on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11;
 8. verify the credential does not enter logs, sessions, tool subprocesses, or the repository.
 
 Do not start the full TUI or Electron UI before this slice passes.
@@ -319,7 +319,7 @@ Until then, keep TUI execution in-process and Desktop execution in its app-manag
 - [Codex-style local control baseline](../adr/0004-codex-style-local-control-baseline.md)
 - [Narrow native Sandbox Runner](../adr/0005-allow-narrow-native-sandbox-runner.md)
 - [Explicit Browser takeover fallback](../adr/0006-use-explicit-browser-takeover-fallback.md)
-- [Current macOS `26.5.2` Apple Silicon acceptance target](../adr/0008-target-current-macos-26-5-2.md)
+- [Current macOS Tahoe primary host and `26.5.2` regression baseline](../adr/0009-current-macos-primary-with-regression-baseline.md)
 - [V1 product acceptance standard](./acceptance-v1.md)
 - [Live provider credential procedure](../testing/live-provider-credentials.md)
 - [Current grilling handoff](./grilling-handoff.md)

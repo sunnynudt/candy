@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded
 supersedes: ADR-0007
+superseded_by: ADR-0009
 ---
 
 # Target the current macOS 26.5.2 Apple Silicon acceptance machine

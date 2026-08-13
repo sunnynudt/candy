@@ -91,7 +91,7 @@ The Task Engine emits only normalized Candy events. Pi messages, tool types, ses
 
 The Pi Adapter is the only implementation allowed to import Pi packages. It translates between Candy inputs/events and Pi's public agent, model, tool, and session contracts. It does not expose Pi types to clients or other packages, fork Pi, run Pi interactive mode, or reimplement the agent loop.
 
-Pi version changes require adapter contract tests and macOS `26.5.2` Apple Silicon/Windows 11 session compatibility tests before the lockfile changes.
+Pi version changes require adapter contract tests and current macOS Tahoe `26.x` Apple Silicon/Windows 11 session compatibility tests before the lockfile changes; exact `26.5.2` regression coverage remains separately tracked.
 
 ### Provider Module
 
@@ -163,7 +163,7 @@ The selected V1 implementation is Electron `WebContentsView` plus a persistent E
 
 ### Platform Module
 
-The Platform Module hides application-data paths, OS credential stores, process lifecycle, locks, platform-specific cancellation, and the Sandbox Runner protocol. Windows 11, macOS `26.5.2` Apple Silicon, and in-memory test adapters justify this seam. Product and control-plane behavior remains TypeScript; one audited Rust helper implements only native command containment and process-tree ownership. No caller may assume POSIX paths, signals, permissions, shells, or process groups.
+The Platform Module hides application-data paths, OS credential stores, process lifecycle, locks, platform-specific cancellation, and the Sandbox Runner protocol. Windows 11, current macOS Tahoe `26.x` Apple Silicon, and in-memory test adapters justify this seam. Product and control-plane behavior remains TypeScript; one audited Rust helper implements only native command containment and process-tree ownership. No caller may assume POSIX paths, signals, permissions, shells, or process groups.
 
 ## Commands, events, and transport
 
@@ -250,7 +250,7 @@ The logical names are stable; exact filenames and platform paths are implementat
 6. **Browser Workspace**: add the visible browser, persistent profile, site permissions, observation/actions, takeover, screenshots, and browser validation.
 7. **Long-running tasks**: add explicit completion criteria, pause/resume/steering, validators, stall detection, optional budgets, and Auto Debug.
 
-Each slice must pass on macOS `26.5.2` Apple Silicon and Windows 11 before the next slice can claim cross-platform support.
+Each slice must pass on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before the next slice can claim cross-platform support. Exact `26.5.2` compatibility remains a separate regression claim.
 
 ## Required compatibility spikes
 
@@ -258,6 +258,6 @@ Each slice must pass on macOS `26.5.2` Apple Silicon and Windows 11 before the n
 - DeepSeek V4 Flash/Pro domestic model identifiers, thinking modes, streaming, and tool calling;
 - MiniMax M3 domestic endpoint model identifier, Token Plan authentication, image schema, tool calling, streaming, cancellation, and limits;
 - Electron embedded-browser control through CDP and the value, if any, of an external automation adapter;
-- Windows 11 and macOS `26.5.2` Apple Silicon credential stores, locks, process cancellation, task recovery, and worktree behavior.
+- Windows 11 and current macOS Tahoe `26.x` Apple Silicon credential stores, locks, process cancellation, task recovery, and worktree behavior.
 
 These spikes may change adapters and internal implementation. They must not weaken the accepted product or security invariants without a new decision.

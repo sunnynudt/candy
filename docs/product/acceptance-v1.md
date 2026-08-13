@@ -8,7 +8,7 @@ Passing unit tests alone is not product acceptance. Candy V1 is accepted only wh
 
 ## Acceptance policy
 
-- Required platforms are macOS `26.5.2` on Apple Silicon and Windows 11 x64.
+- The primary macOS platform is the current stable Tahoe `26.x` release on Apple Silicon (currently `26.6.1`); Windows 11 x64 remains the separate primary platform. Exact macOS `26.5.2` evidence is retained as a compatibility regression baseline and is required only for an explicit `26.5.2` compatibility claim.
 - Every deterministic test must pass. A flaky retry does not convert a failure into a pass.
 - Every required live-provider contract must pass with real credentials through the same Pi Adapter and Provider path used by the product.
 - A provider or network failure may produce a controlled, actionable product result; it must never produce silent fallback, state corruption, or secret exposure.
@@ -38,12 +38,13 @@ V1 release requires zero open P0 and P1 defects. P2 items require explicit produ
 
 ### Platform matrix
 
-| ID      | Environment                               | Required scope                                                                                   |
-| ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| ENV-MAC | macOS `26.5.2` on Apple Silicon           | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
-| ENV-WIN | Current supported Windows 11 patch on x64 | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
+| ID               | Environment                                                        | Required scope                                                                                   |
+| ---------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| ENV-MAC          | Current stable macOS Tahoe `26.x` on Apple Silicon (currently `26.6.1`) | TUI, signed/notarized Desktop, Sandbox Runner, Keychain, Browser, worktrees, recovery            |
+| ENV-MAC-BASELINE | Exact macOS `26.5.2` on Apple Silicon regression environment       | Compatibility regression for the same macOS scope when that claim is required                  |
+| ENV-WIN          | Current supported Windows 11 patch on x64                          | TUI, signed Desktop, Sandbox Runner/Job Object, Credential Manager, Browser, worktrees, recovery |
 
-Older macOS versions, Intel macOS, and Windows versions before Windows 11 are not V1 acceptance targets.
+macOS versions before `26.5.2`, Intel macOS, future macOS major versions, and Windows versions before Windows 11 are not V1 acceptance targets until the support policy is updated.
 
 ### Controlled fixture set
 
@@ -209,7 +210,7 @@ Required outcomes:
 
 Targets are measured over ten runs on each acceptance machine, excluding provider and public-network latency:
 
-Execution order follows host availability. The checked-in Windows 11 Pro x64 evidence includes the deterministic ten-run ACC-12 subset, so `G0-WIN` is in progress rather than pending for lack of a host. The remaining Windows matrix and the remaining macOS `26.5.2` Apple Silicon evidence are both still required before a final cross-platform V1 release claim.
+Execution order follows host availability. The checked-in Windows 11 Pro x64 evidence includes the deterministic ten-run ACC-12 subset, so `G0-WIN` is in progress rather than pending for lack of a host. The current macOS Tahoe 26.x primary matrix is run by `npm run acceptance:macos`; the exact `26.5.2` regression matrix is run separately by `npm run acceptance:macos:baseline` and does not block current-host Personal Preview evidence.
 
 | Metric                                                   | V1 acceptance target                                       |
 | -------------------------------------------------------- | ---------------------------------------------------------- |

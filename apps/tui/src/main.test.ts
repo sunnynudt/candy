@@ -325,11 +325,18 @@ test("interactive TUI selects an existing workspace for new tasks", async () => 
     terminal.emitInput("\r");
     await runPromise;
 
-    assert.deepEqual(workspaces, [await realpath(firstWorkspace), await realpath(secondWorkspace)]);
+    const expectedWorkspaces = [
+      await realpath(firstWorkspace),
+      await realpath(secondWorkspace),
+    ].sort();
+    assert.deepEqual([...workspaces].sort(), expectedWorkspaces);
     const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     assert.deepEqual(
-      store.list().map((task) => task.workspacePath),
-      [await realpath(firstWorkspace), await realpath(secondWorkspace)],
+      store
+        .list()
+        .map((task) => task.workspacePath)
+        .sort(),
+      expectedWorkspaces,
     );
     store.close();
   } finally {

@@ -8,7 +8,7 @@
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-当前接力规则：白天在 MacBook Pro 上只实现、测试和记录 macOS `26.5.2` Apple Silicon 能力；晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
+当前接力规则：白天在 MacBook Pro 上优先实现、测试和记录当前 macOS Tahoe `26.x` Apple Silicon 能力；只有在声明精确兼容性时才运行 macOS `26.5.2` 回归基线。晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
 ## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
 
@@ -69,7 +69,9 @@
 
 - ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
 
-## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
+## macOS 白天主动队列：当前 macOS Tahoe `26.x` Apple Silicon
+
+- ☑️ macOS 验收环境已拆分：默认 `npm run acceptance:macos` 以当前 Tahoe `26.x` arm64 主机为 primary（当前主机为 `26.6.1`，最低保留 `26.5.2`），精确 `npm run acceptance:macos:baseline` 作为 `26.5.2` 兼容性回归。两者报告分离，current-host 运行不再因缺少旧版本主机而 preflight 阻断；这不等于跨版本行为自动兼容或最终 V1 Pass。
 
 - ☑️ TUI 同一任务连续对话已接入：普通输入默认继续 current task，`:new [prompt]` 创建新任务，`:use <task-id>` 选择已持久化任务，`:tasks` 显示 current 标记、状态、模型、workspace、revision 和队列位置；TUI 通过 Candy-owned SQLite 恢复控制器和有界脱敏 transcript，并将稳定 task id 继续传给同一 Pi session 路径。active owner 重入、取消任务继续、stale revision 与 non-owner 控制均 fail closed。测试先行后 `npm test` 通过 144/144。此项仍不替代 macOS/Windows 真终端、跨客户端恢复、live provider 或完整 ACC-03/05/11 验收。
 
@@ -83,9 +85,9 @@
 
 - ☑️ TUI 显式模型/图片附件已接入：`:model` 支持 `deepseek-flash`、`deepseek-pro`、`minimax-m3` 并将 canonical id 持久化到任务；活动/排队任务禁止换模，MiniMax M3 使用独立 provider engine，DeepSeek 图像 turn 不自动 fallback。`:attach <absolute-path>` / `:attachments` 复用 Candy-owned AttachmentStore，仅将 attachment id 与有界元数据放入任务状态；workspace/Candy app-data、symlink、video、unsupported MIME、超大/损坏图片和 credential-bearing 内容均拒绝，MiniMax image attachment 可在重启后恢复。Node `22.23.2`/npm `10.9.8` 下 `npm test` 155/155，Pi typed-image/domestic-endpoint/no-fallback 与 provider 错误脱敏契约通过。此项仍不替代真实终端、完整 Desktop attachment UX、live MiniMax/Token Plan、G2、完整 ACC-03/04/11 或最终 V1 验收。
 
-- ☑️ TUI provider 失败恢复已接入：Pi `ProviderContractError` 仅映射为固定脱敏类别；中断任务显示 `:resume <task-id>`、显式 `:model` 和 `:cancel <task-id>`，paused/interrupted 任务可显式取消且不自动重放。Node `22.23.2`/npm `10.9.8` 下 targeted TUI provider-recovery test 通过；严格 `acceptance:macos` 因当前主机为 macOS `26.6.1` 而接受基线要求 `26.5.2`，在执行前拒绝，未形成平台验收证据。
+- ☑️ TUI provider 失败恢复已接入：Pi `ProviderContractError` 仅映射为固定脱敏类别；中断任务显示 `:resume <task-id>`、显式 `:model` 和 `:cancel <task-id>`，paused/interrupted 任务可显式取消且不自动重放。Node `22.23.2`/npm `10.9.8` 下 targeted TUI provider-recovery test 通过；当前-host runner 与精确 `26.5.2` baseline runner 已分离，分别记录各自平台证据。
 
-- ◐ TUI Personal Preview 真实 PTY 旅程：新增 `:transcript [task-id]` 和 macOS Expect-backed PTY smoke；当前 macOS Tahoe `26.6.1` arm64 从工作区父目录启动后，通过 TUI 选择带空格的 workspace，完成两轮同任务编码、Candy workspace tools、逐次删除审批、MiniMax M3 图片、changed files/diff、显式 native validator、退出重启恢复和 terminal cleanup，并验证 Git index/HEAD/commit、workspace 外 sentinel 与 PTY/app-data/diff/Expect stdout-stderr 敏感证据边界不变；严格 runner 在目标版本缺失时会写出当前 HEAD 的 Blocked preflight report，不会沿用旧 latest 报告。待在 macOS `26.5.2` arm64 上重跑并纳入完整平台验收；不替代 Windows、live provider、G2 或最终 V1 证据。
+- ◐ TUI Personal Preview 真实 PTY 旅程：新增 `:transcript [task-id]` 和 macOS Expect-backed PTY smoke；当前 macOS Tahoe `26.6.1` arm64 从工作区父目录启动后，通过 TUI 选择带空格的 workspace，完成两轮同任务编码、Candy workspace tools、逐次删除审批、MiniMax M3 图片、changed files/diff、显式 native validator、退出重启恢复和 terminal cleanup，并验证 Git index/HEAD/commit、workspace 外 sentinel 与 PTY/app-data/diff/Expect stdout-stderr 敏感证据边界不变；当前-host runner 可在此运行，精确 `26.5.2` baseline runner 需在对应主机上重跑；不替代 Windows、live provider、G2 或最终 V1 证据。
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 

@@ -1,6 +1,6 @@
-# macOS 26.5.2 / Apple Silicon Development Toolchain
+# macOS Tahoe 26.x / Apple Silicon Development Toolchain
 
-Status: setup checklist; current acceptance-baseline verification in progress
+Status: setup checklist; current primary host is macOS Tahoe 26.6.1, with macOS 26.5.2 retained as a compatibility regression baseline
 
 This document is for the M2 Pro development machine. It complements `windows-11-toolchain.md`; passing this checklist does not by itself claim Candy V1 release acceptance.
 
@@ -8,7 +8,7 @@ This document is for the M2 Pro development machine. It complements `windows-11-
 
 | Capability | Phase 1–5 TypeScript/Pi/Desktop work | Native Sandbox Runner / Job Object | Release packaging |
 | --- | --- | --- | --- |
-| macOS `26.5.2` on Apple Silicon | Required | Required | Required |
+| Current macOS Tahoe `26.x` on Apple Silicon | Required | Required | Required |
 | Node.js `22.23.2` and npm `10.9.8` | Required | Required | Required |
 | Git and GitHub CLI | Required | Required | Required |
 | Xcode Command Line Tools | Required for native modules | Required | Required |
@@ -35,7 +35,7 @@ sysctl -n hw.optional.arm64
 Expected:
 
 ```text
-26.5.2
+26.x (record the exact product version)
 arm64
 1
 ```
@@ -119,11 +119,12 @@ npm run check:toolchain
 npm run check
 npm run smoke:tui
 npm run acceptance:macos
+npm run acceptance:macos:baseline  # only on an exact 26.5.2 host
 ```
 
 Record the macOS version, architecture, Node/npm versions, Rust toolchain, lockfile result, test result, and smoke result as the local evidence for this machine.
 
-`npm run acceptance:macos` is the repeatable local entry point. It requires macOS `26.5.2` on Apple Silicon, runs the deterministic, native, TUI, app-server, Electron, packaged Desktop, and packaged Keychain checks in serial order with a minimal child environment, then writes a sanitized report under `out/acceptance/macos/`. It never runs live providers or imports credentials from another tool. The report establishes repeatable evidence for the current macOS baseline only; Apple signing, native containment, Browser, recovery, and final ACC gates remain separate.
+`npm run acceptance:macos` is the repeatable primary entry point. It requires current macOS Tahoe `26.x` on Apple Silicon at or above `26.5.2`, runs the deterministic, native, TUI, app-server, Electron, packaged Desktop, and packaged Keychain checks in serial order with a minimal child environment, and writes a sanitized current-host report to `out/acceptance/macos/latest.md`. `npm run acceptance:macos:baseline` requires the exact `26.5.2` host and writes `out/acceptance/macos/baseline-latest.md`. Neither command runs live providers or imports credentials from another tool. Apple signing, native containment, Browser, recovery, and final ACC gates remain separate.
 
 ### 7. Native smoke when native work begins
 

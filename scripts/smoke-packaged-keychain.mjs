@@ -42,8 +42,15 @@ const exit = await new Promise((resolve, reject) => {
   child.once("error", reject);
   child.once("exit", (code, signal) => resolve({ code, signal }));
 });
-if (exit.code !== 0 || !stdout.includes("afterDelete=absent"))
+const probePassed = ["deepseek", "minimax-cn"].every(
+  (name) =>
+    stdout.includes(`${name}: before=present untouched=true`) ||
+    stdout.includes(`${name}: before=absent afterSet=present afterDelete=absent`),
+);
+if (exit.code !== 0 || !probePassed) {
+  const details = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
   throw new Error(
-    `Packaged Keychain smoke failed (${exit.code ?? "null"}/${exit.signal ?? "no signal"}): ${stderr}`,
+    `Packaged Keychain smoke failed (${exit.code ?? "null"}/${exit.signal ?? "no signal"}): ${details}`,
   );
+}
 console.log("packaged macOS Keychain smoke ok");

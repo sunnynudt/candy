@@ -176,4 +176,4 @@ After the native audit passes, compile and run a real Rust smoke executable. Ver
 
 ## Cross-platform boundary
 
-This document covers Windows 11 only. macOS `26.5.2` Apple Silicon requires its own setup and evidence. Do not infer macOS readiness from Windows tool availability or GitHub-hosted CI alone.
+This document covers Windows 11 only. Current macOS Tahoe `26.x` Apple Silicon requires its own setup and evidence; exact `26.5.2` compatibility is a separate regression matrix. Do not infer macOS readiness from Windows tool availability or GitHub-hosted CI alone.

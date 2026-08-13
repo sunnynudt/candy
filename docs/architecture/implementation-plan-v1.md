@@ -29,7 +29,7 @@ Deliverables:
 5. Select Browser Workspace and command-sandbox adapters from first-party evidence.
 6. Record OS credential, process cancellation, lease, app-data, and Git worktree strategies.
 7. Convert every unresolved item into a named blocker with an owner and validation procedure.
-8. Record the current macOS `26.5.2` Apple Silicon acceptance baseline and freeze the compatible Electron line.
+8. Record the current macOS Tahoe `26.x` Apple Silicon primary host and freeze the compatible Electron line; retain exact `26.5.2` as a separate regression baseline.
 9. Specify the accepted Rust Sandbox Runner protocol and macOS/Windows backend security contract; obtain security review before it can enable Shell.
 10. Validate automatic Browser takeover and use the accepted visible Take Control fallback when physical input cannot be distinguished reliably from CDP-synthesized input.
 
@@ -119,7 +119,7 @@ Exit criteria:
 
 Work packets:
 
-1. Create Electron `43.2.0` main, sandboxed preload, renderer, and the app-server child composition root for macOS `26.5.2` Apple Silicon and Windows 11; package and sign Node `22.23.2` as the app-server runtime instead of using Electron's Node mode.
+1. Create Electron `43.2.0` main, sandboxed preload, renderer, and the app-server child composition root for current macOS Tahoe `26.x` Apple Silicon and Windows 11; package and sign Node `22.23.2` as the app-server runtime instead of using Electron's Node mode.
 2. Implement versioned JSONL stdio transport, backpressure, line limits, child executable/entry integrity checks, restart inspection, and graceful parent/child shutdown; close the Electron `runAsNode` fuse.
 3. Implement the dedicated credential bridge and `@napi-rs/keyring@1.3.0` OS credential adapter; renderer receives presence state only.
 4. Implement task list, task detail, streaming transcript, tool visibility, approval UI, changed-file list, and diff review.
@@ -195,7 +195,7 @@ Exit criteria:
 
 Work packets:
 
-1. Run the full macOS `26.5.2` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, worktrees, Browser, downloads, tray behavior, and packaging.
+1. Run the full current macOS Tahoe `26.x` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, worktrees, Browser, downloads, tray behavior, and packaging; run the exact `26.5.2` regression matrix separately when that compatibility claim is required.
 2. Add migration fixtures for protocol, metadata, and session schema versions.
 3. Produce dependency licenses, SBOM, exact lockfile verification, lifecycle-script allowlist, and packaged-artifact smoke tests.
 4. Verify install, upgrade, rollback, app-data retention, credential deletion, Browser data clearing, and uninstall behavior.
@@ -215,7 +215,7 @@ Every mutable or external action is tested across these dimensions where applica
 
 | Dimension        | Required cases                                                        |
 | ---------------- | --------------------------------------------------------------------- |
-| Operating system | macOS `26.5.2` Apple Silicon; Windows 11                              |
+| Operating system | current macOS Tahoe `26.x` Apple Silicon; Windows 11                    |
 | Client           | TUI in-process; Desktop app-server                                    |
 | Workspace        | Git clean; Git dirty; Task Worktree; non-Git Local                    |
 | Task state       | Running; WaitingApproval; Paused; Interrupted; Cancelled              |
@@ -232,6 +232,6 @@ After Phase 2, perform a mandatory Runtime proof review before creating the full
 2. Does the approved DeepSeek contract stream tool-capable turns correctly?
 3. Does Candy own and reload the session independently of Pi defaults?
 4. Is the credential absent from every forbidden sink?
-5. Does the same fixture behave on macOS `26.5.2` Apple Silicon and Windows 11?
+5. Does the same fixture behave on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11?
 
 Failure at this checkpoint changes the Adapter or pinned dependency. It does not justify forking Pi, rewriting its loop, weakening secret isolation, or skipping a supported platform.

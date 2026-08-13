@@ -3,9 +3,9 @@
 - 状态：技术方案条件通过，存在阻断项
 - 核查日期：2026-08-09
 - 范围：研究与实施规划；本文件不包含产品代码
-- 目标基线：macOS `26.5.2` Apple Silicon、Windows 11、Electron Desktop、packaged Node 22 app-server / TUI
+- 目标基线：当前 macOS Tahoe `26.x` Apple Silicon 主机、Windows 11、Electron Desktop、packaged Node 22 app-server / TUI；精确 `26.5.2` 作为兼容性回归基线
 
-> 当前决策（2026-08-10）：ADR-0008 将 macOS 验收目标设为当前 `26.5.2` Apple Silicon 机器；一个仅承载 OS 隔离与 Windows Job Object 所有权的窄 Rust Sandbox Runner，以及自动接管不可可靠验证时的显式 Take Control 回退保持接受。原生后端、进程树、打包和安全测试仍须通过本报告定义的 Gate；接受实现方向不等于验证已经完成。
+> 当前决策（2026-08-13）：ADR-0009 将当前 macOS Tahoe `26.x` Apple Silicon 主机设为 primary acceptance host（当前为 `26.6.1`），并保留精确 `26.5.2` 作为显式兼容性回归基线；一个仅承载 OS 隔离与 Windows Job Object 所有权的窄 Rust Sandbox Runner，以及自动接管不可可靠验证时的显式 Take Control 回退保持接受。原生后端、进程树、打包和安全测试仍须通过本报告定义的 Gate；接受实现方向不等于验证已经完成。
 
 ## 1. 结论摘要
 
