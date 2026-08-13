@@ -387,6 +387,10 @@ test("Apply Changes guard fails closed for dirty, changed-base, escaped, and sec
   assert.equal(guard.check({ ...base, actualBase: "b" }), "blocked");
   assert.equal(guard.check({ ...base, paths: ["../secret"] }), "blocked");
   assert.equal(guard.check({ ...base, patchText: "canary", activeSecrets: ["canary"] }), "blocked");
+  assert.equal(
+    guard.check({ ...base, paths: ["src/canary.ts"], activeSecrets: ["canary"] }),
+    "blocked",
+  );
 });
 
 test("Apply Changes guard and worktree planning cover the Windows path matrix", () => {
@@ -679,6 +683,13 @@ test("Apply Changes service stops on dirty target, changed base, conflict, and u
       }),
       /refused the reviewed patch/u,
     );
+
+    writeFileSync(path.join(worktree, "new.txt"), "fixture-active-secret\n");
+    await assert.rejects(
+      service.apply(worktree, { ...reviewed, activeSecrets: ["fixture-active-secret"] }),
+      /active provider credential/u,
+    );
+    writeFileSync(path.join(worktree, "new.txt"), "untracked\n");
 
     const target = path.join(root, "target");
     git(["clone", "-q", repository, target], root);

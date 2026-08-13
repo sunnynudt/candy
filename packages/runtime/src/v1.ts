@@ -727,6 +727,8 @@ export class ApplyChangesGuard {
     if (!input.targetIsGit || !input.targetClean || input.expectedBase !== input.actualBase)
       return "blocked";
     for (const requested of input.paths) {
+      if (input.activeSecrets.some((secret) => secret.length > 0 && requested.includes(secret)))
+        return "blocked";
       const absolute = this.#path.resolve(this.targetRoot, requested);
       const root = this.#path.resolve(this.targetRoot);
       const relative = this.#path.relative(root, absolute);
@@ -1084,6 +1086,7 @@ export class ApplyChangesService {
     }
     const explicitUntrackedPaths = input.untrackedPaths !== undefined;
     const untrackedPaths = explicitUntrackedPaths ? uniqueRelativePaths(input.untrackedPaths!) : [];
+    const untrackedContents = new Map<string, Buffer>();
     const reviewedUntrackedCandidates = explicitUntrackedPaths
       ? untrackedPaths
       : uniqueRelativePaths(input.paths);
@@ -1102,6 +1105,19 @@ export class ApplyChangesService {
         continue;
       }
       if (!explicitUntrackedPaths) untrackedPaths.push(requested);
+      await assertSafePath(source, requested, true);
+      const sourcePath = path.resolve(source, requested);
+      const content = await readFile(sourcePath);
+      if (
+        input.activeSecrets.some(
+          (secret) => secret.length > 0 && content.includes(Buffer.from(secret)),
+        )
+      ) {
+        throw new ApplyChangesBlockedError(
+          "Reviewed untracked content contains an active provider credential.",
+        );
+      }
+      untrackedContents.set(requested, content);
       if (sameRoot) continue;
       try {
         await lstat(path.resolve(targetRoot, requested));
@@ -1149,10 +1165,10 @@ export class ApplyChangesService {
     }
     for (const requested of untrackedPaths) {
       if (sameRoot) continue;
-      const sourcePath = path.resolve(source, requested);
       const targetPath = path.resolve(targetRoot, requested);
       await mkdir(path.dirname(targetPath), { recursive: true });
-      const content = await readFile(sourcePath);
+      const content =
+        untrackedContents.get(requested) ?? (await readFile(path.resolve(source, requested)));
       await writeFile(targetPath, content, { flag: "wx" });
     }
     return "applied";

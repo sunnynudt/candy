@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,10 +25,13 @@ import {
   type TaskMetadata,
 } from "@candy/platform";
 import {
+  ApplyChangesBlockedError,
+  ApplyChangesService,
   AttachmentStore,
   CommandValidator,
   CandyRuntime,
   DeterministicAgentEngine,
+  GitWorktreeManager,
   GitWorkspaceChangeTracker,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
@@ -37,9 +40,11 @@ import {
   TaskScheduler,
   UnavailableBrowserCapability,
   type CommandValidatorCommand,
+  type GitWorktreePlan,
   type ValidatorResult,
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
+  planGitWorktree,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
 
@@ -138,6 +143,21 @@ interface TuiValidatorState {
   readonly durationMs?: number;
 }
 
+interface TuiWorkspaceReview {
+  readonly revision: number;
+  readonly changes: WorkspaceChangeSnapshot;
+  readonly manifestReviewed: boolean;
+  readonly fullDiffReviewed: boolean;
+  readonly untrackedFingerprint?: string;
+}
+
+interface TuiCompleteDiff {
+  readonly changes: WorkspaceChangeSnapshot;
+  readonly text: string;
+  readonly untrackedFingerprint: string;
+  readonly complete: boolean;
+}
+
 const MAX_TUI_DIFF_BYTES = 64 * 1024;
 const MAX_TUI_TRANSCRIPT_BYTES = 64 * 1024;
 const DEFAULT_VALIDATOR_TIMEOUT_MS = 30_000;
@@ -148,6 +168,8 @@ export class InteractiveTui {
   readonly #terminal: CandyTuiTerminal | undefined;
   readonly #store: SQLiteTaskStore;
   readonly #attachments: AttachmentStore;
+  readonly #worktreeRoot: string;
+  readonly #worktreeManager: GitWorktreeManager;
   readonly #scheduler: TaskScheduler;
   readonly #changeTracker: WorkspaceChangeTracker;
   readonly #validator: TuiValidator | undefined;
@@ -159,6 +181,7 @@ export class InteractiveTui {
   readonly #validatorAbortControllers = new Map<string, AbortController>();
   readonly #validatorStops = new Map<string, "cancelled" | "timeout">();
   readonly #validatorStates = new Map<string, TuiValidatorState>();
+  readonly #workspaceReviews = new Map<string, TuiWorkspaceReview>();
   readonly #requestedStops = new Map<string, "paused" | "cancelled">();
   readonly #deleteApprovals = new Map<
     string,
@@ -170,6 +193,8 @@ export class InteractiveTui {
   #surface: CandyTuiSurface | undefined = undefined;
   #resolveExit: (() => void) | undefined = undefined;
   #closing = false;
+  #creatingTask = false;
+  #pendingTaskCreation: Promise<void> | undefined;
   #approvalProfile: "read-only" | "auto" = "read-only";
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
@@ -182,6 +207,8 @@ export class InteractiveTui {
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
     this.#attachments = options.attachmentStore ?? new AttachmentStore(paths.attachments);
+    this.#worktreeRoot = paths.worktrees;
+    this.#worktreeManager = new GitWorktreeManager(this.#worktreeRoot);
     this.#changeTracker =
       options.changeTracker ??
       new ResolvedWorkspaceChangeTracker(
@@ -230,9 +257,11 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
-    this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
+    this.write(
+      "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Shell stays disabled.\n",
+    );
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
@@ -251,6 +280,7 @@ export class InteractiveTui {
       for (const controller of this.#abortControllers.values()) controller.abort();
       for (const controller of this.#validatorAbortControllers.values()) controller.abort();
       await new Promise<void>((resolve) => setImmediate(resolve));
+      await this.#pendingTaskCreation?.catch(() => undefined);
       this.#resolveExit = undefined;
       await this.#surface.stop();
       this.#surface = undefined;
@@ -262,6 +292,8 @@ export class InteractiveTui {
     const trimmed: string = value.trim();
     if (trimmed === ":quit") {
       this.requestExit();
+    } else if (this.#creatingTask) {
+      this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
     } else if (trimmed === ":new" || trimmed.startsWith(":new ")) {
       this.newTask(trimmed.slice(4).trim());
     } else if (trimmed.startsWith(":use ")) {
@@ -296,6 +328,14 @@ export class InteractiveTui {
       void this.showDiff(trimmed.slice(5).trim()).catch((error: unknown) => {
         this.write(`diff rejected: ${safeError(error)}\n`);
       });
+    } else if (trimmed === ":apply") {
+      void this.applyCurrent().catch((error: unknown) => {
+        this.write(`apply blocked: ${safeError(error)}\n`);
+      });
+    } else if (trimmed === ":discard") {
+      void this.discardCurrent().catch((error: unknown) => {
+        this.write(`discard blocked: ${safeError(error)}\n`);
+      });
     } else if (trimmed === ":validate") {
       this.validateCurrent();
     } else if (trimmed.startsWith(":approve ")) {
@@ -322,9 +362,21 @@ export class InteractiveTui {
   }
 
   private create(prompt: string): void {
-    void this.createTask(prompt).catch((error: unknown) => {
-      this.write(`task creation rejected: ${safeError(error)}\n`);
-    });
+    if (this.#creatingTask) {
+      this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
+      return;
+    }
+    this.#creatingTask = true;
+    const operation = this.createTask(prompt);
+    this.#pendingTaskCreation = operation;
+    void operation
+      .catch((error: unknown) => {
+        this.write(`task creation rejected: ${safeError(error)}\n`);
+      })
+      .finally(() => {
+        if (this.#pendingTaskCreation === operation) this.#pendingTaskCreation = undefined;
+        this.#creatingTask = false;
+      });
   }
 
   private async createTask(prompt: string): Promise<void> {
@@ -342,25 +394,58 @@ export class InteractiveTui {
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
     const workspacePath = this.#workspacePath;
-    const metadata = this.#store.create(
-      taskId,
-      this.#approvalProfile,
-      queueOrder,
-      this.#selectedModel,
-      this.#selectedAttachmentIds,
-      workspacePath,
-      this.#validatorCommand,
-    );
+    const approvalProfile = this.#approvalProfile;
+    const selectedModel = this.#selectedModel;
+    const attachmentIds = [...this.#selectedAttachmentIds];
+    const validatorCommand = this.#validatorCommand;
+    this.write(`preparing ${taskId} in ${workspacePath}\n`);
+    const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
+    let worktreePath: string | undefined;
+    if (approvalProfile === "auto" && workspaceBaseline !== undefined) {
+      const plan = this.planForTask(taskId, workspacePath, workspaceBaseline);
+      try {
+        await this.#worktreeManager.create(plan);
+      } catch (error) {
+        throw new Error("Task Worktree creation failed.", { cause: error });
+      }
+      worktreePath = plan.worktreePath;
+    }
+    let metadata: TaskMetadata;
+    try {
+      metadata = this.#store.create(
+        taskId,
+        approvalProfile,
+        queueOrder,
+        selectedModel,
+        attachmentIds,
+        workspacePath,
+        validatorCommand,
+        workspaceBaseline,
+        worktreePath,
+      );
+    } catch (error) {
+      if (worktreePath !== undefined) {
+        try {
+          await this.#worktreeManager.discard(
+            this.planForTask(taskId, workspacePath, workspaceBaseline!),
+          );
+        } catch {
+          throw new Error("Task metadata creation and Task Worktree cleanup failed.", {
+            cause: error,
+          });
+        }
+      }
+      throw error;
+    }
     this.#selectedAttachmentIds = [];
-    const controller = new TaskController(taskId, this.#approvalProfile, this.#store);
+    const controller = new TaskController(taskId, approvalProfile, this.#store);
     this.#controllers.set(taskId, controller);
     this.#prompts.set(taskId, prompt);
     this.#currentTaskId = taskId;
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
-    const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
-    this.#store.updateBaseline(taskId, workspaceBaseline);
-    this.drain(new Map([[taskId, prompt]]));
+    if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);
+    if (!this.#closing) this.drain(new Map([[taskId, prompt]]));
   }
 
   private drain(explicitPrompts: ReadonlyMap<string, string> = new Map()): void {
@@ -627,6 +712,7 @@ export class InteractiveTui {
       this.write(`changed files: unavailable for ${snapshot.taskId}\n`);
       return;
     }
+    this.recordWorkspaceReview(snapshot, changes, "manifest");
     const removed = extractRemovedPaths(changes.patchText);
     this.write(
       [
@@ -652,17 +738,173 @@ export class InteractiveTui {
       this.write("current task metadata is unavailable\n");
       return;
     }
-    const changes = await this.inspectWorkspaceChanges(snapshot);
+    const completeDiff =
+      requestedPath === "" ? await this.inspectCompleteDiff(snapshot) : undefined;
+    const changes = completeDiff?.changes ?? (await this.inspectWorkspaceChanges(snapshot));
     if (!changes.available) {
       this.write(`diff unavailable for ${snapshot.taskId}\n`);
       return;
     }
-    const selected = selectDiff(changes.patchText, requestedPath);
+    const selected =
+      completeDiff === undefined ? selectDiff(changes.patchText, requestedPath) : completeDiff.text;
     const bounded = truncateTuiDiff(selected);
     this.write(
       `diff ${snapshot.taskId}${requestedPath === "" ? "" : ` ${requestedPath}`}\n${bounded || "(no diff)\n"}`,
     );
     if (changes.patchTruncated) this.write("[diff truncated by workspace tracker]\n");
+    if (
+      requestedPath === "" &&
+      !changes.patchTruncated &&
+      completeDiff?.complete === true &&
+      Buffer.byteLength(selected, "utf8") <= MAX_TUI_DIFF_BYTES
+    ) {
+      this.recordWorkspaceReview(
+        snapshot,
+        changes,
+        "full-diff",
+        completeDiff?.untrackedFingerprint,
+      );
+    }
+  }
+
+  private recordWorkspaceReview(
+    snapshot: TaskMetadata,
+    changes: WorkspaceChangeSnapshot,
+    kind: "manifest" | "full-diff",
+    untrackedFingerprint?: string,
+  ): void {
+    const previous = this.#workspaceReviews.get(snapshot.taskId);
+    const compatible =
+      previous !== undefined &&
+      previous.revision === snapshot.revision &&
+      sameWorkspaceChanges(previous.changes, changes);
+    this.#workspaceReviews.set(snapshot.taskId, {
+      revision: snapshot.revision,
+      changes,
+      manifestReviewed: kind === "manifest" || (compatible && previous.manifestReviewed),
+      fullDiffReviewed: kind === "full-diff" || (compatible && previous.fullDiffReviewed),
+      ...(kind === "full-diff" && untrackedFingerprint !== undefined
+        ? { untrackedFingerprint }
+        : compatible && previous.untrackedFingerprint !== undefined
+          ? { untrackedFingerprint: previous.untrackedFingerprint }
+          : {}),
+    });
+  }
+
+  private async applyCurrent(): Promise<void> {
+    const snapshot = this.requireCompletedWorktree("Apply Changes");
+    const review = this.#workspaceReviews.get(snapshot.taskId);
+    if (
+      review === undefined ||
+      review.revision !== snapshot.revision ||
+      !review.manifestReviewed ||
+      !review.fullDiffReviewed ||
+      review.untrackedFingerprint === undefined
+    ) {
+      throw new ApplyChangesBlockedError(
+        "Review the complete current change list with :changes and the full diff with :diff before Apply.",
+      );
+    }
+    await this.withActiveSecrets(async (activeSecrets) => {
+      const current = await this.#changeTracker.inspect(
+        snapshot.worktreePath!,
+        snapshot.workspaceBaseline,
+        [],
+      );
+      const sanitizedCurrent = sanitizeWorkspaceChanges(current, activeSecrets);
+      const untracked = await buildUntrackedReview(
+        snapshot.worktreePath!,
+        current.untracked,
+        activeSecrets,
+      );
+      if (
+        current.patchTruncated ||
+        !untracked.complete ||
+        !sameWorkspaceChanges(review.changes, sanitizedCurrent) ||
+        review.untrackedFingerprint !== untracked.fingerprint
+      ) {
+        throw new ApplyChangesBlockedError("Reviewed workspace changed before Apply.");
+      }
+      await new ApplyChangesService(snapshot.workspacePath).apply(snapshot.worktreePath!, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: snapshot.workspaceBaseline!,
+        actualBase: snapshot.workspaceBaseline!,
+        paths: [...current.tracked, ...current.untracked],
+        untrackedPaths: current.untracked,
+        patchText: current.patchText,
+        activeSecrets,
+      });
+    });
+    try {
+      await this.#worktreeManager.discard(this.planFromMetadata(snapshot));
+    } catch (error) {
+      throw new Error(
+        "Changes were applied to Local Workspace, but Task Worktree cleanup failed.",
+        {
+          cause: error,
+        },
+      );
+    }
+    this.#store.updateWorktree(snapshot.taskId);
+    this.refreshController(snapshot.taskId);
+    this.#workspaceReviews.delete(snapshot.taskId);
+    this.write(`applied ${snapshot.taskId} to Local Workspace; Task Worktree removed\n`);
+  }
+
+  private async discardCurrent(): Promise<void> {
+    const snapshot = this.requireCompletedWorktree("Discard");
+    try {
+      await this.#worktreeManager.discard(this.planFromMetadata(snapshot));
+    } catch (error) {
+      throw new Error("Task Worktree discard failed.", { cause: error });
+    }
+    this.#store.updateWorktree(snapshot.taskId);
+    this.refreshController(snapshot.taskId);
+    this.#workspaceReviews.delete(snapshot.taskId);
+    this.write(`discarded ${snapshot.taskId}; Local Workspace unchanged\n`);
+  }
+
+  private requireCompletedWorktree(operation: string): TaskMetadata {
+    const task = this.currentTask();
+    if (task === undefined) throw new Error(`${operation} requires a current task.`);
+    const snapshot = this.#store.get(task.snapshot().taskId);
+    if (snapshot === undefined) throw new Error(`${operation} task metadata is unavailable.`);
+    if (snapshot.state !== "completed") throw new Error(`${operation} requires a completed task.`);
+    if (snapshot.ownerId !== undefined)
+      throw new Error(`${operation} requires released task ownership.`);
+    if (snapshot.worktreePath === undefined)
+      throw new Error(`${operation} requires a Git Task Worktree.`);
+    if (snapshot.workspaceBaseline === undefined)
+      throw new Error(`${operation} Task Worktree baseline is unavailable.`);
+    return snapshot;
+  }
+
+  private planForTask(taskId: string, workspacePath: string, baseCommit: string): GitWorktreePlan {
+    return planGitWorktree(
+      workspacePath,
+      path.join(this.#worktreeRoot, taskId),
+      taskId,
+      baseCommit,
+    );
+  }
+
+  private planFromMetadata(snapshot: TaskMetadata): GitWorktreePlan {
+    return planGitWorktree(
+      snapshot.workspacePath,
+      snapshot.worktreePath!,
+      snapshot.taskId,
+      snapshot.workspaceBaseline!,
+    );
+  }
+
+  private refreshController(taskId: string): void {
+    const metadata = this.#store.get(taskId);
+    if (metadata === undefined) return;
+    this.#controllers.set(
+      taskId,
+      new TaskController(taskId, metadata.approvalProfile, this.#store),
+    );
   }
 
   private currentTask(): TaskController | undefined {
@@ -672,13 +914,31 @@ export class InteractiveTui {
   }
 
   private async inspectWorkspaceChanges(snapshot: TaskMetadata): Promise<WorkspaceChangeSnapshot> {
-    return this.withActiveSecrets((activeSecrets) =>
-      this.#changeTracker.inspect(
-        snapshot.workspacePath,
-        snapshot.workspaceBaseline,
+    return this.withActiveSecrets(async (activeSecrets) =>
+      sanitizeWorkspaceChanges(
+        await this.#changeTracker.inspect(
+          snapshot.worktreePath ?? snapshot.workspacePath,
+          snapshot.workspaceBaseline,
+          [],
+        ),
         activeSecrets,
       ),
     );
+  }
+
+  private async inspectCompleteDiff(snapshot: TaskMetadata): Promise<TuiCompleteDiff> {
+    return this.withActiveSecrets(async (activeSecrets) => {
+      const executionPath = snapshot.worktreePath ?? snapshot.workspacePath;
+      const raw = await this.#changeTracker.inspect(executionPath, snapshot.workspaceBaseline, []);
+      const changes = sanitizeWorkspaceChanges(raw, activeSecrets);
+      const untracked = await buildUntrackedReview(executionPath, raw.untracked, activeSecrets);
+      return {
+        changes,
+        text: [changes.patchText, untracked.text].filter((value) => value.length > 0).join("\n"),
+        untrackedFingerprint: untracked.fingerprint,
+        complete: untracked.complete,
+      };
+    });
   }
 
   private validateCurrent(): void {
@@ -729,7 +989,7 @@ export class InteractiveTui {
         activeSecrets,
         result: await this.#validator!.run(
           snapshot.validator!,
-          snapshot.workspacePath,
+          snapshot.worktreePath ?? snapshot.workspacePath,
           abort.signal,
           activeSecrets,
         ),
@@ -804,16 +1064,19 @@ export class InteractiveTui {
     callback: (activeSecrets: readonly string[]) => Promise<T>,
   ): Promise<T> {
     if (this.#activeSecretsProvider !== undefined) return callback(this.#activeSecretsProvider());
-    let lease: ReturnType<typeof resolveCredential>;
-    try {
-      lease = resolveCredential("deepseek");
-    } catch {
-      lease = undefined;
+    const leases: NonNullable<ReturnType<typeof resolveCredential>>[] = [];
+    for (const provider of ["deepseek", "minimax-cn"] as const) {
+      try {
+        const lease = resolveCredential(provider);
+        if (lease !== undefined) leases.push(lease);
+      } catch {
+        // Presence is optional; the provider path reports needs_credentials when used.
+      }
     }
     try {
-      return await callback(lease === undefined ? [] : [lease.value]);
+      return await callback(leases.map((lease) => lease.value));
     } finally {
-      lease?.release();
+      for (const lease of leases) lease.release();
     }
   }
 
@@ -873,7 +1136,10 @@ export class InteractiveTui {
       const prompt =
         explicitPrompt ??
         this.#prompts.get(taskId) ??
-        (await this.#engine.recoverPrompt?.(taskId, taskSnapshot.workspacePath));
+        (await this.#engine.recoverPrompt?.(
+          taskId,
+          taskSnapshot.worktreePath ?? taskSnapshot.workspacePath,
+        ));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       if (explicitPrompt !== undefined) {
         this.#prompts.set(taskId, explicitPrompt);
@@ -895,7 +1161,7 @@ export class InteractiveTui {
           taskId,
           prompt,
           model: taskSnapshot.model,
-          cwd: taskSnapshot.workspacePath,
+          cwd: taskSnapshot.worktreePath ?? taskSnapshot.workspacePath,
           approvalProfile: taskSnapshot.approvalProfile,
           ...(taskSnapshot.approvalProfile === "auto"
             ? {
@@ -1026,8 +1292,9 @@ export class InteractiveTui {
     for (const task of this.#store.list()) {
       const current = task.taskId === this.#currentTaskId ? "*" : " ";
       const validator = this.validatorStatus(task);
+      const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
       this.write(
-        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tvalidator=${validator}\n`,
+        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\tvalidator=${validator}\n`,
       );
     }
   }
@@ -1174,6 +1441,90 @@ function formatPaths(paths: readonly string[]): string {
   return paths.length === 0 ? "(none)" : paths.join(", ");
 }
 
+function sanitizeWorkspaceChanges(
+  changes: WorkspaceChangeSnapshot,
+  activeSecrets: readonly string[],
+): WorkspaceChangeSnapshot {
+  return {
+    ...changes,
+    tracked: changes.tracked.map((value) => redactSensitive(value, activeSecrets)),
+    untracked: changes.untracked.map((value) => redactSensitive(value, activeSecrets)),
+    patchText: redactSensitive(changes.patchText, activeSecrets),
+  };
+}
+
+async function buildUntrackedReview(
+  workspace: string,
+  paths: readonly string[],
+  activeSecrets: readonly string[],
+): Promise<{
+  readonly text: string;
+  readonly fingerprint: string;
+  readonly complete: boolean;
+}> {
+  const canonicalWorkspace = await realpath(workspace);
+  const fingerprint = createHash("sha256");
+  const sections: string[] = [];
+  let complete = true;
+  for (const requested of paths) {
+    assertSafeDiffPath(requested);
+    const absolute = path.resolve(workspace, requested);
+    const source = await lstat(absolute);
+    if (source.isSymbolicLink() || !source.isFile())
+      throw new Error("Untracked review requires a regular non-symbolic file.");
+    const canonical = await realpath(absolute);
+    if (!isPathInside(canonicalWorkspace, canonical))
+      throw new Error("Untracked review path escapes the Task Workspace.");
+    const content = await readFile(canonical);
+    fingerprint.update(
+      Buffer.from(`${Buffer.byteLength(requested, "utf8")}\0${requested}\0${content.length}\0`),
+    );
+    fingerprint.update(content);
+    const safePath = redactSensitive(requested, activeSecrets);
+    let text: string | undefined;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+    } catch {
+      text = undefined;
+    }
+    if (text === undefined) {
+      complete = false;
+      sections.push(`new binary file: ${safePath} (${content.length} bytes)`);
+      continue;
+    }
+    const lines = redactSensitive(text, activeSecrets).split(/\r?\n/u);
+    if (text.endsWith("\n") && lines.at(-1) === "") lines.pop();
+    const added = lines.map((line) => `+${line}`).join("\n");
+    sections.push(
+      [
+        `diff --git a/${safePath} b/${safePath}`,
+        "new file",
+        "--- /dev/null",
+        `+++ b/${safePath}`,
+        added,
+      ].join("\n"),
+    );
+  }
+  return { text: sections.join("\n"), fingerprint: fingerprint.digest("hex"), complete };
+}
+
+function sameWorkspaceChanges(
+  left: WorkspaceChangeSnapshot,
+  right: WorkspaceChangeSnapshot,
+): boolean {
+  return (
+    left.available === right.available &&
+    left.patchTruncated === right.patchTruncated &&
+    left.patchText === right.patchText &&
+    samePathList(left.tracked, right.tracked) &&
+    samePathList(left.untracked, right.untracked)
+  );
+}
+
+function samePathList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function extractRemovedPaths(patchText: string): readonly string[] {
   const removed: string[] = [];
   for (const section of patchText.split(/(?=^diff --git )/gmu)) {
@@ -1248,9 +1599,10 @@ function redactSensitive(value: string, activeSecrets: readonly string[]): strin
 
 function safeError(error: unknown): string {
   if (error instanceof ProviderContractError) return safeProviderError(error);
+  if (error instanceof ApplyChangesBlockedError) return error.message;
   if (
     error instanceof Error &&
-    /credentials|cancelled|unavailable|attachment|image|workspace|symbolic|MIME|video|model|active turn|queued/iu.test(
+    /credentials|cancelled|unavailable|attachment|image|workspace|worktree|review|completed|ownership|applied|symbolic|MIME|video|model|active turn|queued/iu.test(
       error.message,
     )
   )

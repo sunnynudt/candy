@@ -17,6 +17,17 @@ npm ci --ignore-scripts
 npm run check
 ```
 
+## Personal Preview TUI
+
+On the current macOS host, launch the source checkout with:
+
+```bash
+nvm use
+npm run tui
+```
+
+Candy reads only Candy-owned DeepSeek or MiniMax credentials from the operating-system credential store (or the documented temporary development environment). Select a workspace with `:workspace /absolute/path`, choose `:profile auto` to allow file edits, and enter a prompt. Auto tasks in a Git repository execute in a Candy-owned Task Worktree; use `:changes` and the full `:diff` before the explicit `:apply`, or use `:discard` to leave the Local Workspace unchanged. Shell remains disabled until its native security gate passes.
+
 Windows development-machine setup, native prerequisites, and executable audit instructions are in [`docs/development/windows-11-toolchain.md`](docs/development/windows-11-toolchain.md).
 
 Product scope is defined in `docs/product/candy-v1.md`. Implementation order and evidence requirements are defined in `docs/architecture/implementation-plan-v1.md` and `docs/product/acceptance-v1.md`.

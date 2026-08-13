@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,6 +34,32 @@ async function waitForOutput(terminal: FakeTerminal, pattern: RegExp): Promise<s
     });
   }
   return terminal.writes.join("");
+}
+
+function runGit(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+async function createTuiGitFixture(root: string): Promise<string> {
+  const repository = path.join(root, "repository");
+  await mkdir(repository);
+  runGit(repository, ["init", "-q"]);
+  await writeFile(path.join(repository, "README.md"), "base\n");
+  runGit(repository, ["add", "README.md"]);
+  runGit(repository, [
+    "-c",
+    "user.name=Candy Fixture",
+    "-c",
+    "user.email=candy-fixture@example.invalid",
+    "commit",
+    "-qm",
+    "base",
+  ]);
+  return repository;
 }
 
 test("interactive TUI creates a queued task, runs it, and reports completion", async () => {
@@ -556,6 +593,120 @@ test("interactive TUI reviews non-Git changed files and bounded diff without mut
   }
 });
 
+test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed Apply", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-apply-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "changed in task\n");
+      await writeFile(path.join(input.cwd, "new.txt"), "created in task\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput("edit in isolation");
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /Task Worktree:/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    assert.ok(executionPath?.startsWith(resolveAppPaths(appDataRoot).worktrees));
+    assert.notEqual(executionPath, repository);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(path.join(repository, "new.txt")), false);
+
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /apply blocked: Review the complete current change list/u);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`changed files: ${taskId}`, "u"));
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /\+changed in task/u);
+    await waitForOutput(terminal, /\+created in task/u);
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed in task\n");
+    assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "created in task\n");
+    assert.equal(existsSync(executionPath!), false);
+    assert.equal(runGit(repository, ["diff", "--cached", "--quiet"]), "");
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(store.get(taskId)?.worktreePath, undefined);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI explicitly discards a completed Task Worktree without touching Local", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-discard-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "discard me\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput("edit then discard");
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /Task Worktree:/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`discarded ${taskId}`, "u"));
+
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(executionPath!), false);
+    assert.equal(runGit(repository, ["status", "--porcelain"]), "");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI reviews Git tracked, untracked, removed files and filters diff paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-git-"));
   const terminal = new FakeTerminal();
@@ -708,11 +859,17 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
     terminal.emitInput("\r");
     terminal.emitInput(`run ${mode}`);
     terminal.emitInput("\r");
-    const created = await waitForOutput(terminal, /created (task-[a-z0-9]+)/u);
-    const taskId = [...created.matchAll(/created (task-[a-z0-9]+)/gu)].at(-1)?.[1];
+    let taskId: string | undefined;
+    for (let attempt = 0; attempt < 500 && taskId === undefined; attempt += 1) {
+      const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)];
+      taskId = matches
+        .map((match) => match[1])
+        .find((candidate) => candidate !== undefined && !taskIds.includes(candidate));
+      if (taskId === undefined) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
     assert.ok(taskId);
     taskIds.push(taskId);
-    await waitForOutput(terminal, /completed/u);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
     terminal.emitInput(":validate");
     terminal.emitInput("\r");
     await waitForOutput(terminal, expected);
@@ -744,12 +901,13 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
     const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     assert.equal(store.list().length, taskIds.length);
     assert.ok(store.list().every((task) => task.validator?.executable === process.execPath));
+    const evidenceSummaries = store.list().map((task) => ({
+      taskId: task.taskId,
+      summary: store.getRun(task.taskId)?.evidenceSummary,
+    }));
     assert.ok(
-      store
-        .list()
-        .some(
-          (task) => store.getRun(task.taskId)?.evidenceSummary === "validator failed [REDACTED]",
-        ),
+      evidenceSummaries.some(({ summary }) => summary === "validator failed [REDACTED]"),
+      JSON.stringify(evidenceSummaries),
     );
     assert.doesNotMatch(terminal.writes.join(""), /fixture-secret/u);
     store.close();
