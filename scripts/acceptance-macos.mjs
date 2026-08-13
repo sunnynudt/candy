@@ -115,7 +115,7 @@ const report = [
   acceptanceMode === "baseline"
     ? "- Current macOS Tahoe 26.x primary acceptance evidence (run npm run acceptance:macos)."
     : `- Exact macOS ${baselineMacosVersion} Apple Silicon regression evidence (run npm run acceptance:macos:baseline when that host is available).`,
-  "- Approved live DeepSeek and MiniMax Token Plan credentials and their required matrices.",
+  "- Live DeepSeek and MiniMax provider matrices are tracked separately and are not rerun by this deterministic command.",
   "- macOS native containment security review; Shell and Auto Debug remain gated.",
   "- Apple signing/notarization and complete packaged Browser adversarial/input-origin evidence.",
   "- User cancellation to a real Provider stream-stop request remains Blocked because the deterministic measurement uses no Provider stream.",

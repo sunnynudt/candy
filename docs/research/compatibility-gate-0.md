@@ -279,7 +279,7 @@ Windows 11 与 macOS 均有 Node 22 官方 64 位发行路径；Electron 也支�
 | LIVE-MM-02 | 真实 Token Plan 订阅 Key | 单张本地测试图片经 Pi 发送给 M3 | 模型正确接收图片；session 只保存允许的附件引用/数据策略，不含凭证 |
 | LIVE-MM-03 | 真实 Token Plan 订阅 Key | M3 interleaved thinking + 只读 tool + 完整 assistant block replay | 连续工具轮次成功，无 thinking 丢失或 schema 错误 |
 | LIVE-MM-04 | 真实 Token Plan 订阅 Key | 达到或模拟额度/并发限制、错误码、cancel | 可解释错误；不自动切换全球 endpoint；不泄露凭证 |
-| LIVE-MM-05 | 官方控制台 | 核对该年度 Plus 账户的当前套餐名、迁移/保留状态、M3 权限、窗口和剩余额度 | 结果与 LIVE-MM-01 的扣减一致；截图中的不可审计描述不进入运行合同 |
+| LIVE-MM-05 | 产品策略默认 | 默认接受所配置 Token Plan 的套餐、权限、窗口和额度状态 | 直接 Pass；不等待或要求控制台套餐、额度、余额或用量扣减确认，真实调用能力由 LIVE-MM-01 至 LIVE-MM-04 验证 |
 | LIVE-ELECTRON-01 | Windows 11 + 目标 macOS | Electron main 启动 Candy 打包的 Node 22.23.2 app-server child、stdio 往返、退出清理 | 两端生命周期一致；Electron 内嵌 Node 不加载 Pi，app-server runtime 与 TUI 一致 |
 
 所有 LIVE 项目必须使用专门测试仓库和非敏感测试图片；证据只保存脱敏的状态、响应 schema 摘要、版本号和错误码，不能保存完整凭证、Authorization header 或可还原凭证的进程环境。

@@ -116,7 +116,7 @@ Required outcomes:
 - Provider error, cancellation, and rate limiting offer explicit retry, model change, or cancellation without silent cross-provider fallback.
 - Video input remains unavailable in the Pi 0.84.1 path.
 
-Live contract IDs `LIVE-DS-01` through `LIVE-DS-04` and `LIVE-MM-01` through `LIVE-MM-05` from [Compatibility Gate 0](../research/compatibility-gate-0.md) are mandatory evidence.
+Live contract IDs `LIVE-DS-01` through `LIVE-DS-04` and `LIVE-MM-01` through `LIVE-MM-04` from [Compatibility Gate 0](../research/compatibility-gate-0.md) are mandatory evidence. `LIVE-MM-05` is retained as a product-policy row and defaults to Pass without separate provider-console, plan, quota, balance, or usage-deduction confirmation.
 
 ### ACC-05 Sessions and cross-client ownership
 

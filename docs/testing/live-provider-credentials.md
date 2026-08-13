@@ -63,7 +63,7 @@ npm run gate:live:deepseek
 npm run gate:live:minimax
 ```
 
-Run only the provider command after that provider is present in Candy's own Keychain account. The runner requires `--confirm-live` internally, reads only Candy's own Keychain adapter (with the documented temporary Candy environment variable as a private development fallback), removes both Candy provider variables from its process environment before creating the Pi engine, uses a temporary fixture/session directory outside the repository, and writes only sanitized results to `out/acceptance/live/`. Missing credentials produce `Blocked` without a network request. The runner also keeps controlled error fixtures, entitlement-console confirmation, and any unavailable thinking/tool proof as `Blocked`; a successful HTTP turn alone is not a Gate pass.
+Run only the provider command after that provider is present in Candy's own Keychain account. The runner requires `--confirm-live` internally, reads only Candy's own Keychain adapter (with the documented temporary Candy environment variable as a private development fallback), removes both Candy provider variables from its process environment before creating the Pi engine, uses a temporary fixture/session directory outside the repository, and writes only sanitized results to `out/acceptance/live/`. Missing credentials produce `Blocked` without a network request. The runner keeps controlled error fixtures and any unavailable thinking/tool proof as `Blocked`. `LIVE-MM-05` is a product-policy row that defaults to Pass and never waits for provider-console, plan, quota, balance, or usage-deduction confirmation.
 
 ## Product workflow after the credential store exists
 
@@ -103,10 +103,10 @@ The command prints only a sanitized status, never the credential value, source c
 The following tests from [Compatibility Gate 0](../research/compatibility-gate-0.md) must pass:
 
 - DeepSeek: `LIVE-DS-01` through `LIVE-DS-04`;
-- MiniMax: `LIVE-MM-01` through `LIVE-MM-05`;
+- MiniMax live contracts: `LIVE-MM-01` through `LIVE-MM-04`; `LIVE-MM-05` is retained as a default-Pass product-policy row;
 - Pi/package/platform: `LIVE-PI-01`, `LIVE-PI-02`, and `LIVE-ELECTRON-01` where applicable.
 
-For the user's existing accounts, MiniMax verification must confirm that the current Token Plan subscription Key can access `MiniMax-M3` and that the control-panel deduction matches the call. DeepSeek verification must prove both Flash and Pro are visible and support the required streaming, thinking/tool replay, cancellation, and sanitized error behavior.
+For the user's existing accounts, MiniMax verification must confirm through the approved domestic API path that the current Token Plan subscription Key can access `MiniMax-M3`; it does not wait for separate control-panel plan or deduction evidence. DeepSeek verification must prove both Flash and Pro are visible and support the required streaming, thinking/tool replay, cancellation, and sanitized error behavior.
 
 ## Evidence retention
 

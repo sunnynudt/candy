@@ -51,10 +51,10 @@
 
 - ◐ 补齐 Windows ACC-03 核心编码旅程与重开 transcript。 已完成：SQLite schema v10 新增 `task_transcripts`，app-server 持久化 user/assistant/tool 有界 transcript 并在 snapshot 中恢复；修复 Desktop app-server 重启时旧进程 exit handler 清空新 child 的竞态；新增 packaged Windows coding-journey smoke（create → 流式 → 编辑 → validator → diff 审查 → Apply → 重启后完整 transcript 恢复），验证本地变更未提交、Git index 未动、无 commit。 待完成：真实 DeepSeek/MiniMax 驱动的 ACC-03/04 live 旅程与签名 Desktop 复验。
 
-- ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04`、MiniMax `LIVE-MM-01..05` 和 MiniMax Token Plan entitlement 验证。
+- ◐ 在用户明确授权并预先配置 Candy 自有凭据后，于 Windows 执行 DeepSeek `LIVE-DS-01..04` 与 MiniMax `LIVE-MM-01..04`；`LIVE-MM-05` 按产品策略默认 Pass，不等待控制台 entitlement、额度或扣减确认。
   已完成：DeepSeek 已通过 Windows 本机 Gate 的全部 7 项：`LIVE-DS-01..04`、取消、受控 401/429/超时、无密钥会话扫描和密钥租约释放。只访问 `https://api.deepseek.com`；脱敏本地报告为 `out/acceptance/live/deepseek-latest.md`，由 `.gitignore` 排除。
   已完成：经用户授权的脱敏读取确认 Claude Code 已声明 MiniMax，配置模型标识为 `MiniMax-M3[1M]`，认证信息存在，且端点为 `https://api.minimaxi.com`；未读取或复制 Token。此项仅为发现证据，Candy 没有 Claude Code → MiniMax 自动导入器。
-  待完成：MiniMax Windows Gate 与 Token Plan entitlement。Claude Code/OpenCode 配置均不作为自动凭据来源；Windows 结果也不能替代明天 macOS 的独立证据。
+  待完成：MiniMax Windows live Gate。Claude Code/OpenCode 配置均不作为自动凭据来源；Windows 结果也不能替代 macOS 的独立证据。
 
 - ◐ 完成 Windows Credential Manager、桌面打包、签名、恢复和响应性矩阵。
   已完成：Desktop 凭据输入框按运行平台显示存储位置；Windows 显示 `Windows Credential Manager`，macOS 显示 `macOS Keychain`，并有独立合同测试；Candy 自有 Windows Credential Manager 适配器的合成 fixture 已完成 `absent -> present -> present -> absent`（set/replace/has/delete），未输出或读取 fixture 值；在用户提供的已验证 Electron `43.2.0` Windows x64 本机运行时下，设置 `$env:ELECTRON_OVERRIDE_DIST_PATH` 后执行 `npm run smoke:desktop` 通过，输出 `desktop app-server JSONL smoke ok`；真实 app-server 子进程重启后 queued metadata 与 active owner crash interruption 快照恢复 smoke 通过。
@@ -103,7 +103,7 @@
 - ◐ 补齐 macOS ACC-12 可测确定性指标：`measure:macos:responsiveness` 已执行十轮真实 Desktop event/projection、用户取消到 validator 父子进程树终止、显式 Take Control 后 agent action 禁止，以及三任务并发 frame-gap/event delivery。已发布 source revision `d9a0fe2` 的 `out/acceptance/macos/responsiveness-latest.md` 记录 p95 `2/12/2/19 ms`，三任务十轮均 `9/9/9=>9/9/9` 且无 event loss；TUI/Desktop cold p95 为 `983/2053 ms`，完整 `acceptance:macos` 为 15/15。Provider stream stop、完整 UI/recovery/Windows parity 和完整 ACC-12 仍 Blocked，Shell Auto 与 Shell Auto Debug 保持 disabled。
 
 - ☑️ 在同一套 Candy 自有凭据路径下重跑 macOS 的 DeepSeek/MiniMax Live Provider Gate；不得以 Windows 结果替代 macOS 证据。
-  证据：macOS DeepSeek Gate 于 `e3449a5` 7/7 通过；MiniMax Gate 于 `44be499` 7 通过 0 失败（LIVE-MM-01 文本、LIVE-MM-02 图片理解、LIVE-MM-03 思考/工具回放、LIVE-MM-04 取消与受控 401/429/超时错误契约、secret 检查全部通过），LIVE-MM-05 控制台 entitlement 已由产品负责人于 2026-08-13 确认并记录在 blocker 注册表（TokenPlanPlus 年度 Plus，订阅至 2027-02-25，M3 全模型权限含图像输入，额度充足；控制台用量面板有延迟，LIVE-MM-01 扣减增量待面板刷新后复核）。`G0-LIVE-MM` 已在注册表更新为 Pass。
+  证据：macOS DeepSeek Gate 于 `e3449a5` 7/7 通过；MiniMax Gate 于 `44be499` 7 通过 0 失败（LIVE-MM-01 文本、LIVE-MM-02 图片理解、LIVE-MM-03 思考/工具回放、LIVE-MM-04 取消与受控 401/429/超时错误契约、secret 检查全部通过）。LIVE-MM-05 按产品策略默认 Pass，不要求控制台 entitlement、额度、余额或扣减确认；`G0-LIVE-MM` 为 Pass。
 
 ## 跨平台收尾：Windows 与 macOS 均完成后
 

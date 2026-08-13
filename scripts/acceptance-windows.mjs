@@ -83,7 +83,7 @@ const report = [
   "- Full Windows Credential Manager lifecycle for the already-present DeepSeek account; the synthetic empty MiniMax account was tested and real credentials were not changed.",
   "- Windows G2 OS-level no-network and arbitrary-command workspace containment, runtime reparse/race prevention, packaging, and independent security review. Shell Auto and Shell Auto Debug remain disabled.",
   "- Browser Workspace physical input-origin evidence, broader hostile-page coverage, and complete Browser/ACC-09/ACC-12 acceptance; the deterministic authorization, observation, action, Take Control, download, redirect, popup, permission, and selector-boundary fixture is recorded separately.",
-  "- Remaining ACC-01..12 Windows journeys, complete ACC-12 metrics, live MiniMax/Token Plan entitlement, Windows signing identity, and product-owner acceptance.",
+  "- Remaining ACC-01..12 Windows journeys, complete ACC-12 metrics, the live Windows MiniMax provider matrix, Windows signing identity, and product-owner acceptance.",
   "",
 ].join("\n");
 

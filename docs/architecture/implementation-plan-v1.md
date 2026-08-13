@@ -103,7 +103,7 @@ Work packets:
 
 1. Implement the code-owned model catalog and per-provider concurrency/rate-limit gates.
 2. Add `deepseek-v4-pro` through the same verified Chat Completions path without silent fallback.
-3. Add Pi provider `minimax-cn` with model `MiniMax-M3` through `https://api.minimaxi.com/anthropic/v1/messages` only after Token Plan entitlement, image schema, thinking/tool replay, and cancellation pass live verification.
+3. Add Pi provider `minimax-cn` with model `MiniMax-M3` through `https://api.minimaxi.com/anthropic/v1/messages` after image schema, thinking/tool replay, cancellation, and controlled provider errors pass live verification; no separate provider-console entitlement confirmation is required.
 4. Add attachment ingestion, content hashing, metadata, storage outside session JSONL, and retention cleanup.
 5. Add between-turn model switching and an explicit switch prompt when an attachment is incompatible with the selected model.
 
