@@ -24,12 +24,20 @@ const lockfileDigest = createHash("sha256")
   .digest("hex");
 const macosVersion = runCapture("/usr/bin/sw_vers", ["-productVersion"]);
 const architecture = runCapture("/usr/bin/uname", ["-m"]);
-if (macosVersion !== requiredMacosVersion || architecture !== "arm64") {
-  throw new Error(
-    `macOS acceptance requires ${requiredMacosVersion} on arm64; received ${macosVersion} on ${architecture}.`,
-  );
-}
 const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
+if (macosVersion !== requiredMacosVersion || architecture !== "arm64") {
+  const reason = `macOS acceptance requires ${requiredMacosVersion} on arm64; received ${macosVersion} on ${architecture}.`;
+  await writeBlockedReport({
+    startedAt,
+    revision,
+    lockfileDigest,
+    macosVersion,
+    architecture,
+    cleanWorktree,
+    reason,
+  });
+  throw new Error(reason);
+}
 const steps = [
   "check:toolchain",
   "check",
@@ -138,4 +146,46 @@ function runCapture(command, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+async function writeBlockedReport({
+  startedAt,
+  revision,
+  lockfileDigest,
+  macosVersion,
+  architecture,
+  cleanWorktree,
+  reason,
+}) {
+  const finishedAt = new Date();
+  const report = [
+    "# Candy macOS Apple Silicon Acceptance Run",
+    "",
+    `- Started: ${startedAt.toISOString()}`,
+    `- Finished: ${finishedAt.toISOString()}`,
+    `- Source revision: \`${revision}\``,
+    `- Lockfile SHA-256: \`${lockfileDigest}\``,
+    `- macOS product version: \`${macosVersion}\``,
+    `- Architecture: \`${architecture}\``,
+    `- Node: \`${process.version}\``,
+    `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
+    "",
+    `This acceptance run is Blocked before execution because the required macOS ${requiredMacosVersion} arm64 host is unavailable. No acceptance step ran and no Pass or Fail result was produced for ENV-MAC.`,
+    "",
+    "Summary: 0 passed, 0 failed, 1 blocked.",
+    "",
+    "| Step | Status | Duration |",
+    "| --- | --- | ---: |",
+    "| macOS target preflight | Blocked | 0 ms |",
+    "",
+    "## Blocker",
+    "",
+    `- ${reason}`,
+    "- The report is current-HEAD preflight evidence only; it is not macOS acceptance evidence.",
+    "",
+  ].join("\n");
+  await mkdir(acceptanceRoot, { recursive: true });
+  const reportPath = path.join(acceptanceRoot, "latest.md");
+  await writeFile(reportPath, report, "utf8");
+  console.error(`macOS acceptance report: ${path.relative(root, reportPath)} (Blocked preflight)`);
 }
