@@ -334,6 +334,12 @@ test("interactive TUI restores a task and its transcript before continuing after
     secondTerminal.emitInput("continue from the saved context");
     secondTerminal.emitInput("\r");
     await waitForOutput(secondTerminal, /second persisted answer/u);
+    secondTerminal.emitInput(":transcript");
+    secondTerminal.emitInput("\r");
+    const transcriptOutput = await waitForOutput(
+      secondTerminal,
+      /transcript task-[^\n]+\nuser: persist this context[\s\S]*second persisted answer/u,
+    );
     secondTerminal.emitInput(":quit");
     secondTerminal.emitInput("\r");
     await secondRun;
@@ -341,6 +347,10 @@ test("interactive TUI restores a task and its transcript before continuing after
     assert.deepEqual(secondTurns, [
       { taskId: task.taskId, prompt: "continue from the saved context" },
     ]);
+    assert.match(transcriptOutput, /user: persist this context/u);
+    assert.match(transcriptOutput, /assistant: first persisted answer/u);
+    assert.match(transcriptOutput, /user: continue from the saved context/u);
+    assert.match(transcriptOutput, /assistant: second persisted answer/u);
     const after = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     assert.deepEqual(after.transcript(task.taskId), [
       { role: "user", text: "persist this context" },

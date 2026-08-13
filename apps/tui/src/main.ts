@@ -139,6 +139,7 @@ interface TuiValidatorState {
 }
 
 const MAX_TUI_DIFF_BYTES = 64 * 1024;
+const MAX_TUI_TRANSCRIPT_BYTES = 64 * 1024;
 const DEFAULT_VALIDATOR_TIMEOUT_MS = 30_000;
 
 export class InteractiveTui {
@@ -229,7 +230,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :use <task-id>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
     this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -265,6 +266,8 @@ export class InteractiveTui {
       this.newTask(trimmed.slice(4).trim());
     } else if (trimmed.startsWith(":use ")) {
       this.useTask(trimmed.slice(5).trim());
+    } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
+      this.showTranscript(trimmed.slice(11).trim());
     } else if (trimmed === ":model" || trimmed.startsWith(":model ")) {
       this.configureModel(trimmed.slice(6).trim());
     } else if (trimmed === ":attach" || trimmed.startsWith(":attach ")) {
@@ -813,6 +816,28 @@ export class InteractiveTui {
     this.write(`current task: ${taskId} (${snapshot.state})\n`);
   }
 
+  private showTranscript(requestedTaskId: string): void {
+    const taskId = requestedTaskId || this.#currentTaskId;
+    if (taskId === undefined) {
+      this.write("no current task; use :use <task-id> or create a task first\n");
+      return;
+    }
+    const transcript = this.#store.transcript(taskId);
+    if (transcript === undefined) {
+      this.write(`transcript unavailable for ${taskId}\n`);
+      return;
+    }
+    this.write(
+      truncateTuiTranscript(
+        [
+          `transcript ${taskId}`,
+          ...transcript.map((entry) => `${entry.role}: ${entry.text}`),
+          "",
+        ].join("\n"),
+      ),
+    );
+  }
+
   private async runTask(
     task: TaskController,
     revision: number,
@@ -1160,6 +1185,13 @@ function truncateTuiDiff(value: string): string {
   if (Buffer.byteLength(value, "utf8") <= MAX_TUI_DIFF_BYTES) return value;
   const notice = `\n[diff truncated at ${MAX_TUI_DIFF_BYTES} bytes]\n`;
   const contentLimit = MAX_TUI_DIFF_BYTES - Buffer.byteLength(notice, "utf8");
+  return `${Buffer.from(value, "utf8").subarray(0, contentLimit).toString("utf8")}${notice}`;
+}
+
+function truncateTuiTranscript(value: string): string {
+  if (Buffer.byteLength(value, "utf8") <= MAX_TUI_TRANSCRIPT_BYTES) return value;
+  const notice = `\n[transcript truncated at ${MAX_TUI_TRANSCRIPT_BYTES} bytes]\n`;
+  const contentLimit = MAX_TUI_TRANSCRIPT_BYTES - Buffer.byteLength(notice, "utf8");
   return `${Buffer.from(value, "utf8").subarray(0, contentLimit).toString("utf8")}${notice}`;
 }
 

@@ -80,6 +80,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Test-first TUI evidence covers the timeout classification, redacted output, recovery actions, and interrupted-task cancellation; the full repository gate is recorded after the checkpoint verification below.
 - The strict `acceptance:macos` runner was attempted against the current arm64 host but refused before running because the host reports macOS `26.6.1` while the accepted ENV-MAC baseline is `26.5.2`; no platform acceptance claim is made from that attempt.
 
+## 2026-08-13 TUI real-PTY Personal Preview checkpoint
+
+- Added the read-only `:transcript [task-id]` command so a restarted TUI can explicitly inspect the durable Candy transcript before continuing a task. It does not add a second session store or change task ownership.
+- Added `smoke:tui:journey:macos`: an Expect-backed real PTY launches the actual `ProcessTerminal`/`TuiAltScreen`, uses a temporary Git workspace/TMPDIR/Candy app-data root, runs the Candy workspace tools through a deterministic MiniMax image fixture, covers two same-task turns, deny/approve deletion, changed-file/diff review, an explicit native validator, quit/restart, and restored task state.
+- The journey asserts workspace-external sentinel preservation, unchanged Git HEAD/index/commit count, persisted transcript/tool results/model/attachment/validator state, no credential-shaped or synthetic-canary evidence, and alternate-screen/cursor restoration. It is included in the macOS acceptance step list.
+- Current host evidence: macOS `26.6.1` arm64, deterministic fixture, validator pass, transcript/model/attachment/task recovery pass. This is real-terminal evidence on the current host only; the required macOS `26.5.2` baseline, live-provider journey, Windows terminal, G2, and final V1 acceptance remain separate.
+
 ## 2026-08-12 WP3 native-process boundary checkpoint
 
 - `@candy/runtime` now exposes only the platform-neutral `CommandRunner` port and common `CommandValidator` for command-validator execution. The validator retains the existing bounded, active-secret-redacted evidence and cancellation result contract.

@@ -42,6 +42,7 @@
     "lint": "eslint apps packages scripts",
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
+    "smoke:tui:journey:macos": "npm run build && node scripts/smoke-tui-journey-macos.mjs",
     "smoke:runtime-session-remap": "npm run build && node scripts/smoke-runtime-session-remap.mjs",
     "smoke:recovery:macos": "npm run build && node scripts/smoke-recovery-macos.mjs",
     "smoke:app-server": "npm run build && node scripts/smoke-app-server.mjs",

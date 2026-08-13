@@ -1,0 +1,113 @@
+log_user 0
+set timeout 30
+log_file -a $env(CANDY_JOURNEY_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "TUI PTY journey failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+cd $env(CANDY_JOURNEY_WORKSPACE)
+spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
+wait_for {Candy TUI} "TUI startup"
+
+send_command ":profile auto"
+wait_for {profile auto: file read/create/edit enabled;} "Auto profile"
+wait_for {delete requires confirmation;} "delete approval profile"
+wait_for {Shell disabled} "Shell disabled profile"
+send_command ":model minimax-m3"
+wait_for {model selected: MiniMax-M3} "MiniMax model"
+send_command ":attach $env(CANDY_JOURNEY_IMAGE)"
+expect {
+  -re {attachment staged:} { set attachment_id $env(CANDY_JOURNEY_EXPECTED_ATTACHMENT) }
+  timeout { fail "timed out waiting for image attachment" }
+  eof { fail "TUI exited while waiting for image attachment" }
+}
+
+send_command ":validator /usr/bin/true"
+wait_for {validator configured for new tasks: /usr/bin/true} "validator configuration"
+
+send_command "inspect and repair the fixture"
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for task creation" }
+  eof { fail "TUI exited while waiting for task creation" }
+}
+wait_for {\[tool candy_list\]} "list tool"
+wait_for {\[tool candy_read\]} "read tool"
+wait_for {\[tool candy_search\]} "search tool"
+wait_for {\[tool candy_write\]} "create tool"
+wait_for {\[tool candy_edit\]} "edit tool"
+wait_for {approval required: delete remove-deny\.txt} "denial approval"
+expect {
+  -re {:approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for denial approval id" }
+  eof { fail "TUI exited while waiting for denial approval id" }
+}
+send_command ":deny $deny_id"
+wait_for {deletion denied} "delete denial"
+wait_for "${task_id} completed" "first turn completion"
+
+send_command "repair the remaining fixture"
+wait_for "continuing ${task_id}" "same-task continuation"
+wait_for {approval required: delete remove-approve\.txt} "approval request"
+expect {
+  -re {:approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for approval id" }
+  eof { fail "TUI exited while waiting for approval id" }
+}
+send_command ":approve $approve_id"
+wait_for {deletion approved} "delete approval"
+wait_for "${task_id} completed" "second turn completion"
+
+send_command ":changes"
+wait_for "changed files: ${task_id}" "changed files"
+send_command ":diff src/value.ts"
+wait_for "diff ${task_id} src/value\\.ts" "diff"
+send_command ":validate"
+wait_for "validator running: ${task_id}" "validator start"
+expect {
+  -re {validator (pass|blocked):} { set validator_status $expect_out(1,string) }
+  timeout { fail "timed out waiting for validator result" }
+  eof { fail "TUI exited while waiting for validator result" }
+}
+
+send_command ":quit"
+expect eof
+
+spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
+wait_for {Candy TUI} "TUI restart"
+send_command ":use $task_id"
+wait_for "current task: ${task_id} \\(completed\\)" "task selection after restart"
+send_command ":transcript"
+wait_for {fixture turn 1} "first transcript entry"
+wait_for {fixture turn 2} "second transcript entry"
+send_command ":tasks"
+wait_for "${task_id} +completed +MiniMax-M3" "restored model and task state"
+send_command ":attachments"
+wait_for "attachments ${task_id}" "restored attachments"
+wait_for {image/png} "restored attachment metadata"
+send_command ":changes"
+wait_for "changed files: ${task_id}" "restored changed files"
+send_command ":diff src/value.ts"
+wait_for "diff ${task_id} src/value\\.ts" "restored diff"
+send_command ":quit"
+expect eof
+
+set result [open $env(CANDY_JOURNEY_RESULT) w]
+puts $result "task_id=$task_id"
+puts $result "attachment_id=$attachment_id"
+puts $result "validator_status=$validator_status"
+close $result

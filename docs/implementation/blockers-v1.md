@@ -149,6 +149,12 @@ Blocked external resources do not stop independent implementation. They do preve
 - The strict macOS acceptance runner did not produce a result on this host: it requires macOS `26.5.2` arm64 and stopped before executing steps after observing macOS `26.6.1` arm64. This is an environment mismatch, not a Pass/Fail result for ENV-MAC.
 - Real `26.5.2` terminal evidence, Windows terminal evidence, live-provider coding journeys, complete ACC-03/04/11, G2, signing, and final V1 acceptance remain open.
 
+## 2026-08-13 TUI real-PTY Personal Preview checkpoint
+
+- The deterministic Expect-backed macOS PTY journey passes on the current arm64 host: two turns on one task, Candy workspace list/search/read/create/edit/delete tools, per-delete deny/approve, MiniMax M3 PNG attachment, changed-file/diff review, explicit `/usr/bin/true` native validator, quit/restart transcript/task/model/attachment recovery, and terminal alternate-screen/cursor restoration.
+- The journey also proves no workspace-external sentinel change, no Git index/HEAD/commit mutation, no automatic push, and no credential-shaped or synthetic-canary material in PTY/app-data/diff evidence. Shell Auto and Shell Auto Debug remain disabled.
+- Evidence boundary: current host is macOS `26.6.1`, not the required `26.5.2` acceptance baseline. The PTY smoke is not a `26.5.2` acceptance Pass, does not establish Windows terminal behavior, live-provider coding, G2 OS containment, signed packaging, complete ACC-03/04/05/11, or final V1 acceptance.
+
 ## 2026-08-10 models, workspace transfer, and Desktop shell checkpoint
 
 - Deterministic model gate: schema 3 and protocol carry an explicit model id; DeepSeek Flash remains the default, DeepSeek Pro remains a distinct selection, and MiniMax M3 is explicit. The Pi M3 fixture proved domestic URL construction and typed image content; no live MiniMax entitlement or credential was used.

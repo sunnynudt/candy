@@ -42,6 +42,7 @@ const steps = [
   "smoke:safe-edit",
   "smoke:tui",
   "smoke:tui-task",
+  "smoke:tui:journey:macos",
   "smoke:app-server",
   "smoke:desktop",
   "smoke:desktop:packaged",
