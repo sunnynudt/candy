@@ -113,11 +113,16 @@ export class NativeProcessRunner {
       network: false,
       environment,
     });
-    if (
-      containsSandboxSecretMaterial(payload) ||
-      containsActiveSecretMaterialInRequest(request, environment, payload)
-    )
-      throw new Error("Provider credentials are forbidden in Sandbox Runner requests.");
+    const activeSecretLocation = activeSecretMaterialLocation(request, environment, payload);
+    const credentialShapedLocation = credentialShapedMaterialLocation(
+      request,
+      environment,
+      payload,
+    );
+    if (credentialShapedLocation !== undefined || activeSecretLocation !== undefined)
+      throw new Error(
+        `Sandbox Runner ${activeSecretLocation ?? credentialShapedLocation}: provider credentials forbidden.`,
+      );
 
     return new Promise((resolve, reject) => {
       const child = this.spawnProcess(this.runnerExecutable, [], {
@@ -389,25 +394,56 @@ function assertSafeProcessEnvironment(environment: Readonly<Record<string, strin
 }
 
 function containsSandboxSecretMaterial(value: string): boolean {
-  return /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(value);
+  return /(?:^|[^A-Za-z0-9])(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/iu.test(
+    value,
+  );
 }
 
-function containsActiveSecretMaterialInRequest(
+function activeSecretMaterialLocation(
   request: NativeProcessRequest,
   environment: NodeJS.ProcessEnv,
   payload: string,
-): boolean {
-  const values = [
-    request.executable,
-    ...request.args,
-    request.cwd,
-    request.workspace,
-    ...environmentEntries(request.environment ?? {}),
-    ...environmentEntries(environment),
-    payload,
+): string | undefined {
+  const values: readonly (readonly [string, string])[] = [
+    ["executable", request.executable],
+    ...request.args.map((value): readonly [string, string] => ["argument", value]),
+    ["cwd", request.cwd],
+    ["workspace", request.workspace],
+    ...environmentEntries(request.environment ?? {}).map((value): readonly [string, string] => [
+      "request environment",
+      value,
+    ]),
+    ...environmentEntries(environment).map((value): readonly [string, string] => [
+      "child environment",
+      value,
+    ]),
+    ["serialized payload", payload],
   ];
   const activeSecrets = request.activeSecrets ?? [];
-  return values.some((value) => containsActiveSecretMaterial(value, activeSecrets));
+  return values.find(([, value]) => containsActiveSecretMaterial(value, activeSecrets))?.[0];
+}
+
+function credentialShapedMaterialLocation(
+  request: NativeProcessRequest,
+  environment: NodeJS.ProcessEnv,
+  payload: string,
+): string | undefined {
+  const values: readonly (readonly [string, string])[] = [
+    ["executable", request.executable],
+    ...request.args.map((value): readonly [string, string] => ["argument", value]),
+    ["cwd", request.cwd],
+    ["workspace", request.workspace],
+    ...environmentEntries(request.environment ?? {}).map((value): readonly [string, string] => [
+      "request environment",
+      value,
+    ]),
+    ...environmentEntries(environment).map((value): readonly [string, string] => [
+      "child environment",
+      value,
+    ]),
+    ["serialized payload", payload],
+  ];
+  return values.find(([, value]) => containsSandboxSecretMaterial(value))?.[0];
 }
 
 function environmentEntries(environment: Readonly<Record<string, string | undefined>>): string[] {

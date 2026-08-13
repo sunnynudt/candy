@@ -82,9 +82,29 @@ wait_for "diff ${task_id} src/value\\.ts" "diff"
 send_command ":validate"
 wait_for "validator running: ${task_id}" "validator start"
 expect {
-  -re {validator (pass|blocked):} { set validator_status $expect_out(1,string) }
+  -re {validator (pass|blocked|fail|cancelled|timeout):([^\r\n]*)} {
+    set validator_status $expect_out(1,string)
+    if {$validator_status ne "pass" && $validator_status ne "blocked"} {
+      fail "validator returned $validator_status: [string trim $expect_out(2,string)]"
+    }
+  }
   timeout { fail "timed out waiting for validator result" }
   eof { fail "TUI exited while waiting for validator result" }
+}
+
+send_command ":changes"
+wait_for "changed files: ${task_id}" "post-validator changed files"
+send_command ":diff"
+wait_for {\+export const created = true;} "untracked file content"
+wait_for {\x1b\[\?2026l} "complete diff render"
+send_command ":apply"
+expect {
+  -re "applied ${task_id} to Local Workspace" {}
+  -re {apply blocked:([^\r\n]*)} {
+    fail "Apply was blocked: [string trim $expect_out(1,string)]"
+  }
+  timeout { fail "timed out waiting for Apply to Local Workspace" }
+  eof { fail "TUI exited while waiting for Apply to Local Workspace" }
 }
 
 send_command ":quit"

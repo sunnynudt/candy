@@ -98,12 +98,15 @@ fn response_for_line(line: &str) -> String {
         || request.executable.is_empty()
         || request.cwd.is_empty()
         || request.workspace.is_empty()
-        || !request
-            .environment
-            .keys()
-            .all(|key| is_safe_environment_key(key))
     {
         return error_response("invalid_message");
+    }
+    if !request
+        .environment
+        .keys()
+        .all(|key| is_safe_environment_key(key))
+    {
+        return error_response("secret_forbidden");
     }
     if request.network {
         return error_response("network_forbidden");
@@ -249,7 +252,7 @@ fn is_safe_environment_key(key: &str) -> bool {
         && key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-        && !contains_forbidden_secret_material(key)
+        && !contains_forbidden_environment_key(key)
 }
 
 #[cfg(target_os = "macos")]
@@ -268,6 +271,13 @@ fn is_safe_profile_path(path: &Path) -> bool {
 
 fn contains_forbidden_secret_material(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
+    ["bearer ", "sk-proj-", "sk-", "ds-", "minimax-"]
+        .iter()
+        .any(|prefix| contains_credential_prefix(&lower, prefix))
+}
+
+fn contains_forbidden_environment_key(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
     [
         "api_key",
         "api-key",
@@ -276,13 +286,28 @@ fn contains_forbidden_secret_material(value: &str) -> bool {
         "password",
         "secret",
         "token",
-        "bearer ",
-        "sk-",
-        "ds-",
-        "minimax-",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+        || contains_forbidden_secret_material(value)
+}
+
+fn contains_credential_prefix(value: &str, prefix: &str) -> bool {
+    value.match_indices(prefix).any(|(index, _)| {
+        let left_boundary = index == 0 || !value.as_bytes()[index - 1].is_ascii_alphanumeric();
+        if !left_boundary {
+            return false;
+        }
+        value.as_bytes()[index + prefix.len()..]
+            .iter()
+            .take_while(|byte| {
+                let byte = **byte;
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'.' | b'_' | b'~' | b'+' | b'/' | b'=' | b'-')
+            })
+            .count()
+            >= 16
+    })
 }
 
 #[cfg(windows)]
@@ -850,6 +875,15 @@ fn contains_reparse_tree(path: &Path) -> bool {
 mod tests {
     use super::{response_for_line, MAX_LINE_BYTES};
 
+    #[test]
+    fn distinguishes_task_worktree_ids_from_credential_values() {
+        let worktree = format!("/tmp/candy/worktrees/task-{}", "a".repeat(20));
+        let credential = format!("sk-{}", "x".repeat(16));
+        assert!(!super::contains_forbidden_secret_material(&worktree));
+        assert!(super::contains_forbidden_secret_material(&credential));
+        assert!(super::contains_forbidden_environment_key("CANDY_TOKEN"));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_profile_is_default_deny_and_scoped_to_validator_and_workspace() {
@@ -879,8 +913,9 @@ mod tests {
 
     #[test]
     fn rejects_secrets_without_echoing_input() {
-        let response =
-            response_for_line(r#"{"v":1,"environment":{"CANDY_TOKEN":"sk-fixture-secret"}}"#);
+        let response = response_for_line(
+            r#"{"v":1,"kind":"run","requestId":"fixture-request","executable":"/usr/bin/true","args":[],"cwd":"/tmp","workspace":"/tmp","network":false,"environment":{"CANDY_TOKEN":"fixture-value"}}"#,
+        );
         assert!(response.contains("secret_forbidden"));
         assert!(!response.contains("fixture"));
     }

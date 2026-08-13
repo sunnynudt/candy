@@ -748,8 +748,9 @@ export class InteractiveTui {
     const selected =
       completeDiff === undefined ? selectDiff(changes.patchText, requestedPath) : completeDiff.text;
     const bounded = truncateTuiDiff(selected);
+    const rendered = bounded || "(no diff)\n";
     this.write(
-      `diff ${snapshot.taskId}${requestedPath === "" ? "" : ` ${requestedPath}`}\n${bounded || "(no diff)\n"}`,
+      `diff ${snapshot.taskId}${requestedPath === "" ? "" : ` ${requestedPath}`}\n${rendered}${rendered.endsWith("\n") ? "" : "\n"}`,
     );
     if (changes.patchTruncated) this.write("[diff truncated by workspace tracker]\n");
     if (

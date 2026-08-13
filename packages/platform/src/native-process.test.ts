@@ -90,6 +90,48 @@ test("native runner rejects unsupported platforms and secret-bearing environment
   );
 });
 
+test("native runner allows Candy Task Worktree ids containing an internal sk- substring", async () => {
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: () => boolean;
+  };
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = (): boolean => false;
+  child.stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as { requestId: string };
+    child.stdout.end(
+      `${JSON.stringify({
+        v: 1,
+        kind: "completed",
+        requestId: request.requestId,
+        code: 0,
+        stdout: "",
+        stderr: "",
+        cancelled: false,
+      })}\n`,
+    );
+    child.stderr.end();
+    queueMicrotask(() => child.emit("close", 0, null));
+  });
+  let spawnCalled = false;
+  const worktree = `/tmp/candy/worktrees/task-${"a".repeat(20)}`;
+  const result = await new NativeProcessRunner("/opt/candy/candy-sandbox-runner", "darwin", () => {
+    spawnCalled = true;
+    return child;
+  }).run({
+    executable: "/usr/bin/true",
+    args: [],
+    cwd: worktree,
+    workspace: worktree,
+  });
+  assert.equal(spawnCalled, true);
+  assert.equal(result.code, 0);
+});
+
 test("native runner rejects an exact active secret in command arguments before spawn", () => {
   const canary = "plain-command-canary-0123456789";
   let spawnCalled = false;
