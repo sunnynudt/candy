@@ -2,6 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
+  type FileDeleteApprovalRequest,
   PI_COMPATIBILITY_VERSION,
   PiAgentEngine,
   type PiAgentEngineInput,
@@ -103,11 +104,16 @@ export class InteractiveTui {
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
   readonly #requestedStops = new Map<string, "paused" | "cancelled">();
+  readonly #deleteApprovals = new Map<
+    string,
+    { readonly taskId: string; readonly settle: (approved: boolean) => void }
+  >();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}`;
   #surface: CandyTuiSurface | undefined = undefined;
   #resolveExit: (() => void) | undefined = undefined;
   #closing = false;
+  #approvalProfile: "read-only" | "auto" = "read-only";
 
   public constructor(options: InteractiveTuiOptions = {}) {
     this.#appDataRoot = options.appDataRoot ?? resolveDefaultAppDataRoot();
@@ -133,8 +139,9 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :profile read-only|auto, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
+    this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
@@ -149,6 +156,7 @@ export class InteractiveTui {
           task.transition("interrupted", current.revision);
       }
       this.#store.markOwnerInterrupted(this.#ownerId);
+      for (const approval of this.#deleteApprovals.values()) approval.settle(false);
       for (const controller of this.#abortControllers.values()) controller.abort();
       await new Promise<void>((resolve) => setImmediate(resolve));
       this.#resolveExit = undefined;
@@ -164,6 +172,12 @@ export class InteractiveTui {
       this.requestExit();
     } else if (trimmed === ":tasks") {
       this.printTasks();
+    } else if (trimmed.startsWith(":profile ")) {
+      this.setProfile(trimmed.slice(9).trim());
+    } else if (trimmed.startsWith(":approve ")) {
+      this.resolveDeleteApproval(trimmed.slice(9).trim(), true);
+    } else if (trimmed.startsWith(":deny ")) {
+      this.resolveDeleteApproval(trimmed.slice(6).trim(), false);
     } else if (trimmed.startsWith(":prioritize ")) {
       this.prioritize(trimmed.slice(12).trim());
     } else if (trimmed.startsWith(":pause ")) {
@@ -189,8 +203,8 @@ export class InteractiveTui {
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
-    const metadata = this.#store.create(taskId, "read-only", queueOrder);
-    const controller = new TaskController(taskId, "read-only", this.#store);
+    const metadata = this.#store.create(taskId, this.#approvalProfile, queueOrder);
+    const controller = new TaskController(taskId, this.#approvalProfile, this.#store);
     this.#controllers.set(taskId, controller);
     this.#prompts.set(taskId, prompt);
     this.#scheduler.enqueue(taskId);
@@ -226,7 +240,13 @@ export class InteractiveTui {
           prompt,
           model: "deepseek-v4-flash",
           cwd: process.cwd(),
-          approvalProfile: "read-only",
+          approvalProfile: task.snapshot().approvalProfile,
+          ...(task.snapshot().approvalProfile === "auto"
+            ? {
+                fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
+                  this.requestFileDeleteApproval(taskId, request, signal),
+              }
+            : {}),
         },
         abort.signal,
       )) {
@@ -317,6 +337,54 @@ export class InteractiveTui {
   private printTasks(): void {
     for (const task of this.#store.list())
       this.write(`${task.taskId}\t${task.state}\tr${task.revision}\tq${task.queueOrder ?? "-"}\n`);
+  }
+
+  private setProfile(value: string): void {
+    if (value !== "read-only" && value !== "auto") {
+      this.write("profile must be read-only or auto\n");
+      return;
+    }
+    this.#approvalProfile = value;
+    this.write(
+      value === "auto"
+        ? "profile auto: file read/create/edit enabled; delete requires confirmation; Shell disabled\n"
+        : "profile read-only: file mutation disabled\n",
+    );
+  }
+
+  private requestFileDeleteApproval(
+    taskId: string,
+    request: FileDeleteApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    const approvalId = `delete-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (approved: boolean): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", denyOnAbort);
+        this.#deleteApprovals.delete(approvalId);
+        resolve(approved);
+      };
+      const denyOnAbort = (): void => settle(false);
+      this.#deleteApprovals.set(approvalId, { taskId, settle });
+      signal.addEventListener("abort", denyOnAbort, { once: true });
+      this.write(
+        `\napproval required: delete ${request.path}\n:approve ${approvalId} or :deny ${approvalId}\n`,
+      );
+    });
+  }
+
+  private resolveDeleteApproval(approvalId: string, approved: boolean): void {
+    const approval = this.#deleteApprovals.get(approvalId);
+    if (approval === undefined) {
+      this.write(`${approvalId} is not awaiting deletion approval\n`);
+      return;
+    }
+    approval.settle(approved);
+    this.write(`${approval.taskId} deletion ${approved ? "approved" : "denied"}\n`);
   }
 
   private write(value: string): void {

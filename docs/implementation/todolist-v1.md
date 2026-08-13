@@ -71,6 +71,8 @@
 
 ## macOS 白天主动队列：macOS `26.5.2` Apple Silicon
 
+- ☑️ TUI 文件增删改查已接入：启动仍为 Read-only，`:profile auto` 为后续任务开放 `candy_read`、`candy_edit`、`candy_write` 与 `candy_delete`；删除逐次要求 `:approve <id>` / `:deny <id>`，并拒绝越界、symlink、目录、控制字符路径和审批期间目标变化。固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 139/139、native check 与两个 TUI smoke 通过。此项不包含 Shell、validator、diff UI、模型/图片选择或完整 ACC-03。
+
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
 - ◐ 在 Worktree 基线恢复后，已发布提交 `261bb346f12b6c28288a292db5bf77e26d531127` 的工具链、Runtime/session-remap、TUI、Desktop App Server、Worktree/Apply、源 app-server 恢复、packaged Node/app-server 恢复、packaged Browser adversarial 子集和 ACC-12 cold-start 子集确定性 smoke 通过；干净 macOS acceptance 为 14/14，TUI p95 `878 ms`、Desktop p95 `1693 ms`，报告 source revision 为该提交。恢复证据覆盖 queued 元数据、owner interruption、`crash_interrupted` 快照和 macOS validator 后代清理；ACC-12 其余指标、物理输入归属、完整 UI/跨客户端恢复、完整 Browser 矩阵、签名和完整 macOS 接受矩阵仍待完成。

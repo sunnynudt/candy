@@ -112,6 +112,12 @@ Blocked external resources do not stop independent implementation. They do preve
 - The injected deterministic TUI test and the 44-test local suite pass under Node `22.23.2`; no live credential was read or requested.
 - The full interactive TUI remains short of ACC-03/05/06 acceptance until packaged restart, cross-client ownership/handoff, and real-provider evidence run on both target platforms.
 
+## 2026-08-13 TUI file CRUD checkpoint
+
+- The TUI now has an explicit File Auto profile. New Auto tasks receive the public Pi-backed Candy read/edit/write definitions plus a Candy-owned delete definition; Read-only tasks still receive only `candy_read`.
+- `candy_delete` is not a Shell escape: it accepts one file path, requires an interactive TUI approval, rejects directories/symbolic links/workspace escape/control characters, and verifies that the approved regular file did not change before deletion. Cancellation and denial do not delete the file.
+- This clears the deterministic TUI file-CRUD implementation gap only. Iterative turns, TUI model/MiniMax image selection, validators, diff/change review, packaged restart and ownership recovery, real-provider coding journeys, and real-terminal platform matrices remain open. G2 is unchanged, so Shell Auto and Shell Auto Debug remain disabled.
+
 ## 2026-08-10 models, workspace transfer, and Desktop shell checkpoint
 
 - Deterministic model gate: schema 3 and protocol carry an explicit model id; DeepSeek Flash remains the default, DeepSeek Pro remains a distinct selection, and MiniMax M3 is explicit. The Pi M3 fixture proved domestic URL construction and typed image content; no live MiniMax entitlement or credential was used.

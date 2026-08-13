@@ -18,6 +18,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   CandyPiSessionStore,
+  createCandyWorkspaceTools,
   createCandyWorkspaceOperations,
   DeepSeekClient,
   MiniMaxClient,
@@ -36,6 +37,94 @@ import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
   assert.equal(PI_COMPATIBILITY_VERSION, "0.84.1");
   assert.ok(listPiPublicExports().length > 0);
+});
+
+test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-outside-"));
+  try {
+    await writeFile(path.join(root, "obsolete.ts"), "obsolete\n");
+    await writeFile(path.join(root, "denied.ts"), "keep\n");
+    await writeFile(path.join(outside, "outside.ts"), "outside\n");
+    await symlink(path.join(outside, "outside.ts"), path.join(root, "linked.ts"));
+
+    const readOnly = createCandyWorkspaceTools(root, "read-only");
+    assert.deepEqual(
+      readOnly.map((tool) => tool.name),
+      ["candy_read"],
+    );
+
+    const requested: string[] = [];
+    const auto = createCandyWorkspaceTools(root, "auto", undefined, async ({ path: filePath }) => {
+      requested.push(filePath);
+      return filePath === "obsolete.ts";
+    });
+    assert.deepEqual(
+      auto.map((tool) => tool.name),
+      ["candy_read", "candy_edit", "candy_write", "candy_delete"],
+    );
+    const deleteTool = auto.find((tool) => tool.name === "candy_delete");
+    assert.ok(deleteTool);
+    const signal = new AbortController().signal;
+    await deleteTool.execute(
+      "delete-approved",
+      { path: "obsolete.ts" },
+      signal,
+      undefined,
+      {} as never,
+    );
+    await assert.rejects(access(path.join(root, "obsolete.ts")), /ENOENT/u);
+    await assert.rejects(
+      deleteTool.execute("delete-denied", { path: "denied.ts" }, signal, undefined, {} as never),
+      /denied/u,
+    );
+    assert.equal(await readFile(path.join(root, "denied.ts"), "utf8"), "keep\n");
+    await assert.rejects(
+      deleteTool.execute("delete-symlink", { path: "linked.ts" }, signal, undefined, {} as never),
+      /Symbolic links/u,
+    );
+    await assert.rejects(
+      deleteTool.execute(
+        "delete-outside",
+        { path: "../outside.ts" },
+        signal,
+        undefined,
+        {} as never,
+      ),
+      /escaped/u,
+    );
+    await assert.rejects(
+      deleteTool.execute(
+        "delete-control-character",
+        { path: "denied.ts\n:approve fake" },
+        signal,
+        undefined,
+        {} as never,
+      ),
+      /control characters/u,
+    );
+    assert.deepEqual(requested, ["obsolete.ts", "denied.ts"]);
+
+    const changedDuringApproval = createCandyWorkspaceTools(root, "auto", undefined, async () => {
+      await writeFile(path.join(root, "denied.ts"), "changed\n");
+      return true;
+    }).find((tool) => tool.name === "candy_delete");
+    assert.ok(changedDuringApproval);
+    await assert.rejects(
+      changedDuringApproval.execute(
+        "delete-changed",
+        { path: "denied.ts" },
+        signal,
+        undefined,
+        {} as never,
+      ),
+      /changed while deletion approval was pending/u,
+    );
+    assert.equal(await readFile(path.join(root, "denied.ts"), "utf8"), "changed\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("provider catalog keeps domestic endpoints and live capabilities gated", () => {
@@ -177,11 +266,14 @@ test("MiniMax parser and client remain domestic-only and release the secret leas
 test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-engine-"));
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(
+  const requestBodies: Record<string, unknown>[] = [];
+  globalThis.fetch = async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(
       'data: {"choices":[{"delta":{"reasoning_content":"thinking","content":"hello"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
       { status: 200, headers: { "content-type": "text/event-stream" } },
     );
+  };
   try {
     const observations = [];
     for await (const observation of new PiAgentEngine(root, async () => ({
@@ -220,12 +312,18 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
         model: "deepseek-v4-flash",
         cwd: process.cwd(),
         approvalProfile: "auto",
+        fileDeleteApproval: async () => false,
       },
       new AbortController().signal,
     )) {
       autoObservations.push(observation);
     }
     assert.ok(autoObservations.some((observation) => observation.type === "turn.completed"));
+    const autoRequest = requestBodies.at(-1);
+    const toolNames = (autoRequest?.tools as { function?: { name?: string } }[]).map(
+      (tool) => tool.function?.name,
+    );
+    assert.deepEqual(toolNames, ["candy_read", "candy_edit", "candy_write", "candy_delete"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

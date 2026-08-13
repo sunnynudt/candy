@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { access, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import { cleanChildEnvironment, type NativeProcessResult } from "@candy/platform";
+import { Type } from "typebox";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
@@ -527,7 +528,23 @@ export function createCandyWorkspaceOperations(
   };
 }
 
-function createCandyWorkspaceTools(
+export interface FileDeleteApprovalRequest {
+  readonly path: string;
+}
+
+export type FileDeleteApproval = (
+  request: FileDeleteApprovalRequest,
+  signal: AbortSignal,
+) => Promise<boolean>;
+
+const deleteFileSchema = Type.Object(
+  {
+    path: Type.String({ description: "Path to the file to delete (relative or absolute)" }),
+  },
+  { additionalProperties: false },
+);
+
+export function createCandyWorkspaceTools(
   workspaceRoot: string,
   approvalProfile: "read-only" | "auto",
   shell?: {
@@ -535,6 +552,7 @@ function createCandyWorkspaceTools(
     readonly activeSecrets?: readonly string[];
     readonly onApproval: CandyBashOperationsOptions["onApproval"];
   },
+  fileDeleteApproval?: FileDeleteApproval,
 ) {
   const operations = createCandyWorkspaceOperations(workspaceRoot);
   const read = piSdk.createReadToolDefinition(workspaceRoot, {
@@ -573,6 +591,51 @@ function createCandyWorkspaceTools(
         promptSnippet: "Create or overwrite files inside the selected workspace",
       } as unknown as piSdk.ToolDefinition,
     );
+    if (fileDeleteApproval !== undefined) {
+      tools.push({
+        name: "candy_delete",
+        label: "Delete workspace file",
+        description:
+          "Delete one regular file inside the selected workspace after explicit user approval. Directories and symbolic links are not supported.",
+        promptSnippet: "Delete an approved regular file inside the selected workspace",
+        promptGuidelines: [
+          "Use candy_delete only when the user asked to remove a file; every deletion requires explicit confirmation.",
+        ],
+        parameters: deleteFileSchema,
+        executionMode: "sequential",
+        execute: async (_toolCallId, { path: requestedPath }, signal) => {
+          if (containsControlCharacter(requestedPath)) {
+            throw new Error("File deletion paths cannot contain control characters.");
+          }
+          const operationSignal = signal ?? new AbortController().signal;
+          const absolutePath = path.resolve(workspaceRoot, requestedPath);
+          const relativePath = normalizeWorkspaceToolPath(
+            path.relative(path.resolve(workspaceRoot), absolutePath),
+          );
+          return piSdk.withFileMutationQueue(absolutePath, async () => {
+            throwIfToolAborted(operationSignal);
+            await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
+            const before = await lstat(absolutePath);
+            if (!before.isFile()) throw new Error("Only regular workspace files can be deleted.");
+            throwIfToolAborted(operationSignal);
+            const approved = await fileDeleteApproval({ path: relativePath }, operationSignal);
+            if (!approved) throw new Error("File deletion was denied by the user.");
+            throwIfToolAborted(operationSignal);
+            await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
+            const after = await lstat(absolutePath);
+            if (!after.isFile() || !sameFileSnapshot(before, after)) {
+              throw new Error("The file changed while deletion approval was pending.");
+            }
+            await unlink(absolutePath);
+            throwIfToolAborted(operationSignal);
+            return {
+              content: [{ type: "text" as const, text: `Deleted ${relativePath}` }],
+              details: undefined,
+            };
+          });
+        },
+      });
+    }
     if (shell !== undefined) {
       const bash = piSdk.createBashToolDefinition(workspaceRoot, {
         operations: createCandyBashOperations(workspaceRoot, {
@@ -591,6 +654,33 @@ function createCandyWorkspaceTools(
     }
   }
   return tools;
+}
+
+function throwIfToolAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("Operation aborted");
+}
+
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 31 || code === 127;
+  });
+}
+
+function normalizeWorkspaceToolPath(value: string): string {
+  return value.replaceAll(path.sep, "/");
+}
+
+function sameFileSnapshot(
+  before: Awaited<ReturnType<typeof lstat>>,
+  after: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return (
+    before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.size === after.size &&
+    before.mtimeMs === after.mtimeMs
+  );
 }
 
 async function assertWorkspacePath(
@@ -733,6 +823,7 @@ export interface PiAgentEngineInput {
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
+  readonly fileDeleteApproval?: FileDeleteApproval;
 }
 
 export interface PiImageInput {
@@ -874,6 +965,7 @@ export class PiAgentEngine {
               onApproval: input.shellApproval ?? (async () => false),
             }
           : undefined,
+        input.fileDeleteApproval,
       );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
