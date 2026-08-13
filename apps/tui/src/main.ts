@@ -10,6 +10,7 @@ import {
   listPiPublicExports,
 } from "@candy/pi-adapter";
 import {
+  DEFAULT_CANDY_MODEL,
   resolveAppPaths,
   resolveCredential,
   resolveDefaultAppDataRoot,
@@ -86,6 +87,7 @@ export async function runTuiTaskSmoke(): Promise<TuiTaskSmokeResult> {
 
 export interface InteractiveTuiOptions {
   readonly appDataRoot?: string;
+  readonly workspacePath?: string;
   readonly engine?: TuiAgentEngine;
   readonly terminal?: CandyTuiTerminal;
 }
@@ -97,6 +99,7 @@ export interface TuiAgentEngine {
 
 export class InteractiveTui {
   readonly #appDataRoot: string;
+  readonly #workspacePath: string;
   readonly #terminal: CandyTuiTerminal | undefined;
   readonly #store: SQLiteTaskStore;
   readonly #scheduler: TaskScheduler;
@@ -110,6 +113,7 @@ export class InteractiveTui {
   >();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}`;
+  #currentTaskId: string | undefined;
   #surface: CandyTuiSurface | undefined = undefined;
   #resolveExit: (() => void) | undefined = undefined;
   #closing = false;
@@ -117,10 +121,17 @@ export class InteractiveTui {
 
   public constructor(options: InteractiveTuiOptions = {}) {
     this.#appDataRoot = options.appDataRoot ?? resolveDefaultAppDataRoot();
+    this.#workspacePath = path.resolve(options.workspacePath ?? process.cwd());
     this.#terminal = options.terminal;
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
-    this.#store.markActiveInterrupted();
+    this.#store.markOwnerInterrupted(this.#ownerId);
+    for (const metadata of this.#store.list()) {
+      this.#controllers.set(
+        metadata.taskId,
+        new TaskController(metadata.taskId, metadata.approvalProfile, this.#store),
+      );
+    }
     this.#scheduler = new TaskScheduler(3, 5, this.#store);
     this.#engine =
       options.engine ??
@@ -134,12 +145,18 @@ export class InteractiveTui {
     this.#surface = new CandyTuiSurface({
       appDataRoot: this.#appDataRoot,
       terminal: this.#terminal,
-      onSubmit: (text: string): void => this.handleInput(text),
+      onSubmit: (text: string): void => {
+        try {
+          this.handleInput(text);
+        } catch (error) {
+          this.write(`input rejected: ${safeError(error)}\n`);
+        }
+      },
       onInterrupt: (): void => this.requestExit(),
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :profile read-only|auto, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :use <task-id>, :profile read-only|auto, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
     this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -170,6 +187,10 @@ export class InteractiveTui {
     const trimmed: string = value.trim();
     if (trimmed === ":quit") {
       this.requestExit();
+    } else if (trimmed === ":new" || trimmed.startsWith(":new ")) {
+      this.newTask(trimmed.slice(4).trim());
+    } else if (trimmed.startsWith(":use ")) {
+      this.useTask(trimmed.slice(5).trim());
     } else if (trimmed === ":tasks") {
       this.printTasks();
     } else if (trimmed.startsWith(":profile ")) {
@@ -185,9 +206,11 @@ export class InteractiveTui {
     } else if (trimmed.startsWith(":resume ")) {
       this.resume(trimmed.slice(8).trim());
     } else if (trimmed.startsWith(":cancel ")) {
-      void this.cancel(trimmed.slice(8).trim());
+      void this.cancel(trimmed.slice(8).trim()).catch((error: unknown) => {
+        this.write(`cancel rejected: ${safeError(error)}\n`);
+      });
     } else if (trimmed.length > 0) {
-      this.create(trimmed);
+      this.submitPrompt(trimmed);
     }
   }
 
@@ -203,43 +226,135 @@ export class InteractiveTui {
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
-    const metadata = this.#store.create(taskId, this.#approvalProfile, queueOrder);
+    const metadata = this.#store.create(
+      taskId,
+      this.#approvalProfile,
+      queueOrder,
+      DEFAULT_CANDY_MODEL,
+      [],
+      this.#workspacePath,
+    );
     const controller = new TaskController(taskId, this.#approvalProfile, this.#store);
     this.#controllers.set(taskId, controller);
     this.#prompts.set(taskId, prompt);
+    this.#currentTaskId = taskId;
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
-    this.drain();
+    this.drain(new Map([[taskId, prompt]]));
   }
 
-  private drain(): void {
+  private drain(explicitPrompts: ReadonlyMap<string, string> = new Map()): void {
     for (const taskId of this.#scheduler.startAvailable()) {
       if (this.#abortControllers.has(taskId)) continue;
-      const task = this.#controllers.get(taskId);
+      const task = this.ensureController(taskId);
       if (!task || !["queued", "paused", "interrupted"].includes(task.snapshot().state)) continue;
       const running = task.setOwner(this.#ownerId, task.snapshot().revision);
       const abort = new AbortController();
       this.#abortControllers.set(taskId, abort);
-      void this.runTask(task, running.revision, abort);
+      void this.runTask(task, running.revision, abort, explicitPrompts.get(taskId));
     }
+  }
+
+  private ensureController(taskId: string): TaskController | undefined {
+    const metadata = this.#store.get(taskId);
+    if (!metadata) return undefined;
+    const existing = this.#controllers.get(taskId);
+    if (existing?.snapshot().revision === metadata.revision) return existing;
+    const controller = new TaskController(taskId, metadata.approvalProfile, this.#store);
+    this.#controllers.set(taskId, controller);
+    return controller;
+  }
+
+  private submitPrompt(prompt: string): void {
+    const currentTaskId = this.#currentTaskId;
+    if (currentTaskId === undefined) {
+      this.create(prompt);
+      return;
+    }
+    const task = this.ensureController(currentTaskId);
+    if (!task) {
+      this.write(`current task ${currentTaskId} is unavailable; use :new\n`);
+      return;
+    }
+    const snapshot = task.snapshot();
+    if (snapshot.state === "running" || snapshot.state === "waiting_approval") {
+      if (snapshot.ownerId !== undefined && snapshot.ownerId !== this.#ownerId) {
+        this.write(`task ${currentTaskId} is read-only: owned by ${snapshot.ownerId}\n`);
+      } else {
+        this.write(`task ${currentTaskId} is already running; wait for the active turn\n`);
+      }
+      return;
+    }
+    if (snapshot.state === "queued") {
+      this.write(`task ${currentTaskId} is queued; cannot add a prompt to its active turn\n`);
+      return;
+    }
+    if (snapshot.state === "cancelled") {
+      this.write(`task ${currentTaskId} is cancelled; use :new to create another task\n`);
+      return;
+    }
+    task.queueForContinuation(snapshot.revision);
+    this.#prompts.set(currentTaskId, prompt);
+    this.#scheduler.enqueue(currentTaskId);
+    this.write(`continuing ${currentTaskId}\n`);
+    this.drain(new Map([[currentTaskId, prompt]]));
+  }
+
+  private newTask(prompt: string): void {
+    this.#currentTaskId = undefined;
+    if (prompt.length === 0) {
+      this.write("new task ready; enter a prompt\n");
+      return;
+    }
+    this.create(prompt);
+  }
+
+  private useTask(taskId: string): void {
+    const task = this.ensureController(taskId);
+    if (!task) {
+      this.write(`task ${taskId} does not exist\n`);
+      return;
+    }
+    this.#currentTaskId = taskId;
+    const snapshot = task.snapshot();
+    if (
+      snapshot.state === "running" &&
+      snapshot.ownerId !== undefined &&
+      snapshot.ownerId !== this.#ownerId
+    ) {
+      this.write(
+        `current task: ${taskId} (read-only task: ${taskId}; owned by ${snapshot.ownerId})\n`,
+      );
+      return;
+    }
+    this.write(`current task: ${taskId} (${snapshot.state})\n`);
   }
 
   private async runTask(
     task: TaskController,
     revision: number,
     abort: AbortController,
+    explicitPrompt?: string,
   ): Promise<void> {
     const taskId = task.snapshot().taskId;
     try {
       const prompt =
-        this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, process.cwd()));
+        explicitPrompt ??
+        this.#prompts.get(taskId) ??
+        (await this.#engine.recoverPrompt?.(taskId, this.#workspacePath));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
+      if (explicitPrompt !== undefined) {
+        this.#prompts.set(taskId, explicitPrompt);
+        this.#store.appendTranscript(taskId, [
+          { role: "user", text: transcriptText(explicitPrompt) },
+        ]);
+      }
       for await (const observation of this.#engine.runTurn(
         {
           taskId,
           prompt,
-          model: "deepseek-v4-flash",
-          cwd: process.cwd(),
+          model: task.snapshot().model,
+          cwd: this.#workspacePath,
           approvalProfile: task.snapshot().approvalProfile,
           ...(task.snapshot().approvalProfile === "auto"
             ? {
@@ -250,8 +365,21 @@ export class InteractiveTui {
         },
         abort.signal,
       )) {
-        if (observation.type === "assistant.delta") this.write(observation.text);
-        if (observation.type === "tool.completed") this.write(`\n[tool ${observation.tool}]\n`);
+        if (observation.type === "assistant.delta") {
+          this.write(observation.text);
+          this.#store.appendTranscript(taskId, [
+            { role: "assistant", text: transcriptText(observation.text) },
+          ]);
+        }
+        if (observation.type === "tool.completed") {
+          this.write(`\n[tool ${observation.tool}]\n`);
+          this.#store.appendTranscript(taskId, [
+            {
+              role: "tool",
+              text: transcriptText(`${observation.tool}:${observation.ok ? "ok" : "error"}`),
+            },
+          ]);
+        }
       }
       const current = task.snapshot();
       if (current.state === "running" && current.revision === revision) {
@@ -335,8 +463,12 @@ export class InteractiveTui {
   }
 
   private printTasks(): void {
-    for (const task of this.#store.list())
-      this.write(`${task.taskId}\t${task.state}\tr${task.revision}\tq${task.queueOrder ?? "-"}\n`);
+    for (const task of this.#store.list()) {
+      const current = task.taskId === this.#currentTaskId ? "*" : " ";
+      this.write(
+        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\n`,
+      );
+    }
   }
 
   private setProfile(value: string): void {
@@ -408,6 +540,10 @@ function redactTuiOutput(value: string): string {
   return value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1[REDACTED]`)
     .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, "[REDACTED]");
+}
+
+function transcriptText(value: string): string {
+  return redactTuiOutput(value).slice(0, 4_096);
 }
 
 function isDirectExecution(): boolean {

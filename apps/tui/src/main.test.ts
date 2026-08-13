@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
 import { InteractiveTui, type TuiAgentEngine } from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
 
@@ -172,6 +173,215 @@ test("interactive TUI keeps file mutation disabled until Auto is selected", asyn
     await runPromise;
     assert.equal(observedProfile, "read-only");
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI continues the current task and :new starts a different task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-continuation-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const turns: { readonly taskId: string; readonly prompt: string }[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      turns.push({ taskId: input.taskId, prompt: input.prompt });
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: `turn ${turns.length}: ${input.prompt}`,
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput("first request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 1: first request/u);
+    terminal.emitInput("second request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 2: second request/u);
+    assert.equal(turns[0]?.taskId, turns[1]?.taskId);
+
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /new task ready/u);
+    terminal.emitInput("third request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 3: third request/u);
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /deepseek-v4-flash\t/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.notEqual(turns[1]?.taskId, turns[2]?.taskId);
+    assert.match(output, /\*task-/u);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.equal(store.list().filter((task) => task.state === "completed").length, 2);
+    assert.ok(store.list().every((task) => task.model === "deepseek-v4-flash"));
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI restores a task and its transcript before continuing after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-restart-"));
+  const firstTerminal: FakeTerminal = new FakeTerminal();
+  const firstTurns: { readonly taskId: string; readonly prompt: string }[] = [];
+  const firstEngine: TuiAgentEngine = {
+    async *runTurn(input) {
+      firstTurns.push({ taskId: input.taskId, prompt: input.prompt });
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "assistant.delta", taskId: input.taskId, text: "first persisted answer" };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const firstRun = new InteractiveTui({
+      appDataRoot: root,
+      engine: firstEngine,
+      terminal: firstTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("persist this context");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /first persisted answer/u);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const before = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const task = before.list()[0];
+    assert.ok(task);
+    assert.deepEqual(before.transcript(task.taskId), [
+      { role: "user", text: "persist this context" },
+      { role: "assistant", text: "first persisted answer" },
+    ]);
+    before.close();
+
+    const secondTerminal: FakeTerminal = new FakeTerminal();
+    const secondTurns: { readonly taskId: string; readonly prompt: string }[] = [];
+    const secondEngine: TuiAgentEngine = {
+      async *runTurn(input) {
+        secondTurns.push({ taskId: input.taskId, prompt: input.prompt });
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "second persisted answer" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const secondRun = new InteractiveTui({
+      appDataRoot: root,
+      engine: secondEngine,
+      terminal: secondTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${task.taskId}\\tcompleted\\t`));
+    secondTerminal.emitInput(`:use ${task.taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${task.taskId}`));
+    secondTerminal.emitInput("continue from the saved context");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /second persisted answer/u);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+
+    assert.deepEqual(secondTurns, [
+      { taskId: task.taskId, prompt: "continue from the saved context" },
+    ]);
+    const after = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(after.transcript(task.taskId), [
+      { role: "user", text: "persist this context" },
+      { role: "assistant", text: "first persisted answer" },
+      { role: "user", text: "continue from the saved context" },
+      { role: "assistant", text: "second persisted answer" },
+    ]);
+    after.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects a second input while the current turn owns execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-active-owner-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let started: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const releasePromise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      calls += 1;
+      yield { type: "turn.started", taskId: input.taskId };
+      started?.();
+      await releasePromise;
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("long turn");
+    terminal.emitInput("\r");
+    await startedPromise;
+    terminal.emitInput("do not overlap");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /already running/u);
+    assert.equal(calls, 1);
+    release?.();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.match(output, /already running/u);
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI may inspect but cannot control a task owned by another client", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-non-owner-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engineCalls: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      engineCalls.push(input.taskId);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  let external: SQLiteTaskStore | undefined;
+  try {
+    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    external.create("foreign-task", "read-only", 1, "deepseek-v4-flash", [], process.cwd());
+    external.transition("foreign-task", 0, "running", "desktop-owner");
+    terminal.emitInput(":use foreign-task");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /read-only task: foreign-task/u);
+    terminal.emitInput("attempt foreign control");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /owned by desktop-owner/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.deepEqual(engineCalls, []);
+    assert.match(output, /owned by desktop-owner/u);
+  } finally {
+    external?.close();
     await rm(root, { recursive: true, force: true });
   }
 });

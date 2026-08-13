@@ -36,6 +36,12 @@ Updated: 2026-08-12
 - The architect must review the exact dependency allowlist, lifecycle restoration, and scope before the test agent performs independent macOS/Windows terminal QA. The deterministic checkpoint does not prove raw mode, paste, Chinese input, resize, IME, or cross-platform terminal recovery.
 - WP3 native-process and WP4 read-only tool reuse remain gated until the WP2 technical review and independent QA result are published. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-13 TUI continuous-task checkpoint
+
+- The deterministic TUI now keeps one explicit current task across ordinary follow-up prompts, exposes `:new` and `:use`, restores persisted task metadata/controllers, and records a bounded redacted transcript alongside the Candy-owned Pi session mapping.
+- Active-owner overlap, cancelled-task continuation, stale revision, and non-owner control remain fail-closed in the TUI seam. This advances the implementation portion of `G1-PERSISTENCE`/`G0-MAC-RUNTIME`; it does not clear cross-client recovery or platform acceptance.
+- Local deterministic evidence is 144/144 tests after the test-first checkpoint. Real macOS terminal recovery, Windows terminal evidence, live-provider coding journeys, and complete ACC-03/05/11 acceptance remain open. Shell Auto and Shell Auto Debug remain disabled.
+
 ## Daily platform handoff boundary
 
 ## 2026-08-12 macOS live DeepSeek checkpoint

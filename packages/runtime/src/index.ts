@@ -314,6 +314,32 @@ export class TaskController {
         };
     return this.snapshot();
   }
+
+  /** Queue a completed or interrupted task for one explicit follow-up turn. */
+  public queueForContinuation(expectedRevision: number): RuntimeTaskSnapshot {
+    if (expectedRevision !== this.#snapshot.revision)
+      throw new TaskStateError("Task revision is stale.");
+    if (
+      this.#snapshot.state !== "completed" &&
+      this.#snapshot.state !== "paused" &&
+      this.#snapshot.state !== "interrupted"
+    ) {
+      throw new TaskStateError(`Cannot continue ${this.#snapshot.state} task.`);
+    }
+    this.#snapshot = this.persistence
+      ? this.persistence.transition(taskIdOf(this.#snapshot), expectedRevision, "queued")
+      : (() => {
+          const nextSnapshot = {
+            ...this.#snapshot,
+            state: "queued" as const,
+            revision: expectedRevision + 1,
+          };
+          const withoutOwner = { ...nextSnapshot };
+          delete withoutOwner.ownerId;
+          return withoutOwner;
+        })();
+    return this.snapshot();
+  }
 }
 
 function taskIdOf(snapshot: RuntimeTaskSnapshot): string {

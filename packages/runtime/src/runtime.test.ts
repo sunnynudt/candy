@@ -130,6 +130,18 @@ test("task controller fences stale revisions and scheduler preserves FIFO with a
   assert.throws(() => scheduler.startAvailable(6), /between 1 and 5/u);
 });
 
+test("completed tasks can be explicitly queued for a continuation turn", () => {
+  const task = new TaskController("task-continuation");
+  const running = task.setOwner("owner-1", 0);
+  const completed = task.transition("completed", running.revision);
+
+  const queued = task.queueForContinuation(completed.revision);
+
+  assert.equal(queued.state, "queued");
+  assert.equal(queued.revision, completed.revision + 1);
+  assert.equal(queued.ownerId, undefined);
+});
+
 test("task controller can reload and fence through the Candy metadata store", () => {
   const store = new SQLiteTaskStore(":memory:");
   const first = new TaskController("task-persisted", "read-only", store);
