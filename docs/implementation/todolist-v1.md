@@ -84,7 +84,8 @@
 
 - ◐ 补齐 macOS ACC-12 可测确定性指标：`measure:macos:responsiveness` 已执行十轮真实 Desktop event/projection、用户取消到 validator 父子进程树终止、显式 Take Control 后 agent action 禁止，以及三任务并发 frame-gap/event delivery。已发布 source revision `d9a0fe2` 的 `out/acceptance/macos/responsiveness-latest.md` 记录 p95 `2/12/2/19 ms`，三任务十轮均 `9/9/9=>9/9/9` 且无 event loss；TUI/Desktop cold p95 为 `983/2053 ms`，完整 `acceptance:macos` 为 15/15。Provider stream stop、完整 UI/recovery/Windows parity 和完整 ACC-12 仍 Blocked，Shell Auto 与 Shell Auto Debug 保持 disabled。
 
-- ⬜ 在同一套 Candy 自有凭据路径下重跑 macOS 的 DeepSeek/MiniMax Live Provider Gate；不得以 Windows 结果替代 macOS 证据。
+- ☑️ 在同一套 Candy 自有凭据路径下重跑 macOS 的 DeepSeek/MiniMax Live Provider Gate；不得以 Windows 结果替代 macOS 证据。
+  证据：macOS DeepSeek Gate 于 `e3449a5` 7/7 通过；MiniMax Gate 于 `44be499` 7 通过 0 失败（LIVE-MM-01 文本、LIVE-MM-02 图片理解、LIVE-MM-03 思考/工具回放、LIVE-MM-04 取消与受控 401/429/超时错误契约、secret 检查全部通过），LIVE-MM-05 控制台 entitlement 已由产品负责人于 2026-08-13 确认并记录在 blocker 注册表（TokenPlanPlus 年度 Plus，订阅至 2027-02-25，M3 全模型权限含图像输入，额度充足；控制台用量面板有延迟，LIVE-MM-01 扣减增量待面板刷新后复核）。`G0-LIVE-MM` 已在注册表更新为 Pass。
 
 ## 跨平台收尾：Windows 与 macOS 均完成后
 
