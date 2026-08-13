@@ -51,6 +51,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - Test-first deterministic validation passes `npm test` with 144/144 tests, including two turns on one task id, explicit `:new`, restart plus `:use` transcript continuation, active-owner fencing, and non-owner read-only control. The full checkpoint gate remains the required toolchain/native/TUI smoke sequence below.
 - Evidence boundary: this is a local FakeTerminal and deterministic engine checkpoint. It does not claim macOS raw-terminal, Windows 11 terminal, live-provider, full ACC-03, or final V1 acceptance. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-13 TUI workspace-browse checkpoint
+
+- Added Candy-owned `candy_list` and `candy_search` read-only tools to the Pi adapter. They use only Node filesystem APIs (`readdir`, `lstat`, `realpath`, and `readFile`); Shell, `rg`, and Pi built-in tools remain outside this path, and Pi's `noTools: "builtin"` boundary remains in force.
+- Both Read-only and Auto expose the two browse tools. The tools accept only bounded workspace-relative paths, reject control/invalid path text and workspace escapes, do not follow symlinks or reparse-like links, skip Candy app-data and dependency/build/cache directories, ignore binary/invalid UTF-8 files, and return workspace-relative bounded JSON results.
+- Search is literal and bounded by directory/file/match/file-size/line/output limits, checks cancellation between filesystem steps, rejects credential-shaped queries, and redacts the active provider secret plus credential-shaped text before returning matches. No provider credential or external tool configuration is used.
+- Test-first deterministic verification covers schemas, both approval profiles, ignored directories, workspace/symlink boundaries, invalid UTF-8/binary files, cancellation, output/line bounds, active-secret redaction, and Pi tool-name projection. This checkpoint is local source evidence only; it does not claim real macOS/Windows terminal behavior, Shell Auto, G2, complete ACC-03, or final V1 acceptance.
+
 ## 2026-08-12 WP3 native-process boundary checkpoint
 
 - `@candy/runtime` now exposes only the platform-neutral `CommandRunner` port and common `CommandValidator` for command-validator execution. The validator retains the existing bounded, active-secret-redacted evidence and cancellation result contract.

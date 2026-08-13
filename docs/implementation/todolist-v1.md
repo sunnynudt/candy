@@ -73,6 +73,8 @@
 
 - ☑️ TUI 同一任务连续对话已接入：普通输入默认继续 current task，`:new [prompt]` 创建新任务，`:use <task-id>` 选择已持久化任务，`:tasks` 显示 current 标记、状态、模型、workspace、revision 和队列位置；TUI 通过 Candy-owned SQLite 恢复控制器和有界脱敏 transcript，并将稳定 task id 继续传给同一 Pi session 路径。active owner 重入、取消任务继续、stale revision 与 non-owner 控制均 fail closed。测试先行后 `npm test` 通过 144/144。此项仍不替代 macOS/Windows 真终端、跨客户端恢复、live provider 或完整 ACC-03/05/11 验收。
 
+- ☑️ TUI 工作区浏览/搜索已接入：Candy 自有 `candy_list` 与 `candy_search` 通过 Node 文件系统 API 提供有界目录列表和 literal UTF-8 文本搜索；Read-only/Auto 两个 profile 都只开放这两个只读能力，未开放 Shell、`rg` 或 Pi builtin。路径 containment、symlink/reparse-style fail-closed、控制/非法编码、Candy app-data/依赖缓存排除、二进制跳过、取消、输出/行/文件上限和活动 secret 脱敏均有测试。此项仍不替代真实 macOS/Windows 终端、G2、Shell Auto、完整 ACC-03 或最终 V1 验收。
+
 - ☑️ TUI 文件增删改查已接入：启动仍为 Read-only，`:profile auto` 为后续任务开放 `candy_read`、`candy_edit`、`candy_write` 与 `candy_delete`；删除逐次要求 `:approve <id>` / `:deny <id>`，并拒绝越界、symlink、目录、控制字符路径和审批期间目标变化。固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 139/139、native check 与两个 TUI smoke 通过。此项不包含 Shell、validator、diff UI、模型/图片选择或完整 ACC-03。
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。

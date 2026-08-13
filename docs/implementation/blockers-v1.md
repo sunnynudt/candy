@@ -42,6 +42,12 @@ Updated: 2026-08-12
 - Active-owner overlap, cancelled-task continuation, stale revision, and non-owner control remain fail-closed in the TUI seam. This advances the implementation portion of `G1-PERSISTENCE`/`G0-MAC-RUNTIME`; it does not clear cross-client recovery or platform acceptance.
 - Local deterministic evidence is 144/144 tests after the test-first checkpoint. Real macOS terminal recovery, Windows terminal evidence, live-provider coding journeys, and complete ACC-03/05/11 acceptance remain open. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-13 TUI workspace-browse checkpoint
+
+- `candy_list` and `candy_search` now provide Candy-owned bounded directory listing and literal text search through Node filesystem APIs. Both Read-only and Auto include them; Pi built-in tools and Shell remain disabled unless the separately gated Trusted Shell path is explicitly selected.
+- The tests cover workspace-relative containment, symlink/reparse-style fail-closed behavior, invalid/control text, ignored Candy app-data/dependency/cache directories, binary/invalid UTF-8 skipping, cancellation, result limits, tool schemas, and active-secret redaction. This clears only the deterministic adapter slice.
+- No blocker is cleared by this checkpoint: real macOS/Windows terminal and cross-client evidence, provider/live-session evidence, G2 containment, full ACC-03/ACC-05/ACC-11, and final V1 acceptance remain open. Shell Auto and Shell Auto Debug stay disabled.
+
 ## Daily platform handoff boundary
 
 ## 2026-08-12 macOS live DeepSeek checkpoint

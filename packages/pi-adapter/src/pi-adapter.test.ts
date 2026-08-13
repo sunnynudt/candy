@@ -51,7 +51,7 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
     const readOnly = createCandyWorkspaceTools(root, "read-only");
     assert.deepEqual(
       readOnly.map((tool) => tool.name),
-      ["candy_read"],
+      ["candy_list", "candy_search", "candy_read"],
     );
 
     const requested: string[] = [];
@@ -61,7 +61,7 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
     });
     assert.deepEqual(
       auto.map((tool) => tool.name),
-      ["candy_read", "candy_edit", "candy_write", "candy_delete"],
+      ["candy_list", "candy_search", "candy_read", "candy_edit", "candy_write", "candy_delete"],
     );
     const deleteTool = auto.find((tool) => tool.name === "candy_delete");
     assert.ok(deleteTool);
@@ -124,6 +124,168 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy workspace browse tools stay bounded and inside the selected workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-outside-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await mkdir(path.join(root, ".git"), { recursive: true });
+    await mkdir(path.join(root, "node_modules", "fixture"), { recursive: true });
+    await mkdir(path.join(root, "app-data"), { recursive: true });
+    await writeFile(path.join(root, "src", "main.ts"), "const first = 1;\nneedle here\n");
+    await writeFile(path.join(root, "docs", "guide.md"), "needle in docs\n");
+    await writeFile(path.join(root, ".git", "ignored.txt"), "needle in git\n");
+    await writeFile(path.join(root, "node_modules", "fixture", "ignored.js"), "needle in deps\n");
+    await writeFile(path.join(root, "app-data", "ignored.txt"), "needle in app data\n");
+    await writeFile(path.join(root, "binary.dat"), Buffer.from([0, 1, 2, 3, 4]));
+    await writeFile(path.join(outside, "secret.txt"), "needle outside\n");
+    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
+
+    const tools = createCandyWorkspaceTools(root, "read-only");
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["candy_list", "candy_search", "candy_read"],
+    );
+    const listTool = tools.find((tool) => tool.name === "candy_list");
+    const searchTool = tools.find((tool) => tool.name === "candy_search");
+    assert.ok(listTool);
+    assert.ok(searchTool);
+    assert.deepEqual(
+      Object.keys((listTool.parameters as { properties: Record<string, unknown> }).properties),
+      ["path"],
+    );
+    assert.deepEqual(
+      Object.keys((searchTool.parameters as { properties: Record<string, unknown> }).properties),
+      ["query", "path"],
+    );
+
+    const signal = new AbortController().signal;
+    const listResult = await listTool.execute(
+      "list",
+      { path: "." },
+      signal,
+      undefined,
+      {} as never,
+    );
+    const listContent = listResult.content[0];
+    assert.ok(listContent?.type === "text");
+    const listed = JSON.parse(String(listContent.text)) as {
+      entries: { path: string; kind: string }[];
+    };
+    assert.deepEqual(listed.entries, [
+      { path: "binary.dat", kind: "file" },
+      { path: "docs", kind: "directory" },
+      { path: "src", kind: "directory" },
+    ]);
+
+    const searchResult = await searchTool.execute(
+      "search",
+      { query: "needle" },
+      signal,
+      undefined,
+      {} as never,
+    );
+    const searchContent = searchResult.content[0];
+    assert.ok(searchContent?.type === "text");
+    const searched = JSON.parse(String(searchContent.text)) as {
+      matches: { path: string; line: number; column: number; text: string }[];
+      truncated: boolean;
+    };
+    assert.deepEqual(
+      searched.matches.map((match) => [match.path, match.line, match.column]),
+      [
+        ["docs/guide.md", 1, 1],
+        ["src/main.ts", 2, 1],
+      ],
+    );
+    assert.equal(searched.truncated, false);
+    assert.doesNotMatch(JSON.stringify(searched), /outside|ignored|secret/u);
+
+    await assert.rejects(
+      listTool.execute(
+        "escape",
+        { path: "../candy-workspace-browse-outside" },
+        signal,
+        undefined,
+        {} as never,
+      ),
+      /escaped/u,
+    );
+    await assert.rejects(
+      searchTool.execute("control", { query: "needle\n" }, signal, undefined, {} as never),
+      /control characters/u,
+    );
+
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await assert.rejects(
+      searchTool.execute(
+        "cancelled",
+        { query: "needle" },
+        cancelled.signal,
+        undefined,
+        {} as never,
+      ),
+      /aborted/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy workspace search skips invalid text and caps serialized results", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-bounds-"));
+  try {
+    await writeFile(path.join(root, "long.txt"), `needle ${"x".repeat(100_000)}\n`);
+    await writeFile(path.join(root, "invalid.txt"), Buffer.from([0xc3, 0x28, 0x0a]));
+    await writeFile(path.join(root, "credentials.txt"), "token fixture-secret\n");
+    const searchTool = createCandyWorkspaceTools(root, "read-only").find(
+      (tool) => tool.name === "candy_search",
+    );
+    assert.ok(searchTool);
+    const result = await searchTool.execute(
+      "bounded",
+      { query: "needle" },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const content = result.content[0];
+    assert.ok(content?.type === "text");
+    const text = String(content.text);
+    assert.ok(Buffer.byteLength(text, "utf8") <= 64 * 1024);
+    const parsed = JSON.parse(text) as {
+      matches: { text: string }[];
+      truncated: boolean;
+    };
+    assert.equal(parsed.truncated, true);
+    assert.ok(parsed.matches.every((match) => match.text.length <= 2_048));
+
+    const secretSafeSearchTool = createCandyWorkspaceTools(
+      root,
+      "read-only",
+      undefined,
+      undefined,
+      ["fixture-secret"],
+    ).find((tool) => tool.name === "candy_search");
+    assert.ok(secretSafeSearchTool);
+    const secretSafeResult = await secretSafeSearchTool.execute(
+      "secret-safe",
+      { query: "token" },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const secretSafeContent = secretSafeResult.content[0];
+    assert.ok(secretSafeContent?.type === "text");
+    assert.doesNotMatch(secretSafeContent.text, /fixture-secret/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -323,7 +485,14 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     const toolNames = (autoRequest?.tools as { function?: { name?: string } }[]).map(
       (tool) => tool.function?.name,
     );
-    assert.deepEqual(toolNames, ["candy_read", "candy_edit", "candy_write", "candy_delete"]);
+    assert.deepEqual(toolNames, [
+      "candy_list",
+      "candy_search",
+      "candy_read",
+      "candy_edit",
+      "candy_write",
+      "candy_delete",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }

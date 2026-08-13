@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { access, lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import { cleanChildEnvironment, type NativeProcessResult } from "@candy/platform";
@@ -544,6 +553,326 @@ const deleteFileSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const listWorkspaceSchema = Type.Object(
+  {
+    path: Type.Optional(
+      Type.String({
+        description: "Workspace-relative directory path; defaults to the workspace root",
+        maxLength: 4_096,
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const searchWorkspaceSchema = Type.Object(
+  {
+    query: Type.String({
+      description: "Literal text to search for in UTF-8 text files",
+      minLength: 1,
+      maxLength: 256,
+    }),
+    path: Type.Optional(
+      Type.String({
+        description: "Workspace-relative file or directory path; defaults to the workspace root",
+        maxLength: 4_096,
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const MAX_BROWSE_RESULT_BYTES = 64 * 1024;
+const MAX_LIST_ENTRIES = 500;
+const MAX_SEARCH_DIRECTORIES = 2_000;
+const MAX_SEARCH_FILES = 1_000;
+const MAX_SEARCH_MATCHES = 200;
+const MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024;
+const MAX_SEARCH_LINE_CHARS = 2_048;
+const IGNORED_BROWSE_DIRECTORIES = new Set([
+  ".cache",
+  ".candy",
+  ".candy-data",
+  ".git",
+  ".gradle",
+  ".hg",
+  ".next",
+  ".pnpm-store",
+  ".pytest_cache",
+  ".svn",
+  ".turbo",
+  ".venv",
+  "attachments",
+  "app-data",
+  "appdata",
+  "browser-profile",
+  "build",
+  "candy-app-data",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "pods",
+  "sessions",
+  "target",
+  "candy data",
+  "venv",
+  "worktrees",
+]);
+
+interface CandyBrowseEntry {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+}
+
+interface CandyBrowseMatch {
+  readonly path: string;
+  readonly line: number;
+  readonly column: number;
+  readonly text: string;
+}
+
+interface CandyWorkspaceBrowseTools {
+  readonly list: (
+    requestedPath: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<{ readonly entries: readonly CandyBrowseEntry[]; readonly truncated: boolean }>;
+  readonly search: (
+    query: string,
+    requestedPath: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<{
+    readonly matches: readonly CandyBrowseMatch[];
+    readonly filesScanned: number;
+    readonly truncated: boolean;
+  }>;
+}
+
+function createCandyWorkspaceBrowseTools(
+  workspaceRoot: string,
+  activeSecrets: readonly string[] = [],
+): CandyWorkspaceBrowseTools {
+  const root = path.resolve(workspaceRoot);
+  return {
+    list: async (requestedPath, signal) => {
+      const absolutePath = await resolveBrowsePath(root, requestedPath);
+      throwIfToolAborted(signal);
+      const directory = await lstat(absolutePath);
+      if (!directory.isDirectory()) throw new Error("candy_list requires a workspace directory.");
+      const entries: CandyBrowseEntry[] = [];
+      let truncated = false;
+      const children = (await readdir(absolutePath, { withFileTypes: true })).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+      for (const child of children) {
+        throwIfToolAborted(signal);
+        if (!isSafeFilesystemText(child.name)) continue;
+        if (isIgnoredBrowseDirectory(child.name) && child.isDirectory()) continue;
+        if (child.isSymbolicLink()) continue;
+        const childPath = path.join(absolutePath, child.name);
+        const childStats = await lstat(childPath);
+        if (childStats.isSymbolicLink()) continue;
+        if (!childStats.isDirectory() && !childStats.isFile()) continue;
+        await assertBrowsePath(root, childPath);
+        const entry: CandyBrowseEntry = {
+          path: relativeBrowsePath(root, childPath),
+          kind: childStats.isDirectory() ? "directory" : "file",
+        };
+        if (
+          entries.length >= MAX_LIST_ENTRIES ||
+          !fitsBrowseResult({ entries: [...entries, entry], truncated: false })
+        ) {
+          truncated = true;
+          break;
+        }
+        entries.push(entry);
+      }
+      return { entries, truncated };
+    },
+    search: async (query, requestedPath, signal) => {
+      assertBrowseInput(query, "Search queries");
+      if (
+        containsCredentialMaterial(query) ||
+        activeSecrets.some((secret) => secret.length > 0 && query.includes(secret))
+      ) {
+        throw new Error("Provider credentials are forbidden in workspace search queries.");
+      }
+      const absolutePath = await resolveBrowsePath(root, requestedPath);
+      const startStats = await lstat(absolutePath);
+      const pending = [
+        {
+          absolutePath,
+          relativePath: relativeBrowsePath(root, absolutePath),
+          stats: startStats,
+        },
+      ];
+      const matches: CandyBrowseMatch[] = [];
+      let filesScanned = 0;
+      let directoriesScanned = 0;
+      let truncated = false;
+      while (pending.length > 0) {
+        throwIfToolAborted(signal);
+        const current = pending.shift();
+        if (!current) break;
+        if (current.stats.isSymbolicLink()) continue;
+        await assertBrowsePath(root, current.absolutePath);
+        if (current.stats.isDirectory()) {
+          directoriesScanned += 1;
+          if (directoriesScanned > MAX_SEARCH_DIRECTORIES) {
+            truncated = true;
+            break;
+          }
+          const children = (await readdir(current.absolutePath, { withFileTypes: true })).sort(
+            (left, right) => left.name.localeCompare(right.name),
+          );
+          for (const child of children) {
+            throwIfToolAborted(signal);
+            if (!isSafeFilesystemText(child.name)) continue;
+            if (child.isSymbolicLink()) continue;
+            if (child.isDirectory() && isIgnoredBrowseDirectory(child.name)) continue;
+            const childPath = path.join(current.absolutePath, child.name);
+            const childStats = await lstat(childPath);
+            if (!childStats.isDirectory() && !childStats.isFile()) continue;
+            pending.push({
+              absolutePath: childPath,
+              relativePath: relativeBrowsePath(root, childPath),
+              stats: childStats,
+            });
+          }
+          continue;
+        }
+        if (!current.stats.isFile() || current.stats.size > MAX_SEARCH_FILE_BYTES) continue;
+        filesScanned += 1;
+        if (filesScanned > MAX_SEARCH_FILES) {
+          truncated = true;
+          break;
+        }
+        const buffer = await readFile(current.absolutePath);
+        throwIfToolAborted(signal);
+        if (buffer.includes(0)) continue;
+        let content: string;
+        try {
+          content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        } catch {
+          continue;
+        }
+        content = redactBashOutput(content, activeSecrets);
+        const lines = content.split(/\r?\n/u);
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+          throwIfToolAborted(signal);
+          const line = lines[lineIndex] ?? "";
+          const columnIndex = line.indexOf(query);
+          if (columnIndex < 0) continue;
+          const text = line.slice(0, MAX_SEARCH_LINE_CHARS);
+          const match: CandyBrowseMatch = {
+            path: current.relativePath,
+            line: lineIndex + 1,
+            column: columnIndex + 1,
+            text,
+          };
+          if (
+            matches.length >= MAX_SEARCH_MATCHES ||
+            !fitsBrowseResult({
+              matches: [...matches, match],
+              filesScanned,
+              truncated: false,
+            })
+          ) {
+            truncated = true;
+            break;
+          }
+          matches.push(match);
+          if (line.length > MAX_SEARCH_LINE_CHARS) truncated = true;
+        }
+        if (truncated && matches.length >= MAX_SEARCH_MATCHES) break;
+      }
+      return { matches, filesScanned, truncated };
+    },
+  };
+}
+
+function isIgnoredBrowseDirectory(name: string): boolean {
+  return IGNORED_BROWSE_DIRECTORIES.has(name) || IGNORED_BROWSE_DIRECTORIES.has(name.toLowerCase());
+}
+
+function isSafeFilesystemText(value: string): boolean {
+  return (
+    !containsControlCharacter(value) &&
+    !containsUnpairedSurrogate(value) &&
+    !value.includes("\ufffd")
+  );
+}
+
+function containsUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        index += 1;
+        continue;
+      }
+      return true;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+}
+
+function assertBrowseInput(value: string, label: string): void {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} cannot be empty.`);
+  if (value.length > 4_096 || !isSafeFilesystemText(value)) {
+    throw new Error(`${label} contain invalid or control characters.`);
+  }
+}
+
+async function resolveBrowsePath(root: string, requestedPath: string | undefined): Promise<string> {
+  const value = requestedPath ?? ".";
+  assertBrowseInput(value, "Workspace browse paths");
+  if (
+    path.isAbsolute(value) ||
+    path.win32.isAbsolute(value) ||
+    path.win32.parse(value).root !== ""
+  ) {
+    throw new Error("Workspace browse paths must be relative.");
+  }
+  if (value.split(/[\\/]+/u).some((segment) => segment === "..")) {
+    throw new Error("Workspace browse path escaped the selected workspace.");
+  }
+  const absolutePath = path.resolve(root, value);
+  await assertBrowsePath(root, absolutePath);
+  return absolutePath;
+}
+
+async function assertBrowsePath(root: string, candidate: string): Promise<void> {
+  await assertWorkspacePath(root, candidate, false);
+  const realRoot = await realpath(root);
+  const realCandidate = await realpath(candidate);
+  const relative = path.relative(realRoot, realCandidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace browse path escaped the selected workspace.");
+  }
+}
+
+function relativeBrowsePath(root: string, absolutePath: string): string {
+  const relative = path.relative(root, absolutePath);
+  return normalizeWorkspaceToolPath(relative || ".");
+}
+
+function fitsBrowseResult(value: object): boolean {
+  return Buffer.byteLength(JSON.stringify(value), "utf8") <= MAX_BROWSE_RESULT_BYTES;
+}
+
+function browseResult(value: object): {
+  readonly content: [{ readonly type: "text"; readonly text: string }];
+  readonly details: undefined;
+} {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    details: undefined,
+  };
+}
+
 export function createCandyWorkspaceTools(
   workspaceRoot: string,
   approvalProfile: "read-only" | "auto",
@@ -553,12 +882,38 @@ export function createCandyWorkspaceTools(
     readonly onApproval: CandyBashOperationsOptions["onApproval"];
   },
   fileDeleteApproval?: FileDeleteApproval,
+  activeSecrets: readonly string[] = [],
 ) {
   const operations = createCandyWorkspaceOperations(workspaceRoot);
+  const browseTools = createCandyWorkspaceBrowseTools(workspaceRoot, activeSecrets);
   const read = piSdk.createReadToolDefinition(workspaceRoot, {
     operations: { readFile: operations.readFile, access: operations.access },
   });
   const tools: piSdk.ToolDefinition[] = [
+    {
+      name: "candy_list",
+      label: "List workspace files",
+      description:
+        "List immediate files and directories inside the selected workspace without following symbolic links.",
+      promptSnippet: "List files and directories in the selected workspace",
+      parameters: listWorkspaceSchema,
+      executionMode: "parallel",
+      execute: async (_toolCallId, { path: requestedPath }, signal) =>
+        browseResult(await browseTools.list(requestedPath, signal ?? new AbortController().signal)),
+    },
+    {
+      name: "candy_search",
+      label: "Search workspace text",
+      description:
+        "Search literal text in bounded UTF-8 workspace files without using Shell, ripgrep, or Pi built-in tools.",
+      promptSnippet: "Search text files inside the selected workspace",
+      parameters: searchWorkspaceSchema,
+      executionMode: "parallel",
+      execute: async (_toolCallId, { query, path: requestedPath }, signal) =>
+        browseResult(
+          await browseTools.search(query, requestedPath, signal ?? new AbortController().signal),
+        ),
+    },
     {
       ...read,
       name: "candy_read",
@@ -966,6 +1321,7 @@ export class PiAgentEngine {
             }
           : undefined,
         input.fileDeleteApproval,
+        [lease.secret],
       );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
