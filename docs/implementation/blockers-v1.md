@@ -130,6 +130,12 @@ Blocked external resources do not stop independent implementation. They do preve
 - `candy_delete` is not a Shell escape: it accepts one file path, requires an interactive TUI approval, rejects directories/symbolic links/workspace escape/control characters, and verifies that the approved regular file did not change before deletion. Cancellation and denial do not delete the file.
 - This clears the deterministic TUI file-CRUD implementation gap only. Iterative turns, TUI model/MiniMax image selection, validators, diff/change review, packaged restart and ownership recovery, real-provider coding journeys, and real-terminal platform matrices remain open. G2 is unchanged, so Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-13 TUI changes/diff/validator checkpoint
+
+- The deterministic TUI implementation gap for workspace review and explicit validation is closed: `:changes`, bounded `:diff [path]`, explicit absolute-path validator configuration, pass/fail/cancel/timeout projection, cancellation, persisted redacted evidence, and native-unavailable `blocked` handling are covered by the shared Runtime/platform seams.
+- The remaining blocker is evidence scope, not an automatic safety claim. The TUI still has no Shell path, automatic Apply/commit/stage/push path, or provider credential path in validator commands. Shell Auto and Shell Auto Debug remain disabled until the complete G2 evidence exists.
+- Real macOS raw-terminal, Windows 11 terminal, live-provider coding, model/image selection, cross-client restart/handoff, complete ACC-03/05/11, OS-level command containment, and final V1 acceptance remain open.
+
 ## 2026-08-10 models, workspace transfer, and Desktop shell checkpoint
 
 - Deterministic model gate: schema 3 and protocol carry an explicit model id; DeepSeek Flash remains the default, DeepSeek Pro remains a distinct selection, and MiniMax M3 is explicit. The Pi M3 fixture proved domestic URL construction and typed image content; no live MiniMax entitlement or credential was used.

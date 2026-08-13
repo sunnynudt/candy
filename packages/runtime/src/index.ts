@@ -445,6 +445,7 @@ export {
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
   NonGitWorkspaceChangeTracker,
+  ResolvedWorkspaceChangeTracker,
   LongRunningTaskRunner,
   LongRunningControlError,
   CommandValidator,

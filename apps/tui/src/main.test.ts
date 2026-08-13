@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
+import type {
+  CommandValidatorCommand,
+  ValidatorResult,
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeTracker,
+} from "@candy/runtime";
 import { InteractiveTui, type TuiAgentEngine } from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
 
 async function waitForOutput(terminal: FakeTerminal, pattern: RegExp): Promise<string> {
-  for (let attempt: number = 0; attempt < 20; attempt += 1) {
+  for (let attempt: number = 0; attempt < 500; attempt += 1) {
     const output: string = terminal.writes.join("");
     if (pattern.test(output)) return output;
     await new Promise<void>((resolve: () => void): void => {
-      setImmediate(resolve);
+      setTimeout(resolve, 1);
     });
   }
   return terminal.writes.join("");
@@ -385,3 +391,255 @@ test("interactive TUI may inspect but cannot control a task owned by another cli
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("interactive TUI reviews non-Git changed files and bounded diff without mutating the workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-nongit-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-workspace-"));
+  const terminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      await writeFile(path.join(input.cwd, "new.ts"), "created by fixture\n");
+      await unlink(path.join(input.cwd, "obsolete.ts"));
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await writeFile(path.join(workspace, "obsolete.ts"), "before\n");
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("review workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    const changes = await waitForOutput(terminal, /changed files:/u);
+    assert.match(changes, /new\.ts/u);
+    assert.match(changes, /obsolete\.ts/u);
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    const diff = await waitForOutput(terminal, /changed: new\.ts/u);
+    assert.match(diff, /changed: obsolete\.ts/u);
+    assert.equal(await readWorkspaceFile(workspace, "new.ts"), "created by fixture\n");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI reviews Git tracked, untracked, removed files and filters diff paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-git-"));
+  const terminal = new FakeTerminal();
+  const changes: WorkspaceChangeSnapshot = {
+    available: true,
+    tracked: ["src/value.ts", "old.ts"],
+    untracked: ["notes.txt"],
+    patchText:
+      "diff --git a/src/value.ts b/src/value.ts\n@@ -1 +1 @@\n-old\n+new\n" +
+      "diff --git a/old.ts b/old.ts\ndeleted file mode 100644\n",
+    patchTruncated: false,
+  };
+  const changeTracker: WorkspaceChangeTracker = {
+    async captureBaseline() {
+      return "0123456789abcdef";
+    },
+    async inspect() {
+      return changes;
+    },
+  };
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+      changeTracker,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("review git workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    const changesOutput = await waitForOutput(terminal, /removed:/u);
+    assert.match(changesOutput, /tracked: src\/value\.ts/u);
+    assert.match(changesOutput, /untracked: notes\.txt/u);
+    assert.match(changesOutput, /removed: old\.ts/u);
+    terminal.emitInput(":diff src/value.ts");
+    terminal.emitInput("\r");
+    const diffOutput = await waitForOutput(terminal, /@@ -1 \+1 @@/u);
+    assert.match(diffOutput, /src\/value\.ts/u);
+    assert.doesNotMatch(diffOutput, /deleted file mode/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI bounds a large diff before rendering it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-large-diff-"));
+  const terminal = new FakeTerminal();
+  const largePatch = `diff --git a/src/large.ts b/src/large.ts\n${"+line\n".repeat(20_000)}`;
+  const changeTracker: WorkspaceChangeTracker = {
+    async captureBaseline() {
+      return "0123456789abcdef";
+    },
+    async inspect() {
+      return {
+        available: true,
+        tracked: ["src/large.ts"],
+        untracked: [],
+        patchText: largePatch,
+        patchTruncated: false,
+      };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      changeTracker,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("review large diff");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /diff truncated at 65536 bytes/u);
+    assert.match(output, /diff truncated at 65536 bytes/u);
+    assert.ok(
+      Math.max(...terminal.writes.map((write) => Buffer.byteLength(write, "utf8"))) < 70 * 1024,
+    );
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI projects explicit validator pass, fail, cancel, and timeout safely", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-validator-"));
+  const terminal = new FakeTerminal();
+  const results = new Map<string, ValidatorResult>([
+    ["pass", { ok: true, fingerprint: "pass", evidence: "validator passed", durationMs: 1 }],
+    [
+      "fail",
+      {
+        ok: false,
+        fingerprint: "fail",
+        evidence: "validator failed fixture-secret",
+        durationMs: 2,
+      },
+    ],
+  ]);
+  const validator = {
+    run: async (
+      command: CommandValidatorCommand,
+      _workspace: string,
+      signal: AbortSignal,
+    ): Promise<ValidatorResult> => {
+      const mode = command.args[0];
+      const result = results.get(mode ?? "");
+      if (result !== undefined) return result;
+      if (mode === "cancel") {
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("validator cancelled")), {
+            once: true,
+          });
+        });
+      }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason ?? new Error("timeout")), {
+          once: true,
+        });
+      });
+      throw new Error("validator did not stop");
+    },
+  };
+  const taskIds: string[] = [];
+  const createAndValidate = async (mode: string, expected: RegExp): Promise<string> => {
+    terminal.emitInput(`:validator ${process.execPath} ${mode}`);
+    terminal.emitInput("\r");
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    terminal.emitInput(`run ${mode}`);
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /created (task-[a-z0-9]+)/u);
+    const taskId = [...created.matchAll(/created (task-[a-z0-9]+)/gu)].at(-1)?.[1];
+    assert.ok(taskId);
+    taskIds.push(taskId);
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":validate");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, expected);
+    return taskId;
+  };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+      validator,
+      validatorTimeoutMs: 5,
+      activeSecrets: () => ["fixture-secret"],
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await createAndValidate("pass", /validator pass/u);
+    await createAndValidate("fail", /validator fail/u);
+    const cancelledTask = await createAndValidate("cancel", /validator running/u);
+    terminal.emitInput(`:cancel ${cancelledTask}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /validator cancelled/u);
+    await createAndValidate("timeout", /validator running/u);
+    await waitForOutput(terminal, /validator timeout/u);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.equal(store.list().length, taskIds.length);
+    assert.ok(store.list().every((task) => task.validator?.executable === process.execPath));
+    assert.ok(
+      store
+        .list()
+        .some(
+          (task) => store.getRun(task.taskId)?.evidenceSummary === "validator failed [REDACTED]",
+        ),
+    );
+    assert.doesNotMatch(terminal.writes.join(""), /fixture-secret/u);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function readWorkspaceFile(workspace: string, fileName: string): Promise<string> {
+  return readFile(path.join(workspace, fileName), "utf8");
+}

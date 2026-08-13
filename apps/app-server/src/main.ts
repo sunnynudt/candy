@@ -38,6 +38,7 @@ import {
   LongRunningControlError,
   LongRunningTaskRunner,
   NonGitWorkspaceChangeTracker,
+  ResolvedWorkspaceChangeTracker,
   WorkspaceHandoff,
   type AgentObservation,
   type AgentTurnInput,
@@ -46,7 +47,6 @@ import {
   type RecoverableAgentEngine,
   type CommandValidatorCommand,
   type ValidatorResult,
-  type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
   planGitWorktree,
 } from "@candy/runtime";
@@ -54,29 +54,6 @@ import {
 interface PiTurnEngine {
   runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
   recoverPrompt(taskId: string, cwd: string): Promise<string | undefined>;
-}
-
-class ResolvedWorkspaceChangeTracker implements WorkspaceChangeTracker {
-  public constructor(
-    private readonly git: WorkspaceChangeTracker,
-    private readonly nonGit: WorkspaceChangeTracker,
-  ) {}
-
-  public async captureBaseline(workspace: string): Promise<string | undefined> {
-    const baseline = await this.git.captureBaseline(workspace);
-    if (baseline !== undefined) return baseline;
-    await this.nonGit.captureBaseline(workspace);
-    return undefined;
-  }
-
-  public async inspect(
-    workspace: string,
-    baseCommit?: string,
-    activeSecrets?: readonly string[],
-  ): Promise<WorkspaceChangeSnapshot> {
-    if (baseCommit !== undefined) return this.git.inspect(workspace, baseCommit, activeSecrets);
-    return this.nonGit.inspect(workspace, baseCommit, activeSecrets);
-  }
 }
 
 export class PiAppServerEngine implements RecoverableAgentEngine {

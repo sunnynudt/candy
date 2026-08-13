@@ -660,6 +660,31 @@ export interface WorkspaceChangeTracker {
   ): Promise<WorkspaceChangeSnapshot>;
 }
 
+/** Selects the Git or non-Git review implementation without duplicating the policy at clients. */
+export class ResolvedWorkspaceChangeTracker implements WorkspaceChangeTracker {
+  public constructor(
+    private readonly git: WorkspaceChangeTracker,
+    private readonly nonGit: WorkspaceChangeTracker,
+  ) {}
+
+  public async captureBaseline(workspace: string): Promise<string | undefined> {
+    const baseline = await this.git.captureBaseline(workspace);
+    if (baseline !== undefined) return baseline;
+    await this.nonGit.captureBaseline(workspace);
+    return undefined;
+  }
+
+  public async inspect(
+    workspace: string,
+    baseCommit?: string,
+    activeSecrets?: readonly string[],
+  ): Promise<WorkspaceChangeSnapshot> {
+    return baseCommit === undefined
+      ? this.nonGit.inspect(workspace, baseCommit, activeSecrets)
+      : this.git.inspect(workspace, baseCommit, activeSecrets);
+  }
+}
+
 export interface GitCommandRunner {
   run(args: readonly string[], cwd: string, input?: string): Promise<string>;
 }
