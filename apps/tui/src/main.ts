@@ -144,7 +144,7 @@ const DEFAULT_VALIDATOR_TIMEOUT_MS = 30_000;
 
 export class InteractiveTui {
   readonly #appDataRoot: string;
-  readonly #workspacePath: string;
+  #workspacePath: string;
   readonly #terminal: CandyTuiTerminal | undefined;
   readonly #store: SQLiteTaskStore;
   readonly #attachments: AttachmentStore;
@@ -230,7 +230,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
     this.write("Profile: read-only. Auto enables file create/edit/delete; Shell stays disabled.\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -266,6 +266,10 @@ export class InteractiveTui {
       this.newTask(trimmed.slice(4).trim());
     } else if (trimmed.startsWith(":use ")) {
       this.useTask(trimmed.slice(5).trim());
+    } else if (trimmed === ":workspace" || trimmed.startsWith(":workspace ")) {
+      void this.configureWorkspace(trimmed.slice(10).trim()).catch((error: unknown) => {
+        this.write(`workspace rejected: ${safeError(error)}\n`);
+      });
     } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
       this.showTranscript(trimmed.slice(11).trim());
     } else if (trimmed === ":model" || trimmed.startsWith(":model ")) {
@@ -337,13 +341,14 @@ export class InteractiveTui {
     const taskId = `task-${randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
+    const workspacePath = this.#workspacePath;
     const metadata = this.#store.create(
       taskId,
       this.#approvalProfile,
       queueOrder,
       this.#selectedModel,
       this.#selectedAttachmentIds,
-      this.#workspacePath,
+      workspacePath,
       this.#validatorCommand,
     );
     this.#selectedAttachmentIds = [];
@@ -353,7 +358,7 @@ export class InteractiveTui {
     this.#currentTaskId = taskId;
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
-    const workspaceBaseline = await this.#changeTracker.captureBaseline(this.#workspacePath);
+    const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
     this.#store.updateBaseline(taskId, workspaceBaseline);
     this.drain(new Map([[taskId, prompt]]));
   }
@@ -422,6 +427,23 @@ export class InteractiveTui {
       return;
     }
     this.create(prompt);
+  }
+
+  private async configureWorkspace(value: string): Promise<void> {
+    if (value === "") {
+      this.write(`workspace: ${this.#workspacePath}\n`);
+      return;
+    }
+    if (containsControlCharacter(value) || !path.isAbsolute(value)) {
+      throw new Error("Workspace paths must be absolute and free of control characters.");
+    }
+    const candidate = path.resolve(value);
+    const workspace = await stat(candidate).catch(() => undefined);
+    if (workspace === undefined || !workspace.isDirectory()) {
+      throw new Error("Workspace path must be an existing directory.");
+    }
+    this.#workspacePath = await realpath(candidate);
+    this.write(`workspace selected: ${this.#workspacePath}\n`);
   }
 
   private configureModel(value: string): void {

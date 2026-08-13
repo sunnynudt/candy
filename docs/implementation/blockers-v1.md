@@ -48,6 +48,12 @@ Updated: 2026-08-13
 - The tests cover workspace-relative containment, symlink/reparse-style fail-closed behavior, invalid/control text, ignored Candy app-data/dependency/cache directories, binary/invalid UTF-8 skipping, cancellation, result limits, tool schemas, and active-secret redaction. This clears only the deterministic adapter slice.
 - No blocker is cleared by this checkpoint: real macOS/Windows terminal and cross-client evidence, provider/live-session evidence, G2 containment, full ACC-03/ACC-05/ACC-11, and final V1 acceptance remain open. Shell Auto and Shell Auto Debug stay disabled.
 
+## 2026-08-13 TUI workspace-selection checkpoint
+
+- `:workspace [absolute-path]` now lets the TUI choose an existing directory before creating a new task. The command rejects relative/control-character/non-directory paths, supports paths containing spaces, canonicalizes macOS `/var` aliases, and does not rewrite the workspace of an existing task.
+- The real PTY journey starts from the temporary workspace parent, selects the workspace through this command, and verifies the persisted task workspace plus unchanged Git HEAD/index/commit state.
+- No blocker is cleared: the current MacBook Pro reports macOS Tahoe `26.6.1`, while the strict ENV-MAC acceptance baseline remains `26.5.2`; this is current-host TUI Personal Preview evidence only. Desktop remains lower priority in the active continuation, and Shell Auto/Shell Auto Debug stay disabled.
+
 ## Daily platform handoff boundary
 
 ## 2026-08-12 macOS live DeepSeek checkpoint

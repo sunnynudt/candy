@@ -19,9 +19,12 @@ proc wait_for {pattern description} {
   }
 }
 
-cd $env(CANDY_JOURNEY_WORKSPACE)
+cd $env(CANDY_JOURNEY_LAUNCH_DIR)
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
 wait_for {Candy TUI} "TUI startup"
+
+send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
+wait_for {workspace selected:} "workspace selection"
 
 send_command ":profile auto"
 wait_for {profile auto: file read/create/edit enabled;} "Auto profile"

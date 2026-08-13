@@ -1,6 +1,15 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +21,7 @@ if (process.platform !== "darwin" || process.arch !== "arm64")
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const journeyRoot = await mkdtemp(path.join(os.tmpdir(), "candy-tui-pty-"));
-const workspace = path.join(journeyRoot, "workspace");
+const workspace = path.join(journeyRoot, "workspace with spaces");
 const appDataRoot = path.join(journeyRoot, "app-data");
 const temporaryRoot = path.join(journeyRoot, "tmp");
 const imagePath = path.join(journeyRoot, "fixture.png");
@@ -42,6 +51,7 @@ const environment = {
   CANDY_JOURNEY_CHILD: childPath,
   CANDY_JOURNEY_EXPECTED_ATTACHMENT: expectedAttachmentId,
   CANDY_JOURNEY_IMAGE: imagePath,
+  CANDY_JOURNEY_LAUNCH_DIR: journeyRoot,
   CANDY_JOURNEY_NODE: process.execPath,
   CANDY_JOURNEY_PTY_LOG: ptyLog,
   CANDY_JOURNEY_RESULT: resultPath,
@@ -124,6 +134,8 @@ try {
   const transcript = store.transcript(taskId);
   const run = store.getRun(taskId);
   if (metadata?.state !== "completed") throw new Error("The task did not recover as completed.");
+  if (metadata.workspacePath !== (await realpath(workspace)))
+    throw new Error("The TUI did not persist the selected workspace.");
   if (metadata.model !== "MiniMax-M3") throw new Error("The task model was not persisted.");
   if (metadata.approvalProfile !== "auto") throw new Error("The Auto profile was not persisted.");
   if (metadata.attachmentIds.length !== 1 || metadata.attachmentIds[0] !== attachmentId)

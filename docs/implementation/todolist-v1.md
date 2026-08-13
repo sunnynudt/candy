@@ -75,6 +75,8 @@
 
 - ☑️ TUI 工作区浏览/搜索已接入：Candy 自有 `candy_list` 与 `candy_search` 通过 Node 文件系统 API 提供有界目录列表和 literal UTF-8 文本搜索；Read-only/Auto 两个 profile 都只开放这两个只读能力，未开放 Shell、`rg` 或 Pi builtin。路径 containment、symlink/reparse-style fail-closed、控制/非法编码、Candy app-data/依赖缓存排除、二进制跳过、取消、输出/行/文件上限和活动 secret 脱敏均有测试。此项仍不替代真实 macOS/Windows 终端、G2、Shell Auto、完整 ACC-03 或最终 V1 验收。
 
+- ☑️ TUI 工作区选择已接入：`:workspace [absolute-path]` 展示当前默认目录，拒绝相对路径、控制字符、缺失路径和非目录，支持带空格的绝对路径，并在选择后 canonicalize；它只影响后续 `:new`，已存在任务继续使用其持久化 workspace。任务创建会先快照 workspace，再异步保存 baseline，避免切换竞态。TUI 单测和当前 macOS Tahoe `26.6.1` arm64 的真实 PTY journey 均覆盖该入口；这不是 macOS `26.5.2` 正式验收 Pass。
+
 - ☑️ TUI 文件增删改查已接入：启动仍为 Read-only，`:profile auto` 为后续任务开放 `candy_read`、`candy_edit`、`candy_write` 与 `candy_delete`；删除逐次要求 `:approve <id>` / `:deny <id>`，并拒绝越界、symlink、目录、控制字符路径和审批期间目标变化。固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 139/139、native check 与两个 TUI smoke 通过。此项不包含 Shell、validator、diff UI、模型/图片选择或完整 ACC-03。
 
 - ☑️ TUI 变更审查与显式 validator 已接入：任务创建时保存 workspace baseline，`:changes` 展示 tracked/untracked/removed，`:diff [path]` 做安全路径过滤并将渲染限制为 64 KiB；`:validator <absolute-executable> [args]` 与 `:validate` 通过 Candy native runner/Runtime `CommandValidator` 执行，支持 pass/fail/cancel/timeout、bounded redacted evidence 和 native unavailable blocked。无自动 Apply、stage、commit、push，Shell 仍禁用。Node `22.23.2`/npm `10.9.8` 下 `npm run check` 150/150、`check:native`、TUI/App Server/safe-edit smoke 和 `git diff --check` 通过。此项不替代真实 macOS/Windows 终端、G2、live provider、完整 ACC-03/05/11 或最终 V1 验收。
@@ -83,7 +85,7 @@
 
 - ☑️ TUI provider 失败恢复已接入：Pi `ProviderContractError` 仅映射为固定脱敏类别；中断任务显示 `:resume <task-id>`、显式 `:model` 和 `:cancel <task-id>`，paused/interrupted 任务可显式取消且不自动重放。Node `22.23.2`/npm `10.9.8` 下 targeted TUI provider-recovery test 通过；严格 `acceptance:macos` 因当前主机为 macOS `26.6.1` 而接受基线要求 `26.5.2`，在执行前拒绝，未形成平台验收证据。
 
-- ◐ TUI Personal Preview 真实 PTY 旅程：新增 `:transcript [task-id]` 和 macOS Expect-backed PTY smoke；当前 macOS `26.6.1` arm64 通过两轮同任务编码、Candy workspace tools、逐次删除审批、MiniMax M3 图片、changed files/diff、显式 native validator、退出重启恢复和 terminal cleanup，并验证 Git index/HEAD/commit、workspace 外 sentinel 与 PTY/app-data/diff/Expect stdout-stderr 敏感证据边界不变；严格 runner 在目标版本缺失时会写出当前 HEAD 的 Blocked preflight report，不会沿用旧 latest 报告。待在 macOS `26.5.2` arm64 上重跑并纳入完整平台验收；不替代 Windows、live provider、G2 或最终 V1 证据。
+- ◐ TUI Personal Preview 真实 PTY 旅程：新增 `:transcript [task-id]` 和 macOS Expect-backed PTY smoke；当前 macOS Tahoe `26.6.1` arm64 从工作区父目录启动后，通过 TUI 选择带空格的 workspace，完成两轮同任务编码、Candy workspace tools、逐次删除审批、MiniMax M3 图片、changed files/diff、显式 native validator、退出重启恢复和 terminal cleanup，并验证 Git index/HEAD/commit、workspace 外 sentinel 与 PTY/app-data/diff/Expect stdout-stderr 敏感证据边界不变；严格 runner 在目标版本缺失时会写出当前 HEAD 的 Blocked preflight report，不会沿用旧 latest 报告。待在 macOS `26.5.2` arm64 上重跑并纳入完整平台验收；不替代 Windows、live provider、G2 或最终 V1 证据。
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 

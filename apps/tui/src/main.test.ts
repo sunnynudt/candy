@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -271,6 +271,71 @@ test("interactive TUI continues the current task and :new starts a different tas
     store.close();
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI selects an existing workspace for new tasks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-command-app-"));
+  const firstWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace command-first-"));
+  const secondWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace command-second-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const workspaces: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      workspaces.push(input.cwd);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: `workspace selected ${workspaces.length}`,
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":workspace relative");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Workspace paths must be absolute/u);
+
+    terminal.emitInput(`:workspace ${firstWorkspace}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /workspace selected:/u);
+    terminal.emitInput("work in the first workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /created task-/u);
+    await waitForOutput(terminal, /task-[a-z0-9]+ completed/u);
+
+    terminal.emitInput(`:workspace ${secondWorkspace}`);
+    terminal.emitInput("\r");
+    await waitForOutput(
+      terminal,
+      new RegExp(`workspace selected: .*${path.basename(secondWorkspace)}`, "u"),
+    );
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /new task ready/u);
+    terminal.emitInput("work in the second workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /workspace selected 2/u);
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.deepEqual(workspaces, [await realpath(firstWorkspace), await realpath(secondWorkspace)]);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(
+      store.list().map((task) => task.workspacePath),
+      [await realpath(firstWorkspace), await realpath(secondWorkspace)],
+    );
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(firstWorkspace, { recursive: true, force: true });
+    await rm(secondWorkspace, { recursive: true, force: true });
   }
 });
 

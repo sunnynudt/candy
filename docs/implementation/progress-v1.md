@@ -88,6 +88,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - The macOS acceptance runner now writes a sanitized current-HEAD `Blocked` preflight report when the required host version is unavailable, instead of leaving a stale `latest.md`; it runs no acceptance step in that case.
 - Current host evidence: macOS `26.6.1` arm64, deterministic fixture, validator pass, transcript/model/attachment/task recovery pass. This is real-terminal evidence on the current host only; the required macOS `26.5.2` baseline, live-provider journey, Windows terminal, G2, and final V1 acceptance remain separate.
 
+## 2026-08-13 TUI workspace-selection checkpoint
+
+- Added `:workspace [absolute-path]` to the TUI. It reports the current default workspace, rejects relative/control-character/non-directory paths, canonicalizes an existing directory, and applies the selection only to subsequent `:new` tasks; an existing task keeps its persisted workspace.
+- The task-creation path snapshots the selected workspace before asynchronous baseline capture, so metadata and change review cannot bind to different directories if the user changes the default during startup.
+- Test-first evidence covers invalid paths, an absolute path containing spaces, two sequential tasks using different selected workspaces, canonical `/private` path handling, and persisted task metadata. The real macOS PTY journey now launches from the workspace parent and selects the workspace inside the TUI before exercising the full coding loop.
+- Current host evidence is macOS Tahoe `26.6.1` arm64. This closes the TUI workspace-selection implementation slice only; it does not convert the strict `26.5.2` preflight block into platform acceptance, and Desktop remains lower priority for this continuation.
+
 ## 2026-08-12 WP3 native-process boundary checkpoint
 
 - `@candy/runtime` now exposes only the platform-neutral `CommandRunner` port and common `CommandValidator` for command-validator execution. The validator retains the existing bounded, active-secret-redacted evidence and cancellation result contract.
