@@ -85,7 +85,7 @@ const beforeCommitCount = gitCapture(["-C", workspace, "rev-list", "--count", "H
 const outsideDigest = digest(await readFile(outsideSentinel));
 
 try {
-  await runExpect();
+  const expectOutput = await runExpect();
   const result = parseResult(await readFile(resultPath, "utf8"));
   const taskId = result.task_id;
   const attachmentId = result.attachment_id;
@@ -166,7 +166,11 @@ try {
     throw new Error("The persisted image attachment was not restored.");
 
   const ptyOutput = await readFile(ptyLog);
-  assertNoSensitiveJourneyData(ptyOutput, await collectFiles(appDataRoot), syntheticSecretCanary);
+  assertNoSensitiveJourneyData(
+    Buffer.concat([ptyOutput, expectOutput.stdout, expectOutput.stderr]),
+    await collectFiles(appDataRoot),
+    syntheticSecretCanary,
+  );
   if (!ptyOutput.includes("\u001b[?1049h") || !ptyOutput.includes("\u001b[?1049l"))
     throw new Error("Alternate-screen enter/exit was not observed.");
   if (!ptyOutput.includes("\u001b[?25l") || !ptyOutput.includes("\u001b[?25h"))
@@ -198,7 +202,7 @@ try {
 }
 
 async function runExpect() {
-  await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const child = execFile(
       expectPath,
       ["-f", path.join(root, "scripts", "smoke-tui-journey-macos.exp")],
@@ -208,15 +212,19 @@ async function runExpect() {
         maxBuffer: 64 * 1024,
       },
     );
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout?.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr?.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     child.once("error", reject);
     child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
+      if (code === 0) resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
       else
-        reject(new Error(`expect exited ${code ?? "null"}/${signal ?? "none"}: ${stderr.trim()}`));
+        reject(
+          new Error(
+            `expect exited ${code ?? "null"}/${signal ?? "none"}: ${Buffer.concat(stderr).toString("utf8").trim()}`,
+          ),
+        );
     });
   });
 }
