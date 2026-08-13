@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { ProviderContractError } from "@candy/pi-adapter";
 import { resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
 import type {
   CommandValidatorCommand,
@@ -97,6 +98,44 @@ test("interactive TUI restores the terminal after a task error and Ctrl+C", asyn
     assert.equal(terminal.stopped, true);
     assert.equal(terminal.drainCalls, 1);
     assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI exposes sanitized provider recovery actions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-provider-recovery-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      throw new ProviderContractError("Provider request timed out.", "provider_error", "timeout");
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new InteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /provider request timed out/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    assert.match(
+      output,
+      new RegExp(`recovery: :resume ${taskId}, :model deepseek-pro, or :cancel`, "u"),
+    );
+    assert.doesNotMatch(output, /fixture-secret|Bearer\s+|sk-proj-/iu);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    terminal.emitInput("\x03");
+    await runPromise;
   } finally {
     await rm(root, { recursive: true, force: true });
   }

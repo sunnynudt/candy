@@ -143,6 +143,12 @@ Blocked external resources do not stop independent implementation. They do preve
 - Test-first local evidence is 155/155 repository tests, including typed domestic MiniMax image content, DeepSeek no-fallback, 401/429/timeout/cancelled redacted provider contracts, and attachment restart recovery. No new live provider call was made in this checkpoint.
 - Remaining blocker boundary: real macOS/Windows terminals, complete Desktop attachment UX, live usage/entitlement evidence, G2 OS containment, full ACC-03/04/11, and final V1 acceptance remain open. Shell Auto and Shell Auto Debug remain disabled.
 
+## 2026-08-13 TUI provider-failure recovery checkpoint
+
+- The deterministic TUI provider-failure UX gap is closed: sanitized typed provider errors now expose only fixed safe categories, and interrupted tasks show explicit `:resume`, `:model`, and `:cancel` recovery actions. Paused/interrupted cancellation is revision-fenced and does not start another turn.
+- The strict macOS acceptance runner did not produce a result on this host: it requires macOS `26.5.2` arm64 and stopped before executing steps after observing macOS `26.6.1` arm64. This is an environment mismatch, not a Pass/Fail result for ENV-MAC.
+- Real `26.5.2` terminal evidence, Windows terminal evidence, live-provider coding journeys, complete ACC-03/04/11, G2, signing, and final V1 acceptance remain open.
+
 ## 2026-08-10 models, workspace transfer, and Desktop shell checkpoint
 
 - Deterministic model gate: schema 3 and protocol carry an explicit model id; DeepSeek Flash remains the default, DeepSeek Pro remains a distinct selection, and MiniMax M3 is explicit. The Pi M3 fixture proved domestic URL construction and typed image content; no live MiniMax entitlement or credential was used.

@@ -7,6 +7,7 @@ import {
   PI_COMPATIBILITY_VERSION,
   MiniMaxPiAgentEngine,
   PiAgentEngine,
+  ProviderContractError,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
@@ -893,6 +894,9 @@ export class InteractiveTui {
           current.revision,
         );
         this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
+        if (error instanceof ProviderContractError && stopped.state === "interrupted") {
+          this.write(`recovery: :resume ${taskId}, :model deepseek-pro, or :cancel ${taskId}\n`);
+        }
       }
     } finally {
       this.#abortControllers.delete(taskId);
@@ -920,9 +924,14 @@ export class InteractiveTui {
       this.#scheduler.cancelQueued(taskId);
       task.transition("cancelled", task.snapshot().revision);
       this.write(`${taskId} cancelled before start\n`);
-    } else {
-      this.write(`${taskId} is not an active task\n`);
+      return;
     }
+    if (task?.snapshot().state === "paused" || task?.snapshot().state === "interrupted") {
+      task.transition("cancelled", task.snapshot().revision);
+      this.write(`${taskId} cancelled\n`);
+      return;
+    }
+    this.write(`${taskId} is not an active task\n`);
   }
 
   private pause(taskId: string): void {
@@ -1184,6 +1193,7 @@ function redactSensitive(value: string, activeSecrets: readonly string[]): strin
 }
 
 function safeError(error: unknown): string {
+  if (error instanceof ProviderContractError) return safeProviderError(error);
   if (
     error instanceof Error &&
     /credentials|cancelled|unavailable|attachment|image|workspace|symbolic|MIME|video|model|active turn|queued/iu.test(
@@ -1192,6 +1202,26 @@ function safeError(error: unknown): string {
   )
     return error.message;
   return "runtime error";
+}
+
+function safeProviderError(error: ProviderContractError): string {
+  if (error.code === "needs_credentials") return "provider credentials are unavailable";
+  if (error.code === "unapproved_endpoint") return "provider endpoint is not approved";
+  if (error.code === "malformed_stream") return "provider response was malformed";
+  switch (error.reason) {
+    case "unauthorized":
+      return "provider rejected the credential";
+    case "rate_limited":
+      return "provider rate limit reached";
+    case "timeout":
+      return "provider request timed out";
+    case "network_error":
+      return "provider network request failed";
+    case "http_error":
+      return "provider request failed";
+    default:
+      return "provider request failed";
+  }
 }
 
 function containsCredentialMaterial(value: string): boolean {

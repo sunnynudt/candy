@@ -1,6 +1,6 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-12
+更新日期：2026-08-13
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
@@ -80,6 +80,8 @@
 - ☑️ TUI 变更审查与显式 validator 已接入：任务创建时保存 workspace baseline，`:changes` 展示 tracked/untracked/removed，`:diff [path]` 做安全路径过滤并将渲染限制为 64 KiB；`:validator <absolute-executable> [args]` 与 `:validate` 通过 Candy native runner/Runtime `CommandValidator` 执行，支持 pass/fail/cancel/timeout、bounded redacted evidence 和 native unavailable blocked。无自动 Apply、stage、commit、push，Shell 仍禁用。Node `22.23.2`/npm `10.9.8` 下 `npm run check` 150/150、`check:native`、TUI/App Server/safe-edit smoke 和 `git diff --check` 通过。此项不替代真实 macOS/Windows 终端、G2、live provider、完整 ACC-03/05/11 或最终 V1 验收。
 
 - ☑️ TUI 显式模型/图片附件已接入：`:model` 支持 `deepseek-flash`、`deepseek-pro`、`minimax-m3` 并将 canonical id 持久化到任务；活动/排队任务禁止换模，MiniMax M3 使用独立 provider engine，DeepSeek 图像 turn 不自动 fallback。`:attach <absolute-path>` / `:attachments` 复用 Candy-owned AttachmentStore，仅将 attachment id 与有界元数据放入任务状态；workspace/Candy app-data、symlink、video、unsupported MIME、超大/损坏图片和 credential-bearing 内容均拒绝，MiniMax image attachment 可在重启后恢复。Node `22.23.2`/npm `10.9.8` 下 `npm test` 155/155，Pi typed-image/domestic-endpoint/no-fallback 与 provider 错误脱敏契约通过。此项仍不替代真实终端、完整 Desktop attachment UX、live MiniMax/Token Plan、G2、完整 ACC-03/04/11 或最终 V1 验收。
+
+- ☑️ TUI provider 失败恢复已接入：Pi `ProviderContractError` 仅映射为固定脱敏类别；中断任务显示 `:resume <task-id>`、显式 `:model` 和 `:cancel <task-id>`，paused/interrupted 任务可显式取消且不自动重放。Node `22.23.2`/npm `10.9.8` 下 targeted TUI provider-recovery test 通过；严格 `acceptance:macos` 因当前主机为 macOS `26.6.1` 而接受基线要求 `26.5.2`，在执行前拒绝，未形成平台验收证据。
 
 - ☑️ 修复 macOS Git Task Worktree 关联校验：原生路径比较现在通过 `realpath` 解析 `/var` 与 `/private/var` 的 canonical-path alias；跨宿主 Windows fixture 显式注入 `path.win32`，不再使用 macOS POSIX 语义。Worktree 根目录仍使用 lexical containment，锁定原因仍要求精确匹配，且新增 macOS alias 与跨宿主回归覆盖。已发布提交 `91f4f12d3d6b92d2d657d341ff14c14ef3482369` 在干净工作树上通过 `npm run check`（94/94 tests）和 `npm run acceptance:macos`（9/9 deterministic/native/Desktop steps）；报告为 `out/acceptance/macos/latest.md`，未运行 live provider。
 
