@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DeepSeekClient,
+  MiniMaxClient,
   MiniMaxPiAgentEngine,
   PiAgentEngine,
   ProviderContractError,
@@ -205,12 +206,7 @@ async function runGate(selectedProvider) {
           (outcome) => outcome.errorClass === "cancelled" && !hasCompleted(outcome),
         ),
       );
-      results.push({
-        id: "LIVE-MM-04-error-contracts",
-        status: "blocked",
-        durationMs: 0,
-        summary: "controlled_limit_error_fixture_required",
-      });
+      results.push(await runControlledMiniMaxErrorContracts(secret));
       results.push({
         id: "LIVE-MM-05",
         status: "blocked",
@@ -375,6 +371,125 @@ async function runControlledDeepSeekErrorContracts(secret) {
   const recovery = outcomes.every((outcome) => outcome.recovered) ? "verified" : "failed";
   return {
     id: "LIVE-DS-04-error-contracts",
+    status: outcomes.every((outcome) => outcome.pass) ? "pass" : "fail",
+    durationMs: Date.now() - started,
+    summary: `${summary}; recovery=${recovery}; credential=not_in_error_or_fixture`,
+  };
+}
+
+async function runControlledMiniMaxErrorContracts(secret) {
+  const started = Date.now();
+  const fixtures = [
+    { name: "401", status: 401, reason: "unauthorized" },
+    { name: "429", status: 429, reason: "rate_limited" },
+    { name: "timeout", status: undefined, reason: "timeout" },
+  ];
+  const outcomes = [];
+  for (const fixture of fixtures) {
+    let failure = true;
+    let leaseReleases = 0;
+    let authorizationHeaderMissing = false;
+    const client = new MiniMaxClient(
+      async () => ({
+        secret,
+        release: () => {
+          leaseReleases += 1;
+        },
+      }),
+      async (_input, init) => {
+        if (!new globalThis.Headers(init.headers).has("authorization")) {
+          authorizationHeaderMissing = true;
+        }
+        if (failure) {
+          if (fixture.status !== undefined) {
+            return new globalThis.Response(null, { status: fixture.status });
+          }
+          const error = new Error("controlled provider timeout fixture");
+          error.name = "TimeoutError";
+          throw error;
+        }
+        return new globalThis.Response(
+          [
+            "event: message_start",
+            'data: {"type":"message_start","message":{"id":"fixture","type":"message","role":"assistant","model":"MiniMax-M3","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+            "",
+            "event: content_block_start",
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            "",
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"recovered"}}',
+            "",
+            "event: content_block_stop",
+            'data: {"type":"content_block_stop","index":0}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+            "",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    );
+
+    let firstError;
+    try {
+      for await (const delta of client.stream(
+        {
+          model: "MiniMax-M3",
+          messages: [{ role: "user", content: [{ type: "text", text: "fixture" }] }],
+          max_tokens: 16,
+          stream: true,
+        },
+        new globalThis.AbortController().signal,
+      )) {
+        // The fixture must fail before a provider delta is exposed.
+        void delta;
+      }
+    } catch (error) {
+      firstError = error;
+    }
+
+    const firstPass =
+      firstError instanceof ProviderContractError &&
+      firstError.code === "provider_error" &&
+      firstError.reason === fixture.reason &&
+      !firstError.message.includes(secret);
+    failure = false;
+    let recovered = false;
+    try {
+      const deltas = [];
+      for await (const delta of client.stream(
+        {
+          model: "MiniMax-M3",
+          messages: [{ role: "user", content: [{ type: "text", text: "recovery" }] }],
+          max_tokens: 16,
+          stream: true,
+        },
+        new globalThis.AbortController().signal,
+      )) {
+        deltas.push(delta);
+      }
+      recovered = deltas.some((delta) => delta.text === "recovered");
+    } catch {
+      // The failed recovery attempt is reflected by the default false value.
+    }
+    outcomes.push({
+      name: fixture.name,
+      pass: firstPass && recovered && !authorizationHeaderMissing && leaseReleases === 2,
+      recovered,
+    });
+  }
+
+  const summary = outcomes
+    .map((outcome) => `${outcome.name}=${outcome.pass ? "pass" : "fail"}`)
+    .join(",");
+  const recovery = outcomes.every((outcome) => outcome.recovered) ? "verified" : "failed";
+  return {
+    id: "LIVE-MM-04-error-contracts",
     status: outcomes.every((outcome) => outcome.pass) ? "pass" : "fail",
     durationMs: Date.now() - started,
     summary: `${summary}; recovery=${recovery}; credential=not_in_error_or_fixture`,
