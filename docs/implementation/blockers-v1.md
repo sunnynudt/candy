@@ -34,6 +34,12 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 - Follow-up revision `fd7f658` also passes the current-host deterministic/package acceptance runner `21/21`; the `/tmp` to `/private/tmp` metadata-only alias fix remains macOS containment evidence, not an independent G2 decision or Windows evidence.
 - This does not prove Windows, exact macOS `26.5.2`, signed packaging, or final V1 acceptance. The normal TUI composition root remains default-off; only the explicit acceptance composition root enables the capability while G2 is pending.
 
+## 2026-08-14 Trusted Shell credential-redaction follow-up
+
+- Current published revision `aea91a6d3fcd9a0eb09ea2dac2460808747dd1b7` fixes the prior selected-provider-only shell redaction gap by carrying all active Candy provider secrets through the Trusted Shell turn and deduplicating them at the Pi adapter boundary. The focused TUI regression and the current security diff scan report no remaining finding for this path.
+- Current macOS `26.6.1` arm64 evidence on this revision is `npm run check` **172/172**, acceptance **21/21**, three real provider/Pi Trusted Shell attempts passed, dogfood **3/3** with zero safety failures, and the real PTY matrix passed with credential-free evidence. This strengthens implementation evidence only; it does not close `G2-SANDBOX` or `G2-NATIVE`.
+- The normal TUI composition root remains default-off. Independent macOS G2 review, exact `26.5.2`, Windows parity, signed packaging, and final V1 acceptance remain open; no release Shell Auto or Shell Auto Debug claim is made.
+
 ## WP1 checkpoint oversight
 
 - The engineer owns only the implementation and deterministic evidence for WP1 `restricted-resource-loader`; the current scope is `packages/pi-adapter` plus the four WP1 documentation updates.
