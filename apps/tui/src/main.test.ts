@@ -323,6 +323,51 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
   }
 });
 
+test("interactive TUI passes all active provider secrets to Trusted Shell redaction", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-secrets-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedSecrets: readonly string[] | undefined;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      activeSecrets: () => ["deepseek-secret", "minimax-secret"],
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          observedSecrets = input.shellActiveSecrets;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("run with complete credential redaction");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.deepEqual(observedSecrets, ["deepseek-secret", "minimax-secret"]);
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI presents one-command network elevation and leaves the task resumable on denial", async () => {
   if (process.platform !== "darwin") return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-approval-"));

@@ -1233,49 +1233,59 @@ export class InteractiveTui {
       if (attachments !== undefined && taskSnapshot.model !== "MiniMax-M3") {
         throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
       }
-      for await (const observation of this.#engine.runTurn(
-        {
-          taskId,
-          prompt,
-          model: taskSnapshot.model,
-          cwd: executionPath,
-          approvalProfile: taskSnapshot.approvalProfile,
-          ...(taskSnapshot.approvalProfile === "auto"
-            ? {
-                fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
-                  this.requestFileDeleteApproval(taskId, request, signal),
-              }
-            : {}),
-          ...(taskSnapshot.trustedShell
-            ? {
-                trustedShell: true,
-                shellNetworkApproval: (request: CandyNetworkApprovalRequest, signal: AbortSignal) =>
-                  this.requestNetworkApproval(taskId, request, signal),
-              }
-            : {}),
-          ...(attachments === undefined
-            ? {}
-            : {
-                images: attachments.map(({ mimeType, data }) => ({ mimeType, data })),
-              }),
-        },
-        abort.signal,
-      )) {
-        if (observation.type === "assistant.delta") {
-          this.write(observation.text);
-          this.#store.appendTranscript(taskId, [
-            { role: "assistant", text: transcriptText(observation.text) },
-          ]);
+      const runEngineTurn = async (shellActiveSecrets?: readonly string[]): Promise<void> => {
+        for await (const observation of this.#engine.runTurn(
+          {
+            taskId,
+            prompt,
+            model: taskSnapshot.model,
+            cwd: executionPath,
+            approvalProfile: taskSnapshot.approvalProfile,
+            ...(taskSnapshot.approvalProfile === "auto"
+              ? {
+                  fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
+                    this.requestFileDeleteApproval(taskId, request, signal),
+                }
+              : {}),
+            ...(taskSnapshot.trustedShell
+              ? {
+                  trustedShell: true,
+                  ...(shellActiveSecrets === undefined ? {} : { shellActiveSecrets }),
+                  shellNetworkApproval: (
+                    request: CandyNetworkApprovalRequest,
+                    signal: AbortSignal,
+                  ) => this.requestNetworkApproval(taskId, request, signal),
+                }
+              : {}),
+            ...(attachments === undefined
+              ? {}
+              : {
+                  images: attachments.map(({ mimeType, data }) => ({ mimeType, data })),
+                }),
+          },
+          abort.signal,
+        )) {
+          if (observation.type === "assistant.delta") {
+            this.write(observation.text);
+            this.#store.appendTranscript(taskId, [
+              { role: "assistant", text: transcriptText(observation.text) },
+            ]);
+          }
+          if (observation.type === "tool.completed") {
+            this.write(`\n[tool ${observation.tool}]\n`);
+            this.#store.appendTranscript(taskId, [
+              {
+                role: "tool",
+                text: transcriptText(`${observation.tool}:${observation.ok ? "ok" : "error"}`),
+              },
+            ]);
+          }
         }
-        if (observation.type === "tool.completed") {
-          this.write(`\n[tool ${observation.tool}]\n`);
-          this.#store.appendTranscript(taskId, [
-            {
-              role: "tool",
-              text: transcriptText(`${observation.tool}:${observation.ok ? "ok" : "error"}`),
-            },
-          ]);
-        }
+      };
+      if (taskSnapshot.trustedShell) {
+        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
+      } else {
+        await runEngineTurn();
       }
       if (this.#closing || abort.signal.aborted)
         throw new Error(this.#closing ? "TUI exit interrupted the task." : "Task owner lost.");

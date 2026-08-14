@@ -374,6 +374,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function uniqueNonEmptySecrets(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
+}
+
 function containsCredentialMaterial(value: string): boolean {
   return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
     value,
@@ -1428,6 +1432,8 @@ export interface PiAgentEngineInput {
   readonly images?: readonly PiImageInput[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
+  /** All Candy-owned provider secrets currently active for Shell redaction. */
+  readonly shellActiveSecrets?: readonly string[];
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
   readonly shellNetworkApproval?: CandyNetworkOperationsOptions["onApproval"];
   readonly fileDeleteApproval?: FileDeleteApproval;
@@ -1568,7 +1574,10 @@ export class PiAgentEngine {
         input.trustedShell && this.bashRunner !== undefined
           ? {
               runner: this.bashRunner,
-              activeSecrets: [lease.secret],
+              activeSecrets: uniqueNonEmptySecrets([
+                lease.secret,
+                ...(input.shellActiveSecrets ?? []),
+              ]),
               ...(input.shellApproval === undefined ? {} : { onApproval: input.shellApproval }),
               ...(input.shellNetworkApproval === undefined
                 ? {}
