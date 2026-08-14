@@ -31,6 +31,7 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 - The current macOS native matrix also kills the delayed descendant when its Candy Native Runner parent is forcibly terminated; this is process-lifecycle evidence, not independent G2 approval and not Windows evidence.
 - On published revision `7a9f0cd920dbf567202360f3afea54348b070cc0`, the real-PTY matrix and three real-provider Trusted Shell attempts pass on macOS `26.6.1` arm64; the separate dogfood categories pass `3/3` with zero safety failures. These current-host results still do not prove Windows, exact `26.5.2`, signed packaging, independent G2, or final V1 acceptance.
 - The PTY evidence sends verified Chinese UTF-8 and bracketed-paste bytes; an OS-level Chinese IME composition path remains unverified and is not claimed as passed.
+- Follow-up revision `fd7f658` also passes the current-host deterministic/package acceptance runner `21/21`; the `/tmp` to `/private/tmp` metadata-only alias fix remains macOS containment evidence, not an independent G2 decision or Windows evidence.
 - This does not prove Windows, exact macOS `26.5.2`, signed packaging, or final V1 acceptance. The normal TUI composition root remains default-off; only the explicit acceptance composition root enables the capability while G2 is pending.
 
 ## WP1 checkpoint oversight
