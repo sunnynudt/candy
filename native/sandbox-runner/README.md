@@ -28,8 +28,11 @@ network isolation.
 The macOS strict-containment smoke proves supported validator execution,
 outside-workspace read/write denial, symlink and symlink-swap denial, loopback
 network denial, ordinary descendant cancellation, and cleanup after the
-native runner's parent is killed on the acceptance host. This is still not a
-completed G2 security review: independent review, signed packaging, Windows
-OS-level containment, and final cross-platform evidence remain open. Candy
-must keep shell-enabled Auto and Auto Debug unavailable until both native
-backends pass those checks.
+native runner's parent is killed on the acceptance host. It does not prove
+detached-descendant cleanup after normal command completion, and it is not a
+completed macOS G2 security review. Under ADR-0010, macOS Personal Preview
+enablement is independently gated from Windows; the macOS composition root
+must keep shell-enabled Auto and Auto Debug unavailable until the macOS G2
+review and its cancellation/process-tree evidence pass. Windows remains
+separately gated on its own native review, and signed packaging plus final
+cross-platform evidence remain open.
