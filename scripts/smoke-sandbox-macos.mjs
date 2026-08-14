@@ -33,6 +33,8 @@ const matrix = {
     validatorSucceeded: false,
     gitWorktreeSucceeded: false,
     gitMetadataWriteBlocked: false,
+    gitRefUpdateBlocked: false,
+    gitReflogWriteBlocked: false,
     outsideReadBlocked: false,
     outsideWriteBlocked: false,
     symlinkReadBlocked: false,
@@ -186,9 +188,22 @@ try {
     "git -c user.name=Candy -c user.email=candy@example.invalid commit --allow-empty -qm blocked-commit",
   );
   matrix.native.gitMetadataWriteBlocked =
-    gitCommit.code !== 0 && gitCommit.stderr.includes("Operation not permitted");
+    gitCommit.code !== 0 && /Operation not permitted|Permission denied/u.test(gitCommit.stderr);
   if (!matrix.native.gitMetadataWriteBlocked)
     throw new Error("The macOS native runner allowed a Git metadata write.");
+
+  const gitRefUpdate = await runShell("git update-ref refs/heads/main HEAD");
+  matrix.native.gitRefUpdateBlocked =
+    gitRefUpdate.code !== 0 &&
+    /Operation not permitted|Permission denied/u.test(gitRefUpdate.stderr);
+  if (!matrix.native.gitRefUpdateBlocked)
+    throw new Error("The macOS native runner allowed a Git ref update.");
+
+  const gitReflog = await runShell("git reflog expire --all");
+  matrix.native.gitReflogWriteBlocked =
+    gitReflog.code !== 0 && /Operation not permitted|Permission denied/u.test(gitReflog.stderr);
+  if (!matrix.native.gitReflogWriteBlocked)
+    throw new Error("The macOS native runner allowed a Git reflog write.");
 
   const rawRead = await runNode(
     `const fs = require('node:fs'); process.stdout.write(fs.readFileSync(${JSON.stringify(outsideRead)}, 'utf8'));`,

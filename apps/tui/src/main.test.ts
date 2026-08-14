@@ -352,6 +352,164 @@ test("interactive TUI presents one-command network elevation and leaves the task
   }
 });
 
+test("interactive TUI settles network approval on exit and rejects stale approval after restart", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-exit-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  let firstEngineCalls = 0;
+  try {
+    const firstRun = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          firstEngineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git ls-remote origin HEAD",
+              cwd: input.cwd,
+              reason: "inspect the configured remote revision",
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved) {
+            yield {
+              type: "tool.completed",
+              taskId: input.taskId,
+              tool: "candy_bash_network",
+              ok: true,
+            };
+            yield { type: "turn.completed", taskId: input.taskId };
+          } else {
+            throw new Error("network request denied on exit");
+          }
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("inspect remote");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /network approval required[\s\S]*git ls-remote origin HEAD/u,
+    );
+    const staleApprovalId = waiting.match(/:approve (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(staleApprovalId);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await firstRun;
+
+    assert.deepEqual(decisions, [false]);
+    assert.equal(firstEngineCalls, 1);
+    const afterExit = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const interrupted = afterExit.list()[0];
+    assert.equal(interrupted?.state, "interrupted");
+    assert.equal(interrupted?.ownerId, undefined);
+    afterExit.close();
+
+    const secondTerminal = new FakeTerminal();
+    let secondEngineCalls = 0;
+    const secondRun = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal: secondTerminal,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          secondEngineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /interrupted/u);
+    secondTerminal.emitInput(`:approve ${staleApprovalId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /is not awaiting approval/u);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+    assert.equal(secondEngineCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI recovers a dead owner without replaying a waiting network task", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-loss-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const store = new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+  store.create(
+    "task-dead-owner",
+    "auto",
+    1,
+    "deepseek-v4-flash",
+    [],
+    repository,
+    undefined,
+    undefined,
+    path.join(resolveAppPaths(appDataRoot).worktrees, "task-dead-owner"),
+    true,
+  );
+  store.transition("task-dead-owner", 0, "waiting_approval", "tui:999999");
+  store.close();
+  const terminal = new FakeTerminal();
+  let engineCalls = 0;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          engineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /task-dead-owner\tinterrupted\t/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(engineCalls, 0);
+    const recovered = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(recovered.get("task-dead-owner")?.state, "interrupted");
+    assert.equal(recovered.get("task-dead-owner")?.ownerId, undefined);
+    recovered.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI keeps file mutation disabled until Auto is selected", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-read-only-"));
   const terminal: FakeTerminal = new FakeTerminal();

@@ -27,6 +27,7 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 
 - The prior `G2-SANDBOX` / `G2-NATIVE` rows remain open because the independent G2 security decision has not yet been accepted. The evidence boundary is narrower than those rows' historical wording: current macOS Tahoe `26.6.1` arm64 now has three clean real-PTY + real DeepSeek Flash journeys, and a separate three-category dogfood run at 3/3 with zero safety failures.
 - The three journeys prove offline `candy_bash`, one approved bounded `candy_bash_network` command, validator and reviewed Apply, task-owned cancellation, restart recovery, unchanged Git HEAD/index, and sanitized credential-free evidence. The dogfood run separately proves repository understanding, small repair, and failing-test diagnosis in a Candy Task Worktree.
+- The current native matrix also rejects Git ref and reflog writes, while the real terminal matrix covers Chinese input, bracketed paste, resize, runtime failure recovery, and Ctrl+C; the TUI deterministic suite covers approval settlement on exit, stale approval rejection after restart, and dead-owner recovery without replay. These additions strengthen implementation evidence only and do not constitute independent G2 approval.
 - This does not prove Windows, exact macOS `26.5.2`, signed packaging, or final V1 acceptance. The normal TUI composition root remains default-off; only the explicit acceptance composition root enables the capability while G2 is pending.
 
 ## WP1 checkpoint oversight

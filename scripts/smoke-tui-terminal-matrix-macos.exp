@@ -1,0 +1,49 @@
+log_user 0
+set timeout 30
+log_file -a $env(CANDY_TERMINAL_MATRIX_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "TUI terminal matrix failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+cd $env(CANDY_TERMINAL_MATRIX_LAUNCH_DIR)
+spawn -noecho $env(CANDY_TERMINAL_MATRIX_NODE) $env(CANDY_TERMINAL_MATRIX_CHILD)
+wait_for {Candy TUI} "TUI startup"
+
+if {$env(CANDY_TERMINAL_MATRIX_MODE) == "normal"} {
+  send_command "中文输入测试"
+  wait_for {terminal-matrix-first-ok} "Chinese input task"
+  send_command ":new"
+  wait_for {new task ready} "paste task"
+  send -- "\033\[200~粘贴内容\n第二行\033\[201~\r"
+  wait_for {terminal-matrix-paste-ok} "bracketed paste task"
+  stty rows 40 columns 120
+  send -- "\033\[8;40;120t"
+  send_command ":quit"
+  expect eof
+} elseif {$env(CANDY_TERMINAL_MATRIX_MODE) == "runtime-failure"} {
+  send_command "runtime failure fixture"
+  wait_for {interrupted: workspace runtime failure fixture} "runtime failure recovery"
+  send_command ":quit"
+  expect eof
+} elseif {$env(CANDY_TERMINAL_MATRIX_MODE) == "cancel"} {
+  send_command "cancel fixture"
+  wait_for {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} "cancel task creation"
+  send -- "\003"
+  expect eof
+} else {
+  fail "unknown terminal matrix mode"
+}

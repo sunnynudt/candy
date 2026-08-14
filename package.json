@@ -45,6 +45,7 @@
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
     "smoke:tui:journey:macos": "npm run build && node scripts/smoke-tui-journey-macos.mjs",
+    "smoke:tui:terminal:macos": "npm run build && node scripts/smoke-tui-terminal-matrix-macos.mjs",
     "smoke:tui:trusted-shell:macos": "npm run build && node scripts/smoke-tui-trusted-shell-macos.mjs",
     "smoke:tui:trusted-shell:dogfood:macos": "npm run build && node scripts/smoke-tui-trusted-shell-dogfood-macos.mjs",
     "smoke:runtime-session-remap": "npm run build && node scripts/smoke-runtime-session-remap.mjs",
