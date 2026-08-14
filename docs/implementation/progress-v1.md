@@ -34,6 +34,13 @@ Statuses are `Pending`, `In progress`, `Pass`, `Fail`, or `Blocked`. A phase is 
 - On this revision, `npm run check` passes **172/172**; current-host `npm run acceptance:macos` passes **21/21** on macOS Tahoe `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`. Three real provider/Pi Trusted Shell attempts, the 3/3 dogfood run with zero safety failures, and the real PTY terminal matrix all pass with credential-free evidence. The new security diff scan reports **0 findings** across 17/17 reviewed items.
 - This remains a macOS Personal Preview implementation checkpoint: the normal composition root is default-off, independent macOS G2 review, exact `26.5.2` regression, Windows parity, signing, and final V1 acceptance remain separate gates. Reports are sanitized and ignored under `out/acceptance/macos/`; `.omo/` remains user-owned local state and is not part of the checkpoint.
 
+## 2026-08-14 macOS G2 security review checkpoint
+
+- The repository-wide standard security scan completed against code revision `b8aaed23650d1f5ed6c4b5dffbcd10c7a31046d7` (runtime code unchanged by the later docs-only checkpoint) with **5 open findings: 3 high and 2 medium**. The report is partial for repository coverage and is not a G2 approval.
+- Confirmed blockers are detached descendants surviving normal Trusted Shell completion, raw Pi file reads allowing active provider credentials into session content, missing command-boundary denial for `git commit`/`git push`, missing approval owner fencing, and Desktop attachment ingestion without centralized active-secret screening.
+- A current macOS isolated reproduction confirms the first blocker: a detached child wrote inside the Task Worktree 1.6 seconds after the Trusted Shell command returned successfully. The normal composition root therefore remains default-off; no macOS Shell Auto or Shell Auto Debug enablement claim is made.
+- The stale native-runner gate wording was corrected in `native/sandbox-runner/README.md` under ADR-0010. Published docs-only checkpoint: `d2624026389ffda73e6be263f13e600ca90f3260`.
+
 ## 2026-08-14 Native Runner parent-lifecycle checkpoint
 
 - `NativeProcessRunner` now includes the Candy parent PID in the typed native request. On macOS, the Rust runner keeps the sandboxed command in the detached Candy-owned process group, polls the parent PID while the command is active, and terminates the group when Candy exits unexpectedly. The omitted/zero PID remains accepted only for direct protocol fixtures; the TypeScript caller always sends the live PID.

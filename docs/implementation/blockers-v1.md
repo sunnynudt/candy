@@ -40,6 +40,14 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 - Current macOS `26.6.1` arm64 evidence on this revision is `npm run check` **172/172**, acceptance **21/21**, three real provider/Pi Trusted Shell attempts passed, dogfood **3/3** with zero safety failures, and the real PTY matrix passed with credential-free evidence. This strengthens implementation evidence only; it does not close `G2-SANDBOX` or `G2-NATIVE`.
 - The normal TUI composition root remains default-off. Independent macOS G2 review, exact `26.5.2`, Windows parity, signed packaging, and final V1 acceptance remain open; no release Shell Auto or Shell Auto Debug claim is made.
 
+## 2026-08-14 Independent security review result
+
+- The standard repository security scan completed with **5 open findings (3 high, 2 medium)**. It is partial for whole-repository coverage, but the reported Trusted Shell and credential-boundary findings are sufficient to keep `G2-SANDBOX` and `G2-NATIVE` open.
+- High findings: macOS normal-completion process-tree cleanup does not cover detached descendants; Pi public file reads can place active provider credentials into session content; and Trusted Shell does not enforce the no-commit/no-push boundary before approval/spawn.
+- Medium findings: approval responses are not fenced to the current task owner, and Desktop attachment ingestion does not centrally screen active-provider credentials before persistence/submission.
+- Current-host reproduction: an intentionally detached child remained able to write inside the Task Worktree 1.6 seconds after the Trusted Shell command returned. The findings are source-backed and do not rely on Windows, exact `26.5.2`, signing, or external deployment evidence.
+- Remediation and a fresh macOS G2 review are required before enabling the normal composition root. Shell Auto and Shell Auto Debug remain disabled.
+
 ## WP1 checkpoint oversight
 
 - The engineer owns only the implementation and deterministic evidence for WP1 `restricted-resource-loader`; the current scope is `packages/pi-adapter` plus the four WP1 documentation updates.
