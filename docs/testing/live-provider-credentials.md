@@ -37,10 +37,10 @@ Existing Claude Code/OpenCode configuration is therefore discovery evidence only
 
 Development Gate runners and Candy use Candy-owned variable names:
 
-| Provider | Temporary process variable | Credential-store account | Approved host |
-| --- | --- | --- | --- |
-| DeepSeek | `CANDY_DEEPSEEK_API_KEY` | `deepseek` | `https://api.deepseek.com` |
-| MiniMax Token Plan | `CANDY_MINIMAX_TOKEN_PLAN_KEY` | `minimax-token-plan` | `https://api.minimaxi.com` |
+| Provider           | Temporary process variable     | Credential-store account | Approved host              |
+| ------------------ | ------------------------------ | ------------------------ | -------------------------- |
+| DeepSeek           | `CANDY_DEEPSEEK_API_KEY`       | `deepseek`               | `https://api.deepseek.com` |
+| MiniMax Token Plan | `CANDY_MINIMAX_TOKEN_PLAN_KEY` | `minimax-token-plan`     | `https://api.minimaxi.com` |
 
 The MiniMax Token Plan subscription Key and a metered MiniMax API Key are different credential types and must not share an account identifier or be silently substituted.
 
@@ -106,7 +106,7 @@ The following tests from [Compatibility Gate 0](../research/compatibility-gate-0
 - MiniMax live contracts: `LIVE-MM-01` through `LIVE-MM-04`; `LIVE-MM-05` is retained as a default-Pass product-policy row;
 - Pi/package/platform: `LIVE-PI-01`, `LIVE-PI-02`, and `LIVE-ELECTRON-01` where applicable.
 
-For the user's existing accounts, MiniMax verification must confirm through the approved domestic API path that the current Token Plan subscription Key can access `MiniMax-M3`; it does not wait for separate control-panel plan or deduction evidence. DeepSeek verification must prove both Flash and Pro are visible and support the required streaming, thinking/tool replay, cancellation, and sanitized error behavior.
+For the user's existing accounts, MiniMax verification must confirm through the approved domestic API path that the current Token Plan subscription Key can access `MiniMax-M3`; it does not wait for separate control-panel plan or deduction evidence. DeepSeek verification must prove both Flash and Pro are visible and support the required streaming and cancellation/error behavior; Flash must prove tool replay, while Pro must prove thinking/tool replay because the two models expose reasoning deltas differently.
 
 ## Evidence retention
 

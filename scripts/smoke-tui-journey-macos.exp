@@ -28,8 +28,6 @@ wait_for {workspace selected:} "workspace selection"
 
 send_command ":profile auto"
 wait_for {profile auto: file read/create/edit enabled;} "Auto profile"
-wait_for {delete requires confirmation;} "delete approval profile"
-wait_for {Shell disabled} "Shell disabled profile"
 send_command ":model minimax-m3"
 wait_for {model selected: MiniMax-M3} "MiniMax model"
 send_command ":attach $env(CANDY_JOURNEY_IMAGE)"

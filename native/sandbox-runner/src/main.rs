@@ -275,6 +275,14 @@ fn sandbox_profile(
     } else {
         "(deny network*)\n         "
     };
+    let network_system_read_policy = if network {
+        "(allow file-read* file-map-executable
+             (literal \"/private/etc/ssl/cert.pem\")
+             (literal \"/private/etc/ssl/openssl.cnf\")
+             (literal \"/private/etc/ssl/x509v3.cnf\"))"
+    } else {
+        ""
+    };
     let process_exec_policy = if allow_process_exec {
         "(allow signal (target children))\n\
          (allow process-exec\n\
@@ -314,6 +322,7 @@ fn sandbox_profile(
          {}\n\
          {}\
          {}\
+         {}\
          (allow file-read-metadata file-test-existence\n\
              (literal \"/private\")\n\
              (literal \"/private/var\")\n\
@@ -330,6 +339,7 @@ fn sandbox_profile(
         process_exec_policy,
         process_exec_path_policy,
         read_only_policy,
+        network_system_read_policy,
         executable_parent,
         workspace,
         workspace
@@ -1031,8 +1041,12 @@ mod tests {
             &[],
         );
         assert!(offline.contains("(deny network*)"));
+        assert!(!offline.contains("/private/etc/ssl"));
         assert!(!elevated.contains("(deny network*)"));
         assert!(elevated.contains("(allow network-outbound)"));
+        assert!(elevated.contains("(literal \"/private/etc/ssl/cert.pem\")"));
+        assert!(elevated.contains("(literal \"/private/etc/ssl/openssl.cnf\")"));
+        assert!(!elevated.contains("(subpath \"/private/etc/ssl\")"));
     }
 
     #[cfg(target_os = "macos")]

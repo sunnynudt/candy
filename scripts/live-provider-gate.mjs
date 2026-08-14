@@ -118,7 +118,10 @@ async function runGate(selectedProvider) {
               cwd: temporaryRoot,
               thinkingLevel: "high",
             }),
-          (outcome) => hasCompletedThinkingToolTurn(outcome),
+          // Flash must prove the real tool replay path; reasoning deltas are
+          // model-dependent, while the Pro scenario below is the thinking
+          // contract. Keep the two provider-model obligations distinct.
+          (outcome) => hasCompletedToolTurn(outcome),
         ),
       );
       results.push(

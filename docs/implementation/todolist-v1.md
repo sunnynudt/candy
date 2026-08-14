@@ -71,7 +71,7 @@
 
 ## macOS 白天主动队列：当前 macOS Tahoe `26.x` Apple Silicon
 
-- ◐ macOS TUI Trusted Shell Auto Personal Preview 已完成实现路径（ADR-0010），但正常 composition root 仍保持 capability flag off，等待独立 macOS G2 review：只有显式开启、Auto profile、Git-backed Candy Task Worktree 三项同时满足时，任务才持久化 Trusted Shell capability。普通 `candy_bash` 通过 native runner 离线自动执行；需要 outbound network 的完整命令必须通过独立 `candy_bash_network` 工具逐次审批，拒绝、取消、超时、TUI 退出和 owner loss 均不重放；真实 linked Worktree 的 Git status 可读且 Git metadata 写入被 native profile 拒绝。`npm test` 167/167、Rust 7/7 通过。未完成条件：当前-host real PTY/DeepSeek Flash 旅程、精确 `26.5.2` regression、独立 G2 security review、Windows parity、签名和最终 V1 acceptance；Windows Trusted Shell Auto 继续禁用。
+- ◐ macOS TUI Trusted Shell Auto Personal Preview 已完成实现路径（ADR-0010），但正常 composition root 仍保持 capability flag off，等待独立 macOS G2 review：只有显式开启、Auto profile、Git-backed Candy Task Worktree 三项同时满足时，任务才持久化 Trusted Shell capability。普通 `candy_bash` 通过 native runner 离线自动执行；需要 outbound network 的完整命令必须通过独立 `candy_bash_network` 工具逐次审批，拒绝、取消、超时、TUI 退出和 owner loss 均不重放；真实 linked Worktree 的 Git status 可读且 Git metadata 写入被 native profile 拒绝。`npm run check` 167/167、Rust 7/7 通过；当前 macOS `26.6.1` arm64 的三次 clean real-PTY/DeepSeek Flash journey 通过，三类 dogfood（理解、小修复、失败测试诊断）3/3 且安全失败 0。未完成条件：精确 `26.5.2` regression、独立 G2 security review、Windows parity、签名和最终 V1 acceptance；Windows Trusted Shell Auto 继续禁用。
 
 - ☑️ macOS 验收环境已拆分：默认 `npm run acceptance:macos` 以当前 Tahoe `26.x` arm64 主机为 primary（当前主机为 `26.6.1`，最低保留 `26.5.2`），精确 `npm run acceptance:macos:baseline` 作为 `26.5.2` 兼容性回归。两者报告分离，current-host 运行不再因缺少旧版本主机而 preflight 阻断；这不等于跨版本行为自动兼容或最终 V1 Pass。
 
@@ -122,6 +122,7 @@
 
 - ☑️ Windows 凭据界面平台标识：Windows Desktop 不再错误提示 `macOS Keychain`，而是显示 `Windows Credential Manager`；非 Windows 平台保留准确的系统存储标签。
   证据：Windows `npm run check` 93/93、`smoke:tui-task` 和 `smoke:app-server` 于 2026-08-10 通过。该 UI 修正不替代真实 OS 凭据存储或 Desktop 启动验收。
+
 ## 2026-08-13 Windows Personal Preview checkpoint
 
 - WP1 Pi Bash adapter: implemented and deterministically verified with Pi `0.84.1`; live execution remains fail-closed because the fixed Git Bash path is absent on this host.
