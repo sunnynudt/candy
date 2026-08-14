@@ -128,6 +128,43 @@ export interface InteractiveTuiOptions {
   readonly trustedShellAutoAvailable?: boolean;
 }
 
+const MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION = Object.freeze({
+  approved: true,
+  platform: "darwin",
+  architecture: "arm64",
+  nativeBackend: "seatbelt-v1",
+} as const);
+
+/**
+ * The accepted macOS Trusted Shell Auto Personal Preview composition-root
+ * gate. The immutable source attestation is combined with the host platform
+ * and architecture; user-controlled environment variables must not be able
+ * to enable it.
+ */
+export function isMacosTrustedShellAutoAvailable(): boolean {
+  return (
+    MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.approved &&
+    process.platform === MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.platform &&
+    process.arch === MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.architecture
+  );
+}
+
+export type TuiCompositionRootOptions = Omit<InteractiveTuiOptions, "trustedShellAutoAvailable">;
+
+/**
+ * Normal TUI composition root. The capability is injected only here after
+ * the accepted macOS G2 attestation; InteractiveTui itself remains safe by
+ * default for tests and non-TUI embedders.
+ */
+export function createDefaultInteractiveTui(
+  options: TuiCompositionRootOptions = {},
+): InteractiveTui {
+  return new InteractiveTui({
+    ...options,
+    trustedShellAutoAvailable: isMacosTrustedShellAutoAvailable(),
+  });
+}
+
 export interface TuiShellRunner {
   run(request: NativeProcessRequest): Promise<NativeProcessResult>;
 }
@@ -228,7 +265,12 @@ export class InteractiveTui {
     this.#terminal = options.terminal;
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
-    this.#attachments = options.attachmentStore ?? new AttachmentStore(paths.attachments);
+    this.#activeSecretsProvider = options.activeSecrets;
+    this.#attachments =
+      options.attachmentStore ??
+      new AttachmentStore(paths.attachments, Date.now, (content) =>
+        containsAnyActiveSecret(content, this.activeSecretsSnapshot()),
+      );
     this.#worktreeRoot = paths.worktrees;
     this.#worktreeManager = new GitWorktreeManager(this.#worktreeRoot);
     this.#changeTracker =
@@ -239,7 +281,6 @@ export class InteractiveTui {
       );
     this.#validator = options.validator ?? createNativeTuiValidator();
     this.#validatorTimeoutMs = options.validatorTimeoutMs ?? DEFAULT_VALIDATOR_TIMEOUT_MS;
-    this.#activeSecretsProvider = options.activeSecrets;
     this.#shellRunner = options.shellRunner ?? createNativeTuiShellRunner();
     this.#trustedShellAutoAvailable = options.trustedShellAutoAvailable ?? false;
     this.#validatorCommand = options.validatorCommand;
@@ -423,7 +464,7 @@ export class InteractiveTui {
   }
 
   private async createTask(prompt: string): Promise<void> {
-    if (containsCredentialMaterial(prompt)) {
+    if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
       this.write("prompt rejected: credential-shaped content is forbidden\n");
       return;
     }
@@ -445,7 +486,7 @@ export class InteractiveTui {
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
     if (trustedShell) {
-      if (process.platform !== "darwin")
+      if (!this.#trustedShellAutoAvailable || !isMacosTrustedShellAutoAvailable())
         throw new Error("macOS Trusted Shell Auto is unavailable on this platform.");
       if (approvalProfile !== "auto")
         throw new Error("Trusted Shell Auto requires the Auto approval profile.");
@@ -541,6 +582,10 @@ export class InteractiveTui {
   }
 
   private submitPrompt(prompt: string): void {
+    if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
+      this.write("prompt rejected: credential material is forbidden\n");
+      return;
+    }
     const currentTaskId = this.#currentTaskId;
     if (currentTaskId === undefined) {
       this.create(prompt);
@@ -1158,6 +1203,17 @@ export class InteractiveTui {
     }
   }
 
+  private activeSecretsSnapshot(): readonly string[] {
+    if (this.#activeSecretsProvider !== undefined) return this.#activeSecretsProvider();
+    return resolveActiveTuiProviderSecrets();
+  }
+
+  private hasActiveProviderSecret(value: string): boolean {
+    return this.activeSecretsSnapshot().some(
+      (secret) => secret.length > 0 && value.includes(secret),
+    );
+  }
+
   private useTask(taskId: string): void {
     const task = this.ensureController(taskId);
     if (!task) {
@@ -1210,7 +1266,10 @@ export class InteractiveTui {
     try {
       const taskSnapshot = this.#store.get(taskId);
       if (taskSnapshot === undefined) throw new Error("Task metadata is unavailable after start.");
-      if (taskSnapshot.trustedShell && !this.#trustedShellAutoAvailable)
+      if (
+        taskSnapshot.trustedShell &&
+        (!this.#trustedShellAutoAvailable || !isMacosTrustedShellAutoAvailable())
+      )
         throw new Error("Trusted Shell Auto is disabled pending the macOS G2 gate.");
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
       const prompt =
@@ -1233,7 +1292,7 @@ export class InteractiveTui {
       if (attachments !== undefined && taskSnapshot.model !== "MiniMax-M3") {
         throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
       }
-      const runEngineTurn = async (shellActiveSecrets?: readonly string[]): Promise<void> => {
+      const runEngineTurn = async (activeSecrets: readonly string[]): Promise<void> => {
         for await (const observation of this.#engine.runTurn(
           {
             taskId,
@@ -1241,6 +1300,7 @@ export class InteractiveTui {
             model: taskSnapshot.model,
             cwd: executionPath,
             approvalProfile: taskSnapshot.approvalProfile,
+            activeSecrets,
             ...(taskSnapshot.approvalProfile === "auto"
               ? {
                   fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
@@ -1250,7 +1310,7 @@ export class InteractiveTui {
             ...(taskSnapshot.trustedShell
               ? {
                   trustedShell: true,
-                  ...(shellActiveSecrets === undefined ? {} : { shellActiveSecrets }),
+                  shellActiveSecrets: activeSecrets,
                   shellNetworkApproval: (
                     request: CandyNetworkApprovalRequest,
                     signal: AbortSignal,
@@ -1266,9 +1326,10 @@ export class InteractiveTui {
           abort.signal,
         )) {
           if (observation.type === "assistant.delta") {
-            this.write(observation.text);
+            const safeText = redactSensitive(observation.text, activeSecrets);
+            this.write(safeText);
             this.#store.appendTranscript(taskId, [
-              { role: "assistant", text: transcriptText(observation.text) },
+              { role: "assistant", text: transcriptText(safeText) },
             ]);
           }
           if (observation.type === "tool.completed") {
@@ -1282,11 +1343,7 @@ export class InteractiveTui {
           }
         }
       };
-      if (taskSnapshot.trustedShell) {
-        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
-      } else {
-        await runEngineTurn();
-      }
+      await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
       if (this.#closing || abort.signal.aborted)
         throw new Error(this.#closing ? "TUI exit interrupted the task." : "Task owner lost.");
       const current = task.snapshot();
@@ -1936,6 +1993,30 @@ function containsCredentialMaterial(value: string): boolean {
   );
 }
 
+function resolveActiveTuiProviderSecrets(): readonly string[] {
+  const leases: NonNullable<ReturnType<typeof resolveCredential>>[] = [];
+  for (const provider of ["deepseek", "minimax-cn"] as const) {
+    try {
+      const lease = resolveCredential(provider);
+      if (lease !== undefined) leases.push(lease);
+    } catch {
+      // Presence is optional; the provider path reports needs_credentials when used.
+    }
+  }
+  try {
+    return leases.map((lease) => lease.value);
+  } finally {
+    for (const lease of leases) lease.release();
+  }
+}
+
+function containsAnyActiveSecret(content: Uint8Array, activeSecrets: readonly string[]): boolean {
+  const bytes = Buffer.from(content);
+  return activeSecrets.some(
+    (secret) => secret.length > 0 && bytes.includes(Buffer.from(secret, "utf8")),
+  );
+}
+
 function isTuiOwnerAlive(ownerId: string): boolean {
   if (activeTuiOwners.has(ownerId)) return true;
   const match = /^tui:(\d+)(?::[0-9a-f-]+)?$/u.exec(ownerId);
@@ -1985,5 +2066,5 @@ function isDirectExecution(): boolean {
 if (isDirectExecution()) {
   if (process.argv.includes("--smoke-task")) console.log(JSON.stringify(await runTuiTaskSmoke()));
   else if (process.argv.includes("--smoke")) console.log(JSON.stringify(await runTuiSmoke()));
-  else await new InteractiveTui().run();
+  else await createDefaultInteractiveTui().run();
 }

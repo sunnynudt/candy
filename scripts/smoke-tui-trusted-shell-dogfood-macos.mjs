@@ -42,7 +42,6 @@ const environment = {
   CANDY_DOGFOOD_WORKSPACE: workspace,
   CANDY_JOURNEY_WORKSPACE: workspace,
   CANDY_SANDBOX_RUNNER: nativeRunnerPath,
-  CANDY_TRUSTED_SHELL_ACCEPTANCE: "1",
   // Keep the real HOME only for the Candy-owned macOS Keychain adapter. The
   // child writes sessions and task state only below appDataRoot.
   HOME: process.env.HOME ?? os.homedir(),
@@ -203,7 +202,7 @@ try {
     npm: execFileSync("npm", ["--version"], { encoding: "utf8" }).trim(),
     realProvider: true,
     realPiAgentLoop: true,
-    trustedShellGate: "acceptance-only",
+    trustedShellGate: "macos-arm64-g2-approved-normal-composition-root",
     dogfoodCategories: categoryChecks,
     categoryScore,
     safetyFailures: Object.values({
@@ -313,7 +312,7 @@ async function writeDogfoodEvidence(evidence) {
     `- Node: \`${evidence.node}\``,
     `- npm: \`${evidence.npm}\``,
     "- Provider: DeepSeek Flash through the production Candy Pi Agent Engine",
-    "- Capability gate: acceptance-only composition root; normal TUI startup remains default-off",
+    "- Capability gate: macOS arm64 G2-approved normal TUI composition root",
     "- Categories: repository understanding, small repair, and failing-test diagnosis in three isolated Candy Task Worktrees; result 3/3",
     "- Safety: zero failures; no Local Workspace mutation, commit, index mutation, external-sentinel mutation, or credential-shaped evidence",
     "- Credential values, prompts, raw provider payloads, and terminal logs are not retained in this report.",

@@ -75,6 +75,7 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       ...(input.approvalProfile === undefined ? {} : { approvalProfile: input.approvalProfile }),
       ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
       ...(input.images === undefined ? {} : { images: input.images }),
+      ...(input.activeSecrets === undefined ? {} : { activeSecrets: input.activeSecrets }),
       ...(input.trustedShell === undefined ? {} : { trustedShell: input.trustedShell }),
       ...(input.shellApproval === undefined ? {} : { shellApproval: input.shellApproval }),
     };
@@ -129,6 +130,7 @@ export interface AppServerControllerOptions {
   readonly applyChanges?: ApplyChangesRunner;
   readonly worktreeRoot?: string;
   readonly worktreeManager?: TaskWorktreeManager;
+  readonly platform?: NodeJS.Platform;
   readonly bashRunner?: {
     run(request: {
       readonly executable: string;
@@ -200,6 +202,7 @@ export class AppServerController {
   readonly #store: SQLiteTaskStore;
   readonly #engine: RecoverableAgentEngine;
   readonly #ownerId: string;
+  readonly #platform: NodeJS.Platform;
   readonly #attachments: AttachmentStore | undefined;
   readonly #validatorRunner: AppServerValidator | undefined;
   readonly #changeTracker: WorkspaceChangeTracker;
@@ -225,6 +228,7 @@ export class AppServerController {
     this.#engine =
       options.engine ?? new DeterministicAgentEngine(new SystemClock(), "Candy fixture response");
     this.#ownerId = options.ownerId ?? `app-server:${process.pid}`;
+    this.#platform = options.platform ?? process.platform;
     this.#attachments = options.attachments;
     this.#bashRunner = options.bashRunner;
     this.#validatorRunner = options.validatorRunner;
@@ -261,6 +265,14 @@ export class AppServerController {
 
     if (command.type === "task.create") {
       if (existing) throw new Error(`Task ${message.taskId} already exists.`);
+      const activeSecrets = this.#activeSecrets?.() ?? [];
+      if (
+        containsAppServerCredentialMaterial(command.prompt) ||
+        containsActiveSecret(command.prompt, activeSecrets)
+      )
+        throw new Error("Provider credentials are forbidden in task prompts.");
+      if (command.trustedShell === true && this.#platform !== "darwin")
+        throw new Error("Personal Preview Shell is unavailable outside the macOS TUI.");
       if (command.trustedShell === true && this.#bashRunner === undefined)
         throw new Error("Personal Preview Shell is unavailable on this installation.");
       if (command.trustedShell === true && command.approvalProfile !== "auto")
@@ -356,6 +368,12 @@ export class AppServerController {
       if (existing.ownerId !== undefined && existing.ownerId !== this.#ownerId)
         return [this.snapshot(existing)];
       const queued = this.#steering.get(message.taskId) ?? [];
+      const activeSecrets = this.#activeSecrets?.() ?? [];
+      if (
+        containsAppServerCredentialMaterial(command.text) ||
+        containsActiveSecret(command.text, activeSecrets)
+      )
+        throw new Error("Provider credentials are forbidden in task steering.");
       this.#steering.set(message.taskId, [...queued, command.text]);
       this.#store.appendTranscript(message.taskId, [{ role: "user", text: command.text }]);
       return [this.snapshot(existing)];
@@ -705,6 +723,7 @@ export class AppServerController {
         model: metadata.model,
         cwd: executionPath,
         approvalProfile: metadata.approvalProfile,
+        activeSecrets: this.#activeSecrets?.() ?? [],
         ...(images === undefined ? {} : { images }),
         ...(metadata.trustedShell && metadata.worktreePath !== undefined
           ? {
@@ -724,7 +743,14 @@ export class AppServerController {
     )) {
       const current = this.#store.get(taskId);
       if (!current || current.state !== "running") break;
-      const event = observationToEvent(taskId, current.revision, observation);
+      const rawEvent = observationToEvent(taskId, current.revision, observation);
+      const event =
+        rawEvent?.type === "assistant.delta" || rawEvent?.type === "assistant.thinking.delta"
+          ? {
+              ...rawEvent,
+              text: sanitizeAppServerText(rawEvent.text, this.#activeSecrets?.() ?? []),
+            }
+          : rawEvent;
       if (event) {
         if (event.type === "assistant.delta")
           this.#store.appendTranscript(taskId, [{ role: "assistant", text: event.text }]);
@@ -1145,6 +1171,14 @@ function containsAppServerCredentialMaterial(value: string): boolean {
   );
 }
 
+function containsActiveSecret(value: string, activeSecrets: readonly string[]): boolean {
+  return activeSecrets.some((secret) => secret.length > 0 && value.includes(secret));
+}
+
+function sanitizeAppServerText(value: string, activeSecrets: readonly string[]): string {
+  return sanitizeEvidenceSummary(value, activeSecrets);
+}
+
 function sanitizeEvidenceSummary(value: string, activeSecrets: readonly string[]): string {
   return redactWorkspacePatch(value, activeSecrets)
     .replace(
@@ -1219,7 +1253,9 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
   const smokeEngine = longRunningSmoke || codingJourneySmoke || deterministicRecoverySmoke;
   const controller = new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
-    attachments: new AttachmentStore(paths.attachments),
+    attachments: new AttachmentStore(paths.attachments, Date.now, (content) =>
+      containsActiveProviderSecret(content, resolveActiveProviderSecrets()),
+    ),
     engine: codingJourneySmoke
       ? createCodingJourneyEngine()
       : longRunningSmoke
@@ -1301,6 +1337,16 @@ function resolveActiveProviderSecrets(): readonly string[] {
     lease.release();
   }
   return secrets;
+}
+
+function containsActiveProviderSecret(
+  content: Uint8Array,
+  activeSecrets: readonly string[],
+): boolean {
+  const bytes = Buffer.from(content);
+  return activeSecrets.some(
+    (secret) => secret.length > 0 && bytes.includes(Buffer.from(secret, "utf8")),
+  );
 }
 
 function mapPiObservation(observation: PiAgentObservation): AgentObservation {

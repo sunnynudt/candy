@@ -22,7 +22,12 @@ import type {
   WorkspaceChangeSnapshot,
   WorkspaceChangeTracker,
 } from "@candy/runtime";
-import { InteractiveTui, type TuiAgentEngine } from "./main.js";
+import {
+  createDefaultInteractiveTui,
+  InteractiveTui,
+  isMacosTrustedShellAutoAvailable,
+  type TuiAgentEngine,
+} from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
 
 async function waitForOutput(terminal: FakeTerminal, pattern: RegExp): Promise<string> {
@@ -227,13 +232,13 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
   }
 });
 
-test("interactive TUI keeps Trusted Shell Auto disabled in the default composition root", async () => {
-  if (process.platform !== "darwin") return;
-  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-off-"));
+test("interactive TUI enables Trusted Shell Auto in the accepted macOS composition root", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = createDefaultInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
@@ -254,9 +259,9 @@ test("interactive TUI keeps Trusted Shell Auto disabled in the default compositi
     terminal.emitInput("\r");
     const output = await waitForOutput(
       terminal,
-      /Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build/u,
+      /Trusted Shell Auto enabled for the next Auto Git Task/u,
     );
-    assert.match(output, /G2 gate has not enabled this build/u);
+    assert.match(output, /Trusted Shell Auto enabled for the next Auto Git Task/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
@@ -266,7 +271,7 @@ test("interactive TUI keeps Trusted Shell Auto disabled in the default compositi
 });
 
 test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-"));
   const repository = await createTuiGitFixture(root);
   const terminal: FakeTerminal = new FakeTerminal();
@@ -324,7 +329,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
 });
 
 test("interactive TUI passes all active provider secrets to Trusted Shell redaction", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-secrets-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
@@ -369,7 +374,7 @@ test("interactive TUI passes all active provider secrets to Trusted Shell redact
 });
 
 test("interactive TUI presents one-command network elevation and leaves the task resumable on denial", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-approval-"));
   const repository = await createTuiGitFixture(root);
   const terminal: FakeTerminal = new FakeTerminal();
@@ -436,7 +441,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
 });
 
 test("interactive TUI settles network approval on exit and rejects stale approval after restart", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-exit-"));
   const appDataRoot = path.join(root, "app-data");
   const repository = await createTuiGitFixture(root);
@@ -539,7 +544,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
 });
 
 test("interactive TUI aborts a pending network request when its owner is fenced", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-fence-"));
   const appDataRoot = path.join(root, "app-data");
   const repository = await createTuiGitFixture(root);
@@ -612,7 +617,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
 });
 
 test("interactive TUI recovers a dead owner without replaying a waiting network task", async () => {
-  if (process.platform !== "darwin") return;
+  if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-loss-"));
   const appDataRoot = path.join(root, "app-data");
   const repository = await createTuiGitFixture(root);

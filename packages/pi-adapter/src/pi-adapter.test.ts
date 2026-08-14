@@ -1031,6 +1031,17 @@ test("Candy Trusted Shell rejects publication commands before approval or spawn"
   assert.equal(approved, false);
   assert.equal(runnerCalled, false);
 
+  approved = false;
+  runnerCalled = false;
+  await assert.rejects(
+    operations.exec("g=git;$g push origin HEAD", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /publication/iu,
+  );
+  assert.equal(approved, false);
+  assert.equal(runnerCalled, false);
+
   const network = createCandyNetworkToolDefinition("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
     exists: () => true,

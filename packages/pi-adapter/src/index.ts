@@ -392,6 +392,15 @@ function containsActiveSecretBytes(value: Uint8Array, activeSecrets: readonly st
 }
 
 function containsShellPublicationAction(command: string): boolean {
+  // A lexical publication deny-list cannot safely reason about shell
+  // variables, command substitution, or nested interpreters. Reject those
+  // forms before approval so they cannot bypass the fail-closed policy.
+  if (
+    /[`$]/u.test(command) ||
+    /(?:^|[;&|\s])(eval|source)\b/u.test(command) ||
+    /(?:^|[;&|\s])(ba?sh|zsh)\s+-c\b/u.test(command)
+  )
+    return true;
   for (const segment of command.split(/[;&|()\n]+/u)) {
     const tokens = segment
       .trim()
@@ -1500,6 +1509,8 @@ export interface PiAgentEngineInput {
   readonly cwd: string;
   readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly PiImageInput[];
+  /** All Candy-owned provider secrets active for this turn's model-visible sinks. */
+  readonly activeSecrets?: readonly string[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
   /** All Candy-owned provider secrets currently active for Shell redaction. */
@@ -1583,7 +1594,15 @@ export class PiAgentEngine {
     const lease = await this.acquireSecret();
     if (!lease)
       throw new ProviderContractError("DeepSeek credentials are unavailable.", "needs_credentials");
-    if (containsCredentialMaterial(input.prompt) || input.prompt.includes(lease.secret)) {
+    const activeSecrets = uniqueNonEmptySecrets([
+      lease.secret,
+      ...(input.activeSecrets ?? []),
+      ...(input.shellActiveSecrets ?? []),
+    ]);
+    if (
+      containsCredentialMaterial(input.prompt) ||
+      activeSecrets.some((secret) => input.prompt.includes(secret))
+    ) {
       lease.release();
       throw new ProviderContractError(
         "Credential-shaped prompt content is forbidden.",
@@ -1637,17 +1656,14 @@ export class PiAgentEngine {
         ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
         : piSdk.SessionManager.create(input.cwd, sessionDirectory);
       const settingsManager = piSdk.SettingsManager.inMemory({}, { projectTrusted: false });
-      const resourceLoader = new CandyRestrictedResourceLoader(input.cwd);
+      const resourceLoader = new CandyRestrictedResourceLoader(input.cwd, undefined, activeSecrets);
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
         input.approvalProfile ?? "read-only",
         input.trustedShell && this.bashRunner !== undefined
           ? {
               runner: this.bashRunner,
-              activeSecrets: uniqueNonEmptySecrets([
-                lease.secret,
-                ...(input.shellActiveSecrets ?? []),
-              ]),
+              activeSecrets,
               ...(input.shellApproval === undefined ? {} : { onApproval: input.shellApproval }),
               ...(input.shellNetworkApproval === undefined
                 ? {}
@@ -1655,7 +1671,7 @@ export class PiAgentEngine {
             }
           : undefined,
         input.fileDeleteApproval,
-        [lease.secret],
+        activeSecrets,
       );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
@@ -1712,7 +1728,7 @@ export class PiAgentEngine {
             yield {
               type: "assistant.thinking.delta",
               taskId: input.taskId,
-              text: event.value.assistantMessageEvent.delta,
+              text: redactBashOutput(event.value.assistantMessageEvent.delta, activeSecrets),
             };
           } else if (
             event.value.type === "message_update" &&
@@ -1721,7 +1737,7 @@ export class PiAgentEngine {
             yield {
               type: "assistant.delta",
               taskId: input.taskId,
-              text: event.value.assistantMessageEvent.delta,
+              text: redactBashOutput(event.value.assistantMessageEvent.delta, activeSecrets),
             };
           } else if (event.value.type === "tool_execution_start") {
             yield { type: "tool.started", taskId: input.taskId, tool: event.value.toolName };

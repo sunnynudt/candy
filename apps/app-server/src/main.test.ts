@@ -280,6 +280,36 @@ test("app-server rejects Personal Preview Shell before creating a Worktree for n
   }
 });
 
+test("app-server rejects Personal Preview Shell outside the macOS TUI", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-shell-windows-"));
+  const { repository } = createGitFixture(root);
+  const controller = new AppServerController({
+    platform: "win32",
+    worktreeRoot: path.join(root, "worktrees"),
+    bashRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+  });
+  try {
+    await assert.rejects(
+      controller.dispatch(
+        command("shell-windows", "create", 0, {
+          type: "task.create",
+          prompt: "inspect",
+          approvalProfile: "auto",
+          trustedShell: true,
+          workspacePath: repository,
+        }),
+      ),
+      /outside the macOS TUI/u,
+    );
+    assert.equal(existsSync(path.join(root, "worktrees")), false);
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server cancels a pending Personal Preview Shell approval without replay", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-shell-cancel-"));
   const { repository } = createGitFixture(root);

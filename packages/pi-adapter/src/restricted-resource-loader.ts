@@ -34,8 +34,12 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
 
   private readonly agentsFiles: Array<{ path: string; content: string }>;
 
-  public constructor(cwd: string, fileSystem: RestrictedResourceFileSystem = DEFAULT_FILE_SYSTEM) {
-    this.agentsFiles = readApprovedContextFile(cwd, fileSystem);
+  public constructor(
+    cwd: string,
+    fileSystem: RestrictedResourceFileSystem = DEFAULT_FILE_SYSTEM,
+    activeSecrets: readonly string[] = [],
+  ) {
+    this.agentsFiles = readApprovedContextFile(cwd, fileSystem, activeSecrets);
   }
 
   public getExtensions(): LoadExtensionsResult {
@@ -100,6 +104,7 @@ type RestrictedResourceExtensionPaths = {
 function readApprovedContextFile(
   cwd: string,
   fileSystem: RestrictedResourceFileSystem,
+  activeSecrets: readonly string[],
 ): Array<{ path: string; content: string }> {
   const workspaceRoot = path.resolve(cwd);
   const contextPath = path.join(workspaceRoot, CONTEXT_FILE_NAME);
@@ -116,7 +121,7 @@ function readApprovedContextFile(
     const content = decodeUtf8(fileSystem.readFile(contextPath));
     if (content === undefined) return [];
 
-    return [{ path: contextRealPath, content: redactCredentialMaterial(content) }];
+    return [{ path: contextRealPath, content: redactCredentialMaterial(content, activeSecrets) }];
   } catch {
     return [];
   }
@@ -135,8 +140,13 @@ function decodeUtf8(value: Buffer): string | undefined {
   }
 }
 
-function redactCredentialMaterial(value: string): string {
-  return value
+function redactCredentialMaterial(value: string, activeSecrets: readonly string[]): string {
+  return activeSecrets
+    .reduce(
+      (result, secret) =>
+        secret.length === 0 ? result : result.split(secret).join(REDACTED_CREDENTIAL),
+      value,
+    )
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1${REDACTED_CREDENTIAL}`)
     .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, REDACTED_CREDENTIAL)
     .replace(

@@ -299,6 +299,26 @@ test("attachment store applies a credential guard before persisting bytes", asyn
   }
 });
 
+test("attachment store reapplies a credential guard before provider payload retrieval", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-retrieval-guard-"));
+  let active = false;
+  const store = new AttachmentStore(root, Date.now, () => active);
+  try {
+    const metadata = await store.put(
+      "image",
+      "image/png",
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
+    active = true;
+    await assert.rejects(store.getImagePayload(metadata.id), /credential/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("browser state rejects stale revisions, disallowed sites, sensitive actions, and honors Take Control", () => {
   const browser = new InMemoryBrowserWorkspace();
   const tab = browser.open("https://fixture.invalid");

@@ -43,7 +43,6 @@ const environment = {
   CANDY_JOURNEY_RESULT: resultPath,
   CANDY_JOURNEY_WORKSPACE: workspace,
   CANDY_SANDBOX_RUNNER: nativeRunnerPath,
-  CANDY_TRUSTED_SHELL_ACCEPTANCE: "1",
   // Keep the real HOME only for the Candy-owned macOS Keychain adapter. The
   // child never writes there; app-data, sessions, attachments, worktrees,
   // stdout/stderr, and temporary files stay under journeyRoot.
@@ -154,7 +153,7 @@ try {
     realProvider: true,
     realPiAgentLoop: true,
     trustedShellAuto: true,
-    trustedShellGate: "acceptance-only",
+    trustedShellGate: "macos-arm64-g2-approved-normal-composition-root",
     offlineShellAuto: true,
     oneCommandNetworkApproval: networkRuns === 1,
     cancellationAndRestart: coding.ownerId === undefined && cancelled.ownerId === undefined,
@@ -254,7 +253,7 @@ async function writeTrustedShellEvidence(evidence) {
     `- Node: \`${evidence.node}\``,
     `- npm: \`${evidence.npm}\``,
     "- Provider: DeepSeek Flash through the production Candy Pi Agent Engine",
-    "- Capability gate: acceptance-only composition root; normal TUI startup remains default-off",
+    "- Capability gate: macOS arm64 G2-approved normal TUI composition root",
     "- Evidence: offline Shell auto, one-command network approval, validator, Apply, cancellation, restart task recovery, unchanged Git HEAD/index, and sanitized credential scan",
     "- Credential values, paths outside the temporary fixture, prompts, raw provider payloads, and terminal logs are not retained in this report.",
     "",

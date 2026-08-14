@@ -207,6 +207,11 @@ export class AttachmentStore {
     const attachment = await this.get(id);
     if (attachment.metadata.kind !== "image")
       throw new Error("Only image attachments can be sent to a multimodal model.");
+    if (
+      containsCredentialMaterial(Buffer.from(attachment.content).toString("latin1")) ||
+      this.contentGuard?.(attachment.content) === true
+    )
+      throw new Error("Attachment content contains credential material.");
     return {
       id,
       mimeType: attachment.metadata.mimeType,

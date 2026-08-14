@@ -10,6 +10,8 @@ export interface AgentTurnInput {
   readonly cwd?: string;
   readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly AgentImageInput[];
+  /** Active Candy provider secrets used to guard model-visible sinks. */
+  readonly activeSecrets?: readonly string[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
   readonly shellApproval?: (
