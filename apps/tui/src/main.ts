@@ -192,11 +192,14 @@ export class InteractiveTui {
   readonly #controllers = new Map<string, TaskController>();
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
+  readonly #taskRuns = new Map<string, Promise<void>>();
   readonly #validatorAbortControllers = new Map<string, AbortController>();
+  readonly #validatorRuns = new Map<string, Promise<void>>();
+  readonly #ownerWatchers = new Map<string, ReturnType<typeof setInterval>>();
   readonly #validatorStops = new Map<string, "cancelled" | "timeout">();
   readonly #validatorStates = new Map<string, TuiValidatorState>();
   readonly #workspaceReviews = new Map<string, TuiWorkspaceReview>();
-  readonly #requestedStops = new Map<string, "paused" | "cancelled">();
+  readonly #requestedStops = new Map<string, "paused" | "cancelled" | "interrupted">();
   readonly #deleteApprovals = new Map<
     string,
     { readonly taskId: string; readonly settle: (approved: boolean) => void }
@@ -307,15 +310,15 @@ export class InteractiveTui {
           (current.state === "running" || current.state === "waiting_approval") &&
           current.ownerId === this.#ownerId
         )
-          task.transition("interrupted", current.revision);
+          this.#requestedStops.set(current.taskId, "interrupted");
       }
-      this.#store.markOwnerInterrupted(this.#ownerId);
       for (const approval of this.#deleteApprovals.values()) approval.settle(false);
       for (const approval of this.#networkApprovals.values()) approval.settle(false);
       for (const controller of this.#abortControllers.values()) controller.abort();
       for (const controller of this.#validatorAbortControllers.values()) controller.abort();
-      await new Promise<void>((resolve) => setImmediate(resolve));
       await this.#pendingTaskCreation?.catch(() => undefined);
+      await Promise.allSettled([...this.#taskRuns.values(), ...this.#validatorRuns.values()]);
+      this.#store.markOwnerInterrupted(this.#ownerId);
       this.#resolveExit = undefined;
       await this.#surface.stop();
       this.#surface = undefined;
@@ -514,7 +517,16 @@ export class InteractiveTui {
       task.setOwner(this.#ownerId, task.snapshot().revision);
       const abort = new AbortController();
       this.#abortControllers.set(taskId, abort);
-      void this.runTask(task, abort, explicitPrompts.get(taskId));
+      this.startOwnerWatch(taskId, abort);
+      const operation = this.runTask(task, abort, explicitPrompts.get(taskId));
+      this.#taskRuns.set(taskId, operation);
+      void operation
+        .catch((error: unknown) => {
+          if (!this.#closing) this.write(`task ${taskId} failed: ${safeError(error)}\n`);
+        })
+        .finally(() => {
+          if (this.#taskRuns.get(taskId) === operation) this.#taskRuns.delete(taskId);
+        });
     }
   }
 
@@ -1032,9 +1044,16 @@ export class InteractiveTui {
     this.#validatorAbortControllers.set(snapshot.taskId, abort);
     this.#validatorStates.set(snapshot.taskId, { status: "running" });
     this.write(`validator running: ${snapshot.taskId}\n`);
-    void this.runValidator(metadata, abort).catch((error: unknown) => {
-      this.write(`validator failed: ${safeError(error)}\n`);
-    });
+    const operation = this.runValidator(metadata, abort);
+    this.#validatorRuns.set(snapshot.taskId, operation);
+    void operation
+      .catch((error: unknown) => {
+        if (!this.#closing) this.write(`validator failed: ${safeError(error)}\n`);
+      })
+      .finally(() => {
+        if (this.#validatorRuns.get(snapshot.taskId) === operation)
+          this.#validatorRuns.delete(snapshot.taskId);
+      });
   }
 
   private async runValidator(snapshot: TaskMetadata, abort: AbortController): Promise<void> {
@@ -1258,6 +1277,8 @@ export class InteractiveTui {
           ]);
         }
       }
+      if (this.#closing || abort.signal.aborted)
+        throw new Error(this.#closing ? "TUI exit interrupted the task." : "Task owner lost.");
       const current = task.snapshot();
       if (current.state === "running") {
         const completed = task.transition("completed", current.revision);
@@ -1267,16 +1288,28 @@ export class InteractiveTui {
       const current = task.snapshot();
       if (current.state === "running") {
         const requestedStop = this.#requestedStops.get(taskId);
-        const stopped = task.transition(
-          requestedStop ?? (abort.signal.aborted ? "cancelled" : "interrupted"),
-          current.revision,
-        );
-        this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
-        if (error instanceof ProviderContractError && stopped.state === "interrupted") {
+        const nextState = requestedStop ?? (abort.signal.aborted ? "cancelled" : "interrupted");
+        let stoppedState: "paused" | "cancelled" | "interrupted" | undefined;
+        try {
+          const stopped = task.transition(nextState, current.revision);
+          stoppedState = nextState;
+          this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
+        } catch {
+          const persisted = this.#store.get(taskId);
+          if (
+            persisted === undefined ||
+            (persisted.state !== "interrupted" &&
+              persisted.state !== "paused" &&
+              persisted.state !== "cancelled")
+          )
+            throw error;
+        }
+        if (error instanceof ProviderContractError && stoppedState === "interrupted") {
           this.write(`recovery: :resume ${taskId}, :model deepseek-pro, or :cancel ${taskId}\n`);
         }
       }
     } finally {
+      this.stopOwnerWatch(taskId);
       this.#abortControllers.delete(taskId);
       this.#requestedStops.delete(taskId);
       this.#scheduler.finish(taskId);
@@ -1310,6 +1343,30 @@ export class InteractiveTui {
       return;
     }
     this.write(`${taskId} is not an active task\n`);
+  }
+
+  private startOwnerWatch(taskId: string, abort: AbortController): void {
+    this.stopOwnerWatch(taskId);
+    const watcher = setInterval(() => {
+      if (this.#closing || abort.signal.aborted) return;
+      const metadata = this.#store.get(taskId);
+      if (
+        metadata?.ownerId !== this.#ownerId ||
+        (metadata.state !== "running" && metadata.state !== "waiting_approval")
+      ) {
+        this.#requestedStops.set(taskId, "interrupted");
+        abort.abort(new Error("Task execution owner was lost."));
+      }
+    }, 50);
+    watcher.unref?.();
+    this.#ownerWatchers.set(taskId, watcher);
+  }
+
+  private stopOwnerWatch(taskId: string): void {
+    const watcher = this.#ownerWatchers.get(taskId);
+    if (watcher === undefined) return;
+    clearInterval(watcher);
+    this.#ownerWatchers.delete(taskId);
   }
 
   private pause(taskId: string): void {
@@ -1494,9 +1551,20 @@ export class InteractiveTui {
         settled = true;
         signal.removeEventListener("abort", denyOnAbort);
         this.#networkApprovals.delete(approvalId);
-        const latest = task.snapshot();
-        if (latest.state === "waiting_approval") task.transition("running", latest.revision);
-        resolve(approved);
+        const persisted = this.#store.get(taskId);
+        const ownsWaitingTask =
+          !this.#closing &&
+          persisted?.state === "waiting_approval" &&
+          persisted.ownerId === this.#ownerId;
+        if (ownsWaitingTask) {
+          try {
+            const latest = task.snapshot();
+            if (latest.state === "waiting_approval") task.transition("running", latest.revision);
+          } catch {
+            // A concurrent owner fence wins over a pending approval.
+          }
+        }
+        resolve(approved && ownsWaitingTask && !signal.aborted);
       };
       const denyOnAbort = (): void => settle(false);
       this.#networkApprovals.set(approvalId, { taskId, settle });

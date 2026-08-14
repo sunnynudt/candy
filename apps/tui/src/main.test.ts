@@ -455,6 +455,79 @@ test("interactive TUI settles network approval on exit and rejects stale approva
   }
 });
 
+test("interactive TUI aborts a pending network request when its owner is fenced", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-fence-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git ls-remote origin HEAD",
+              cwd: input.cwd,
+              reason: "inspect the configured remote revision",
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved) throw new Error("owner fence must not approve network");
+          throw new Error("network request was fenced");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("inspect remote");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /network approval required[\s\S]*git ls-remote origin HEAD/u,
+    );
+    const taskId = waiting.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    const ownerStore = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const ownerId = ownerStore.get(taskId)?.ownerId;
+    assert.ok(ownerId);
+    assert.equal(ownerStore.markOwnerInterrupted(ownerId), 1);
+    ownerStore.close();
+
+    for (let attempt = 0; attempt < 100 && decisions.length === 0; attempt += 1)
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(decisions, [false]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    const recovered = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(recovered.get(taskId)?.state, "interrupted");
+    assert.equal(recovered.get(taskId)?.ownerId, undefined);
+    recovered.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI recovers a dead owner without replaying a waiting network task", async () => {
   if (process.platform !== "darwin") return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-loss-"));
