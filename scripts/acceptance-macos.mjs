@@ -119,7 +119,9 @@ const report = [
   acceptanceMode === "baseline"
     ? "- Current macOS Tahoe 26.x primary acceptance evidence (run npm run acceptance:macos)."
     : `- Exact macOS ${baselineMacosVersion} Apple Silicon regression evidence (run npm run acceptance:macos:baseline when that host is available).`,
-  "- macOS native containment security review; Shell and Auto Debug remain gated.",
+  acceptanceMode === "baseline"
+    ? "- macOS Trusted Shell Auto Personal Preview evidence is current-host-only; Windows/Desktop Shell, Shell-based Auto Debug, and exact-baseline compatibility remain separate gates."
+    : "- Windows/Desktop Trusted Shell, Shell-based Auto Debug, exact 26.5.2 compatibility, and signed release acceptance remain separate gates.",
   "- Apple signing/notarization and complete packaged Browser adversarial/input-origin evidence.",
   "- User cancellation to a real Provider stream-stop request remains Blocked because the deterministic measurement uses no Provider stream.",
   "- Provider latency/public-network behavior and complete ACC-12 UI/recovery evidence remain outside the deterministic ten-run cold-start and four-local-seam measurement.",

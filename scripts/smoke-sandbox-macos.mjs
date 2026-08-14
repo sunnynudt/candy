@@ -335,9 +335,10 @@ await runner.run({ executable: process.execPath, args: ["-e", ${JSON.stringify(p
       workspaceGuard: matrix.workspaceGuard,
       native: matrix.native,
       osWorkspaceContainment: "native-seatbelt-enforced",
-      macosTuiTrustedShellAuto: "implementation-only; independent-g2-review-blocked",
+      macosTuiTrustedShellAuto:
+        "macOS arm64 Personal Preview enabled; Windows/Desktop/release gates remain separate",
       shellAutoDebug: "disabled",
-      independentSecurityReview: "blocked",
+      independentSecurityReview: "completed; 0 reportable findings on source revision 9c5afad",
     })}`,
   );
 } finally {
