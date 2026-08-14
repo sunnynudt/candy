@@ -17,6 +17,14 @@ export interface NativeProcessRequest {
   readonly workspace: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly activeSecrets?: readonly string[];
+  /** Explicit one-command capability. Omitted/false is the offline default. */
+  readonly network?: boolean;
+  /** Shell-only capability for executing child tools; validators keep this off. */
+  readonly allowProcessExec?: boolean;
+  /** Explicit executable directories needed by an approved shell composition. */
+  readonly processExecPaths?: readonly string[];
+  /** Paths that the OS profile may read but never write for this shell run. */
+  readonly readOnlyPaths?: readonly string[];
   readonly signal?: AbortSignal;
 }
 
@@ -95,6 +103,8 @@ export class NativeProcessRunner {
       throw new Error("Sandbox commands require absolute executable and cwd paths.");
     if (!path.isAbsolute(request.workspace))
       throw new Error("Sandbox commands require an absolute workspace path.");
+    if (request.network === true && this.platform !== "darwin")
+      throw new Error("Sandbox command network capability is unavailable on this platform.");
     if (request.environment) assertSafeProcessEnvironment(request.environment);
 
     const requestId = `sandbox-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -110,7 +120,10 @@ export class NativeProcessRunner {
       args: request.args,
       cwd: request.cwd,
       workspace: request.workspace,
-      network: false,
+      network: request.network === true,
+      allowProcessExec: request.allowProcessExec === true,
+      processExecPaths: request.processExecPaths ?? [],
+      readOnlyPaths: request.readOnlyPaths ?? [],
       environment,
     });
     const activeSecretLocation = activeSecretMaterialLocation(request, environment, payload);
@@ -123,6 +136,14 @@ export class NativeProcessRunner {
       throw new Error(
         `Sandbox Runner ${activeSecretLocation ?? credentialShapedLocation}: provider credentials forbidden.`,
       );
+    if (request.signal?.aborted)
+      return Promise.resolve({
+        code: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        cancelled: true,
+      });
 
     return new Promise((resolve, reject) => {
       const child = this.spawnProcess(this.runnerExecutable, [], {

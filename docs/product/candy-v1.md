@@ -177,9 +177,9 @@ Candy follows a two-layer local control model:
 - sandbox policy defines what a model-generated action can technically access;
 - approval policy defines when Candy must pause and ask the user.
 
-The default Auto profile permits reading, editing, and running commands inside the active workspace. Model-generated commands have no network access by default. Writing outside the workspace, enabling command network access, destructive actions, credential access, commits, pushes, releases, deployments, and other external side effects require approval. A Read-only profile supports analysis without modifications. V1 does not expose a mode that bypasses both approvals and sandboxing.
+The default Auto profile permits reading and editing inside the active workspace; it does not expose a shell. The separately gated macOS Trusted Shell Auto Personal Preview is an explicit one-task capability for a Candy-owned Git Task Worktree: its ordinary commands run offline without another prompt, while outbound network access is a separate one-command approval. The native boundary keeps Git metadata read-only so commit/push cannot be performed by that shell lane. A Read-only profile supports analysis without modifications. V1 does not expose a mode that bypasses both approvals and sandboxing.
 
-Strong command containment is implemented through the narrow native Sandbox Runner accepted in ADR-0005. It owns only OS sandbox and process-tree mechanics; Candy's task, approval, provider, workspace, and product policies remain in the TypeScript Runtime. Shell-enabled Auto and Shell-based Auto Debug remain unavailable on a platform until its native backend passes the required security and cancellation gates.
+Strong command containment is implemented through the narrow native Sandbox Runner accepted in ADR-0005 and platform-scoped by ADR-0010. It owns only OS sandbox and process-tree mechanics; Candy's task, approval, provider, workspace, and product policies remain in the TypeScript Runtime. The macOS TUI has the explicitly selected Trusted Shell Auto Personal Preview path behind a G2-approved composition-root flag; Shell-enabled Auto and Shell-based Auto Debug remain unaccepted on any platform until that platform passes the required security and cancellation gates.
 
 Provider HTTPS requests run through privileged provider adapters and are not ordinary tool-network access. Provider credentials are never inherited by tools, commands, browser processes, or browser pages.
 
@@ -213,7 +213,7 @@ A Long-running Task starts from an explicit outcome, constraints, and verificati
 
 Auto Debug is a Long-running Task that reuses Pi's agent loop and Candy's normal tools. It gathers observable failure evidence, edits the project, reruns the same validator, and stops when verification succeeds or execution cannot safely continue. Validators may be tests, builds, explicit commands, or browser-visible assertions.
 
-Command and build validators use Candy's common `CommandValidator` for bounded, redacted evidence and completion semantics. The platform adapter owns only the native process boundary: the existing versioned JSONL contract, no-network request, runner location, and macOS/Windows cancellation strategy. This separation does not enable Shell Auto or Shell Auto Debug; those remain disabled until the independent G2 evidence passes on both platforms.
+Command and build validators use Candy's common `CommandValidator` for bounded, redacted evidence and completion semantics. The platform adapter owns only the native process boundary: the existing versioned JSONL contract, explicit offline/network capability, runner location, and macOS/Windows cancellation strategy. This separation does not make Shell Auto a release capability; each platform remains gated by its independent G2 evidence.
 
 Candy pauses Auto Debug when it needs a new approval, detects repeated lack of progress, reaches an optional user budget, loses its execution owner, or receives a user stop. It never auto-commits, pushes, releases, deploys, or creates a second workflow engine.
 

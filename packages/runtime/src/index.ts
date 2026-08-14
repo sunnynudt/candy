@@ -352,7 +352,7 @@ function allowedTransition(current: TaskState, next: TaskState): boolean {
   if (next === "paused") return current === "running" || current === "waiting_approval";
   if (next === "waiting_approval") return current === "running";
   if (next === "completed") return current === "running";
-  return current === "running" && next === "running";
+  return (current === "running" || current === "waiting_approval") && next === "running";
 }
 
 export class TaskScheduler {

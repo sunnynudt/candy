@@ -38,7 +38,14 @@ struct RunRequest {
     args: Vec<String>,
     cwd: String,
     workspace: String,
+    #[serde(default)]
     network: bool,
+    #[serde(rename = "allowProcessExec", default)]
+    allow_process_exec: bool,
+    #[serde(rename = "processExecPaths", default)]
+    process_exec_paths: Vec<String>,
+    #[serde(rename = "readOnlyPaths", default)]
+    read_only_paths: Vec<String>,
     environment: BTreeMap<String, String>,
 }
 
@@ -108,7 +115,7 @@ fn response_for_line(line: &str) -> String {
     {
         return error_response("secret_forbidden");
     }
-    if request.network {
+    if request.network && !cfg!(target_os = "macos") {
         return error_response("network_forbidden");
     }
     if !is_absolute_path(Path::new(&request.cwd))
@@ -165,7 +172,36 @@ fn run_macos(request: RunRequest) -> String {
     let Some(executable) = executable.to_str() else {
         return error_response("invalid_path");
     };
-    let profile = sandbox_profile(workspace, executable);
+    let read_only_paths = request
+        .read_only_paths
+        .iter()
+        .filter_map(|value| {
+            let path = fs::canonicalize(value).ok()?;
+            if !is_safe_profile_path(&path) {
+                return None;
+            }
+            path.to_str().map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let process_exec_paths = request
+        .process_exec_paths
+        .iter()
+        .filter_map(|value| {
+            let path = fs::canonicalize(value).ok()?;
+            if !is_safe_profile_path(&path) || !path.is_dir() {
+                return None;
+            }
+            path.to_str().map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let profile = sandbox_profile(
+        workspace,
+        executable,
+        request.network,
+        request.allow_process_exec,
+        &process_exec_paths,
+        &read_only_paths,
+    );
     let output = Command::new("/usr/bin/sandbox-exec")
         .arg("-p")
         .arg(profile)
@@ -200,7 +236,14 @@ fn run_macos(request: RunRequest) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn sandbox_profile(workspace: &str, executable: &str) -> String {
+fn sandbox_profile(
+    workspace: &str,
+    executable: &str,
+    network: bool,
+    allow_process_exec: bool,
+    process_exec_paths: &[String],
+    read_only_paths: &[String],
+) -> String {
     let executable_parent = profile_string(
         Path::new(executable)
             .parent()
@@ -210,22 +253,86 @@ fn sandbox_profile(workspace: &str, executable: &str) -> String {
     );
     let workspace = profile_string(workspace);
     let executable = profile_string(executable);
+    let read_only_policy = read_only_paths
+        .iter()
+        .map(|path| {
+            let profile_path = profile_string(path);
+            let operation = if Path::new(path).is_dir() {
+                "subpath"
+            } else {
+                "literal"
+            };
+            format!(
+                "(allow file-read* file-map-executable ({} \"{}\"))\n\
+                 (deny file-write* ({} \"{}\"))\n\
+                 ",
+                operation, profile_path, operation, profile_path
+            )
+        })
+        .collect::<String>();
+    let network_policy = if network {
+        "(allow network-outbound)\n         "
+    } else {
+        "(deny network*)\n         "
+    };
+    let process_exec_policy = if allow_process_exec {
+        "(allow signal (target children))\n\
+         (allow process-exec\n\
+             (subpath \"/bin\")\n\
+             (subpath \"/usr/bin\")\n\
+             (subpath \"/usr/local\")\n\
+             (subpath \"/opt/homebrew\")\n\
+             (subpath \"/Library/Developer/CommandLineTools\"))\n\
+         (allow file-read* file-map-executable\n\
+             (subpath \"/bin\")\n\
+             (subpath \"/usr/bin\")\n\
+             (subpath \"/usr/local\")\n\
+             (subpath \"/opt/homebrew\")\n\
+             (subpath \"/Library/Developer/CommandLineTools\"))"
+            .to_owned()
+    } else {
+        format!("(allow process-exec (literal \"{}\"))", executable)
+    };
+    let process_exec_path_policy = process_exec_paths
+        .iter()
+        .map(|path| {
+            let profile_path = profile_string(path);
+            format!(
+                "(allow process-exec (subpath \"{}\"))\n\
+                 (allow file-read* file-map-executable (subpath \"{}\"))\n\
+                 ",
+                profile_path, profile_path
+            )
+        })
+        .collect::<String>();
     format!(
         "(version 1)\n\
          (deny default)\n\
          (import \"system.sb\")\n\
-         (deny network*)\n\
+         {}\
          (allow process-fork)\n\
-         (allow process-exec (literal \"{}\"))\n\
+         {}\n\
+         {}\
+         {}\
          (allow file-read-metadata file-test-existence\n\
              (literal \"/private\")\n\
              (literal \"/private/var\")\n\
+             (literal \"/private/var/db\")\n\
+             (literal \"/private/var/db/xcode_select_link\")\n\
              (literal \"/private/tmp\")\n\
              (subpath \"/private/var/folders\"))\n\
+         (allow file-read* file-map-executable\n\
+             (subpath \"/Library/Developer/CommandLineTools\"))\n\
          (allow file-read* file-map-executable (subpath \"{}\"))\n\
          (allow file-read* file-test-existence (subpath \"{}\"))\n\
          (allow file-write* (subpath \"{}\"))",
-        executable, executable_parent, workspace, workspace
+        network_policy,
+        process_exec_policy,
+        process_exec_path_policy,
+        read_only_policy,
+        executable_parent,
+        workspace,
+        workspace
     )
 }
 
@@ -890,6 +997,10 @@ mod tests {
         let profile = super::sandbox_profile(
             "/private/var/folders/fixture/workspace",
             "/Users/fixture/node/bin/node",
+            false,
+            false,
+            &[],
+            &[],
         );
         assert!(profile.contains("(deny default)"));
         assert!(!profile.contains("(allow default)"));
@@ -898,6 +1009,30 @@ mod tests {
         assert!(profile.contains("(literal \"/private/tmp\")"));
         assert!(profile.contains("(subpath \"/private/var/folders/fixture/workspace\")"));
         assert!(profile.contains("(allow file-write*"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_network_capability_is_explicit_and_not_enabled_by_default() {
+        let offline = super::sandbox_profile(
+            "/private/var/folders/fixture/workspace",
+            "/bin/bash",
+            false,
+            false,
+            &[],
+            &[],
+        );
+        let elevated = super::sandbox_profile(
+            "/private/var/folders/fixture/workspace",
+            "/bin/bash",
+            true,
+            false,
+            &[],
+            &[],
+        );
+        assert!(offline.contains("(deny network*)"));
+        assert!(!elevated.contains("(deny network*)"));
+        assert!(elevated.contains("(allow network-outbound)"));
     }
 
     #[cfg(target_os = "macos")]
@@ -931,6 +1066,9 @@ mod tests {
         let response = response_for_line(
             r#"{"v":1,"kind":"run","requestId":"fixture","executable":"node","args":[],"cwd":"/tmp","workspace":"/tmp","network":true,"environment":{}}"#,
         );
+        #[cfg(target_os = "macos")]
+        assert!(response.contains("invalid_path"));
+        #[cfg(not(target_os = "macos"))]
         assert!(response.contains("network_forbidden"));
         let response = response_for_line(
             r#"{"v":1,"kind":"run","requestId":"fixture","executable":"node","args":[],"cwd":"relative","workspace":"/tmp","network":false,"environment":{}}"#,

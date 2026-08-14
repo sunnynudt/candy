@@ -149,13 +149,13 @@ Required outcomes:
 - A workspace fixture containing a Pi `.pi/extensions` entry proves Candy's session initialization neither discovers nor executes it; it cannot register a tool, command, hook, or side effect.
 - Auto permits contracted workspace operations but denies workspace escape and model-command network access through OS containment, not only policy prompts.
 - Symlink, junction, reparse-point, case, traversal, and race fixtures cannot write outside the allowed workspace.
-- Network, destructive actions, commits, pushes, releases, deployments, and sensitive external effects request the correct approval.
+- Network, destructive actions, commits, pushes, releases, deployments, and sensitive external effects request the correct approval. The macOS Trusted Shell Auto Personal Preview is the explicit bounded exception for offline commands inside its disposable Candy Task Worktree; its network lane still requires one-command approval, and Git metadata writes remain denied.
 - Denial leaves the task resumable and does not partially execute the action.
 - Provider credentials are absent from the Sandbox Runner request and target environment.
 - Cancellation ends the model stream promptly and terminates the complete Shell descendant process tree; Windows verification proves Job Object ownership.
 - Candy never reports cancellation complete while a task-owned descendant remains running.
 
-G2 must pass independently on both platforms before Shell-enabled Auto or Shell-based Auto Debug is accepted there.
+G2 must pass independently on each platform before Shell-enabled Auto or Shell-based Auto Debug is accepted on that platform.
 
 ### ACC-08 Workspace, Worktree, and Apply Changes
 

@@ -227,6 +227,131 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
   }
 });
 
+test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const shellRunner = {
+    async run() {
+      return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+    },
+  };
+  let observedTrustedShell = false;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      shellRunner,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "shell-ready" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("inspect with shell enabled");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /shell-ready/u);
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.list()[0];
+    assert.ok(task);
+    assert.equal(task.trustedShell, true);
+    assert.equal(task.approvalProfile, "auto");
+    assert.ok(task.worktreePath);
+    assert.equal(observedTrustedShell, true);
+    assert.match(output, /Trusted Shell Auto enabled/u);
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI presents one-command network elevation and leaves the task resumable on denial", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-approval-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git fetch origin",
+              cwd: input.cwd,
+              reason: "refresh the repository metadata requested by the user",
+              timeout: 15,
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved)
+            yield {
+              type: "tool.completed",
+              taskId: input.taskId,
+              tool: "candy_bash_network",
+              ok: true,
+            };
+          else throw new Error("network request denied");
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("fetch metadata");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /network approval required[\s\S]*git fetch origin/u,
+    );
+    const approvalId = waiting.match(/:deny (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(approvalId);
+    terminal.emitInput(`:deny ${approvalId}`);
+    terminal.emitInput("\r");
+    const denied = await waitForOutput(terminal, /network denied/u);
+    assert.match(denied, /interrupted/u);
+    assert.deepEqual(decisions, [false]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI keeps file mutation disabled until Auto is selected", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-read-only-"));
   const terminal: FakeTerminal = new FakeTerminal();

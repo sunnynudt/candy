@@ -90,6 +90,24 @@ test("native runner rejects unsupported platforms and secret-bearing environment
   );
 });
 
+test("native runner does not spawn when cancellation already happened", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let spawnCalled = false;
+  const result = await new NativeProcessRunner("/opt/candy/candy-sandbox-runner", "darwin", () => {
+    spawnCalled = true;
+    throw new Error("spawn must not be reached");
+  }).run({
+    executable: "/usr/bin/node",
+    args: [],
+    cwd: "/tmp",
+    workspace: "/tmp",
+    signal: controller.signal,
+  });
+  assert.equal(spawnCalled, false);
+  assert.equal(result.cancelled, true);
+});
+
 test("native runner allows Candy Task Worktree ids containing an internal sk- substring", async () => {
   const child = new EventEmitter() as EventEmitter & {
     stdin: PassThrough;

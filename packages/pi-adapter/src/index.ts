@@ -401,6 +401,10 @@ export interface CandyBashOperationsOptions {
       readonly workspace: string;
       readonly environment?: Readonly<Record<string, string>>;
       readonly activeSecrets?: readonly string[];
+      readonly network?: boolean;
+      readonly allowProcessExec?: boolean;
+      readonly processExecPaths?: readonly string[];
+      readonly readOnlyPaths?: readonly string[];
       readonly signal?: AbortSignal;
     }): Promise<NativeProcessResult>;
   };
@@ -408,8 +412,27 @@ export interface CandyBashOperationsOptions {
   readonly exists?: (absolutePath: string) => boolean;
   readonly activeSecrets?: readonly string[];
   readonly pathSeam?: CandyBashPathSeam;
-  readonly onApproval: (
+  readonly onApproval?: (
     request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
+    signal: AbortSignal,
+  ) => Promise<boolean>;
+}
+
+export interface CandyNetworkApprovalRequest {
+  readonly command: string;
+  readonly cwd: string;
+  readonly reason: string;
+  readonly timeout?: number;
+}
+
+export interface CandyNetworkOperationsOptions {
+  readonly runner: CandyBashOperationsOptions["runner"];
+  readonly activeSecrets?: readonly string[];
+  readonly bashPath?: string;
+  readonly exists?: (absolutePath: string) => boolean;
+  readonly pathSeam?: CandyBashPathSeam;
+  readonly onApproval: (
+    request: CandyNetworkApprovalRequest,
     signal: AbortSignal,
   ) => Promise<boolean>;
 }
@@ -443,15 +466,19 @@ export function createCandyBashOperations(
         )
       )
         throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
-      const approved = await options.onApproval(
-        {
-          command,
-          cwd: root,
-          ...(execution.timeout === undefined ? {} : { timeout: execution.timeout }),
-        },
-        execution.signal ?? new AbortController().signal,
-      );
+      const approved =
+        options.onApproval === undefined
+          ? true
+          : await options.onApproval(
+              {
+                command,
+                cwd: root,
+                ...(execution.timeout === undefined ? {} : { timeout: execution.timeout }),
+              },
+              execution.signal ?? new AbortController().signal,
+            );
       if (!approved) throw new Error("Shell command denied by the user.");
+      if (execution.signal?.aborted) throw new Error("aborted");
       const controller = new AbortController();
       const abort = (): void => controller.abort(execution.signal?.reason);
       const timeoutHandle =
@@ -463,14 +490,14 @@ export function createCandyBashOperations(
       try {
         const result = await options.runner.run({
           executable: bashPath,
-          args: ["--noprofile", "--norc", "-c", command],
+          args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(command)],
           cwd: root,
           workspace: root,
-          environment: Object.fromEntries(
-            Object.entries(cleanChildEnvironment(process.env, options.activeSecrets ?? [])).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
-            ),
-          ),
+          network: false,
+          allowProcessExec: true,
+          processExecPaths: [path.dirname(process.execPath)],
+          readOnlyPaths: await resolveCandyShellReadOnlyPaths(root),
+          environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
         });
@@ -496,6 +523,156 @@ export function createCandyBashOperations(
   };
 }
 
+const networkShellSchema = Type.Object(
+  {
+    command: Type.String({
+      description: "Complete Bash command that needs one-command network access",
+      minLength: 1,
+      maxLength: 100_000,
+    }),
+    reason: Type.String({
+      description: "Why this command needs network access",
+      minLength: 1,
+      maxLength: 2_048,
+    }),
+    timeout: Type.Optional(
+      Type.Number({
+        description: "Timeout in seconds (optional)",
+        exclusiveMinimum: 0,
+        maximum: 3_600,
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const MAX_NETWORK_TIMEOUT_SECONDS = 3_600;
+const MAX_NETWORK_COMMAND_LENGTH = 100_000;
+const MAX_NETWORK_REASON_LENGTH = 2_048;
+
+interface CandyNetworkToolInput {
+  readonly command: string;
+  readonly reason: string;
+  readonly timeout?: number;
+}
+
+/**
+ * Candy-owned network elevation tool. The normal Pi Bash definition remains
+ * the offline path; this tool makes network an explicit, single-use capability.
+ */
+export function createCandyNetworkToolDefinition(
+  workspaceRoot: string,
+  options: CandyNetworkOperationsOptions,
+): piSdk.ToolDefinition {
+  const pathImpl = options.pathSeam ?? path;
+  const root = pathImpl.resolve(workspaceRoot);
+  const bashPath =
+    options.bashPath ?? (process.platform === "win32" ? WINDOWS_GIT_BASH_PATH : "/bin/bash");
+  return {
+    name: "candy_bash_network",
+    label: "Trusted Shell network elevation",
+    description:
+      "Request one-time outbound network access for a complete command in the current Task Worktree. The user must approve each request.",
+    promptSnippet: "Request one-command network access for a shell command",
+    promptGuidelines: [
+      "Use candy_bash_network only when the command genuinely needs outbound network access.",
+      "Provide a concise reason. Network access is denied by default and is never retained for later commands.",
+    ],
+    parameters: networkShellSchema,
+    executionMode: "sequential",
+    execute: async (
+      _toolCallId: string,
+      input: CandyNetworkToolInput,
+      signal: AbortSignal | undefined,
+    ) => {
+      const executionSignal = signal ?? new AbortController().signal;
+      if (executionSignal.aborted) throw new Error("Operation aborted");
+      if (pathImpl.resolve(root) !== root || !pathImpl.isAbsolute(bashPath))
+        throw new Error("Trusted Shell executable is invalid.");
+      if (!(options.exists ?? existsSync)(bashPath))
+        throw new Error(`Git Bash was not found at ${bashPath}.`);
+      if (
+        typeof input.command !== "string" ||
+        input.command.length === 0 ||
+        input.command.length > MAX_NETWORK_COMMAND_LENGTH ||
+        typeof input.reason !== "string" ||
+        input.reason.length === 0 ||
+        input.reason.length > MAX_NETWORK_REASON_LENGTH
+      )
+        throw new Error("Network shell command or reason is outside the allowed bounds.");
+      if (
+        input.timeout !== undefined &&
+        (!Number.isFinite(input.timeout) ||
+          input.timeout <= 0 ||
+          input.timeout > MAX_NETWORK_TIMEOUT_SECONDS)
+      )
+        throw new Error("Invalid timeout.");
+      if (
+        containsCredentialMaterial(input.command) ||
+        containsCredentialMaterial(input.reason) ||
+        (options.activeSecrets ?? []).some(
+          (secret) =>
+            secret.length > 0 && (input.command.includes(secret) || input.reason.includes(secret)),
+        )
+      )
+        throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+      const approved = await options.onApproval(
+        {
+          command: input.command,
+          cwd: root,
+          reason: input.reason,
+          ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+        },
+        executionSignal,
+      );
+      if (!approved) throw new Error("Shell network request denied by the user.");
+      if (executionSignal.aborted) throw new Error("Operation aborted");
+      const controller = new AbortController();
+      const abort = (): void => controller.abort(executionSignal.reason);
+      const timeoutHandle =
+        input.timeout === undefined
+          ? undefined
+          : setTimeout(() => controller.abort(new Error("timeout")), input.timeout * 1000);
+      if (executionSignal.aborted) abort();
+      else executionSignal.addEventListener("abort", abort, { once: true });
+      try {
+        const result = await options.runner.run({
+          executable: bashPath,
+          args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(input.command)],
+          cwd: root,
+          workspace: root,
+          network: true,
+          allowProcessExec: true,
+          processExecPaths: [path.dirname(process.execPath)],
+          readOnlyPaths: await resolveCandyShellReadOnlyPaths(root),
+          environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
+          ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
+          signal: controller.signal,
+        });
+        const output = redactBashOutput(
+          `${result.stdout}${result.stderr}`,
+          options.activeSecrets ?? [],
+        );
+        if (result.cancelled) {
+          if (
+            controller.signal.reason instanceof Error &&
+            controller.signal.reason.message === "timeout"
+          )
+            throw new Error(`timeout:${input.timeout}`);
+          throw new Error("aborted");
+        }
+        return {
+          content: [{ type: "text" as const, text: output || "(no output)" }],
+          details: { exitCode: result.code },
+        };
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        executionSignal.removeEventListener("abort", abort);
+      }
+    },
+  } as unknown as piSdk.ToolDefinition;
+}
+
 function redactBashOutput(value: string, activeSecrets: readonly string[]): string {
   return activeSecrets
     .reduce(
@@ -506,6 +683,70 @@ function redactBashOutput(value: string, activeSecrets: readonly string[]): stri
       /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/gu,
       "[REDACTED]",
     );
+}
+
+function wrapCandyShellCommand(command: string): string {
+  return [
+    'trap \'status=$?; trap - EXIT; for pid in $(jobs -pr); do kill "$pid" 2>/dev/null || true; done; exit "$status"\' EXIT',
+    command,
+  ].join("\n");
+}
+
+function createCandyShellEnvironment(
+  workspaceRoot: string,
+  activeSecrets: readonly string[],
+): Record<string, string> {
+  const environment = Object.fromEntries(
+    Object.entries(cleanChildEnvironment(process.env, activeSecrets)).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  if (process.platform === "darwin") {
+    environment.HOME = workspaceRoot;
+    environment.PATH = [
+      path.dirname(process.execPath),
+      "/Library/Developer/CommandLineTools/usr/bin",
+      environment.PATH,
+      "/usr/bin",
+      "/bin",
+    ]
+      .filter((value): value is string => value !== undefined && value.length > 0)
+      .join(":");
+    environment.GIT_CONFIG_NOSYSTEM = "1";
+  }
+  return environment;
+}
+
+async function resolveCandyShellReadOnlyPaths(root: string): Promise<readonly string[]> {
+  const marker = path.join(root, ".git");
+  const markerMetadata = await lstat(marker).catch(() => undefined);
+  if (markerMetadata === undefined) return [];
+  if (markerMetadata.isSymbolicLink())
+    throw new Error("Trusted Shell Git metadata marker cannot be a symbolic link.");
+  const paths = [marker];
+  let gitDirectory: string | undefined;
+  if (markerMetadata.isDirectory()) {
+    gitDirectory = await realpath(marker).catch(() => undefined);
+  } else if (markerMetadata.isFile()) {
+    const contents = await readFile(marker, "utf8").catch(() => "");
+    const target = contents.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1];
+    if (target !== undefined) {
+      gitDirectory = await realpath(
+        path.isAbsolute(target) ? target : path.resolve(path.dirname(marker), target),
+      ).catch(() => undefined);
+    }
+  }
+  if (gitDirectory === undefined) return paths;
+  paths.push(gitDirectory);
+  const commondir = await readFile(path.join(gitDirectory, "commondir"), "utf8").catch(() => "");
+  const commonTarget = commondir.trim();
+  if (commonTarget.length > 0) {
+    const commonDirectory = await realpath(
+      path.isAbsolute(commonTarget) ? commonTarget : path.resolve(gitDirectory, commonTarget),
+    ).catch(() => undefined);
+    if (commonDirectory !== undefined) paths.push(commonDirectory);
+  }
+  return [...new Set(paths)];
 }
 
 /**
@@ -879,7 +1120,8 @@ export function createCandyWorkspaceTools(
   shell?: {
     readonly runner: CandyBashOperationsOptions["runner"];
     readonly activeSecrets?: readonly string[];
-    readonly onApproval: CandyBashOperationsOptions["onApproval"];
+    readonly onApproval?: CandyBashOperationsOptions["onApproval"];
+    readonly networkApproval?: CandyNetworkOperationsOptions["onApproval"];
   },
   fileDeleteApproval?: FileDeleteApproval,
   activeSecrets: readonly string[] = [],
@@ -996,7 +1238,7 @@ export function createCandyWorkspaceTools(
         operations: createCandyBashOperations(workspaceRoot, {
           runner: shell.runner,
           ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
-          onApproval: shell.onApproval,
+          ...(shell.onApproval === undefined ? {} : { onApproval: shell.onApproval }),
         }),
         exposeSessionEnvironment: false,
       });
@@ -1006,6 +1248,15 @@ export function createCandyWorkspaceTools(
         label: "Trusted Shell",
         promptSnippet: "Run an approved command in the selected Task Worktree",
       } as unknown as piSdk.ToolDefinition);
+      if (shell.networkApproval !== undefined) {
+        tools.push(
+          createCandyNetworkToolDefinition(workspaceRoot, {
+            runner: shell.runner,
+            ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
+            onApproval: shell.networkApproval,
+          }),
+        );
+      }
     }
   }
   return tools;
@@ -1178,6 +1429,7 @@ export interface PiAgentEngineInput {
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
+  readonly shellNetworkApproval?: CandyNetworkOperationsOptions["onApproval"];
   readonly fileDeleteApproval?: FileDeleteApproval;
 }
 
@@ -1317,7 +1569,10 @@ export class PiAgentEngine {
           ? {
               runner: this.bashRunner,
               activeSecrets: [lease.secret],
-              onApproval: input.shellApproval ?? (async () => false),
+              ...(input.shellApproval === undefined ? {} : { onApproval: input.shellApproval }),
+              ...(input.shellNetworkApproval === undefined
+                ? {}
+                : { networkApproval: input.shellNetworkApproval }),
             }
           : undefined,
         input.fileDeleteApproval,

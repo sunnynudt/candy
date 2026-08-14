@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { createCandyWorkspaceOperations } from "@candy/pi-adapter";
+import { createCandyBashOperations, createCandyWorkspaceOperations } from "@candy/pi-adapter";
 import { NativeProcessRunner } from "@candy/platform";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
@@ -31,27 +31,30 @@ const matrix = {
   },
   native: {
     validatorSucceeded: false,
+    gitWorktreeSucceeded: false,
+    gitMetadataWriteBlocked: false,
     outsideReadBlocked: false,
     outsideWriteBlocked: false,
     symlinkReadBlocked: false,
     symlinkWriteBlocked: false,
     symlinkSwapBlocked: false,
-    networkBlocked: false,
+    networkBlockedByDefault: false,
+    networkEnabledByExplicitCapability: false,
     descendantCancelled: false,
     descendantMarkerAbsent: false,
+    ordinaryDescendantMarkerAbsent: false,
   },
 };
 
-if (!existsSync(runnerPath)) {
-  execFileSync(
-    "cargo",
-    ["build", "--locked", "--manifest-path", path.join("native", "sandbox-runner", "Cargo.toml")],
-    { stdio: "inherit" },
-  );
-}
+execFileSync(
+  "cargo",
+  ["build", "--locked", "--manifest-path", path.join("native", "sandbox-runner", "Cargo.toml")],
+  { stdio: "inherit" },
+);
 
 const runner = new NativeProcessRunner(runnerPath);
 const operations = createCandyWorkspaceOperations(workspace);
+const shellOperations = createCandyBashOperations(workspace, { runner });
 const outsideRead = path.join(outside, "read.txt");
 const outsideWrite = path.join(outside, "native-write.txt");
 const symlinkRoot = path.join(workspace, "link");
@@ -62,6 +65,7 @@ const swapBackup = path.join(workspace, "swap-before-link");
 const swapDestination = path.join(outside, "swap-destination");
 const swapMarker = path.join(swapDestination, "race.txt");
 const descendantMarker = path.join(workspace, "descendant-marker.txt");
+const ordinaryDescendantMarker = path.join(workspace, "ordinary-descendant-marker.txt");
 
 async function expectRejected(operation, message) {
   try {
@@ -72,12 +76,38 @@ async function expectRejected(operation, message) {
   throw new Error(message);
 }
 
-async function runNode(source, signal) {
+async function runNode(source, signal, network = false, allowProcessExec = false) {
   return runner.run({
     executable: process.execPath,
     args: ["-e", source],
     cwd: workspace,
     workspace,
+    network,
+    allowProcessExec,
+    processExecPaths: allowProcessExec ? [path.dirname(process.execPath)] : [],
+    signal,
+  });
+}
+
+async function runShell(command, signal, network = false) {
+  return runner.run({
+    executable: "/bin/bash",
+    args: ["--noprofile", "--norc", "-c", command],
+    cwd: workspace,
+    workspace,
+    network,
+    allowProcessExec: true,
+    processExecPaths: [path.dirname(process.execPath)],
+    environment: {
+      HOME: workspace,
+      PATH: "/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin",
+      GIT_CONFIG_NOSYSTEM: "1",
+    },
+    readOnlyPaths: [
+      path.join(workspace, ".git"),
+      path.join(repository, ".git"),
+      path.join(repository, ".git", "worktrees", path.basename(workspace)),
+    ],
     signal,
   });
 }
@@ -86,8 +116,30 @@ function delay(milliseconds) {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
-await mkdir(workspace, { recursive: true });
 await mkdir(outside, { recursive: true });
+const repository = path.join(root, "repository");
+await mkdir(repository, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repository });
+await writeFile(path.join(repository, "README.md"), "git-worktree-fixture\n", "utf8");
+execFileSync("git", ["add", "README.md"], { cwd: repository });
+execFileSync(
+  "git",
+  [
+    "-c",
+    "user.name=Candy Fixture",
+    "-c",
+    "user.email=candy@example.invalid",
+    "commit",
+    "-qm",
+    "fixture",
+  ],
+  { cwd: repository },
+);
+execFileSync(
+  "git",
+  ["worktree", "add", "-q", "--detach", "--lock", "--reason", "candy:smoke", workspace, "main"],
+  { cwd: repository },
+);
 await writeFile(outsideRead, "outside-read-fixture", "utf8");
 await mkdir(swapDestination, { recursive: true });
 await writeFile(path.join(workspace, "inside.txt"), "inside-fixture", "utf8");
@@ -119,6 +171,24 @@ try {
   matrix.native.validatorSucceeded = validator.code === 0 && validator.stdout === "validator-ok";
   if (!matrix.native.validatorSucceeded)
     throw new Error("macOS native runner rejected the supported validator fixture.");
+
+  const gitStatus = await runShell(
+    "git status --short --branch && git rev-parse --show-toplevel && printf git-worktree-ok",
+  );
+  matrix.native.gitWorktreeSucceeded =
+    gitStatus.code === 0 &&
+    gitStatus.stdout.includes("git-worktree-ok") &&
+    gitStatus.stdout.includes(workspace);
+  if (!matrix.native.gitWorktreeSucceeded)
+    throw new Error("The macOS native runner rejected a real Git Task Worktree.");
+
+  const gitCommit = await runShell(
+    "git -c user.name=Candy -c user.email=candy@example.invalid commit --allow-empty -qm blocked-commit",
+  );
+  matrix.native.gitMetadataWriteBlocked =
+    gitCommit.code !== 0 && gitCommit.stderr.includes("Operation not permitted");
+  if (!matrix.native.gitMetadataWriteBlocked)
+    throw new Error("The macOS native runner allowed a Git metadata write.");
 
   const rawRead = await runNode(
     `const fs = require('node:fs'); process.stdout.write(fs.readFileSync(${JSON.stringify(outsideRead)}, 'utf8'));`,
@@ -164,12 +234,21 @@ try {
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("G2 network fixture failed to listen.");
-    const networkResult = await runNode(
+    const offlineNetworkResult = await runNode(
       `const net = require('node:net'); const socket = net.createConnection({host:'127.0.0.1', port:${address.port}}); socket.once('connect', () => { process.stdout.write('network-open'); process.exit(0); }); socket.once('error', () => { process.stdout.write('network-blocked'); process.exit(3); });`,
     );
-    matrix.native.networkBlocked = networkResult.stdout === "network-blocked";
-    if (!matrix.native.networkBlocked)
+    matrix.native.networkBlockedByDefault = offlineNetworkResult.stdout === "network-blocked";
+    if (!matrix.native.networkBlockedByDefault)
       throw new Error("macOS native no-network denial was not reproduced.");
+    const elevatedNetworkResult = await runNode(
+      `const net = require('node:net'); const socket = net.createConnection({host:'127.0.0.1', port:${address.port}}); socket.once('connect', () => { process.stdout.write('network-open'); socket.end(); }); socket.once('error', () => { process.stdout.write('network-blocked'); process.exit(3); });`,
+      undefined,
+      true,
+    );
+    matrix.native.networkEnabledByExplicitCapability =
+      elevatedNetworkResult.stdout === "network-open";
+    if (!matrix.native.networkEnabledByExplicitCapability)
+      throw new Error("macOS native explicit network capability was not reproduced.");
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
   }
@@ -177,7 +256,7 @@ try {
   const descendantSource = `const fs = require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(descendantMarker)}, 'descendant-write'), 1200); setTimeout(() => {}, 5000);`;
   const parentSource = `const { spawn } = require('node:child_process'); spawn(process.execPath, ['-e', ${JSON.stringify(descendantSource)}], {stdio:'ignore'}); setTimeout(() => {}, 5000);`;
   const controller = new globalThis.AbortController();
-  const pending = runNode(parentSource, controller.signal);
+  const pending = runNode(parentSource, controller.signal, false, true);
   await delay(150);
   controller.abort();
   const cancelled = await pending;
@@ -187,12 +266,24 @@ try {
   if (!matrix.native.descendantCancelled || !matrix.native.descendantMarkerAbsent)
     throw new Error("macOS native runner did not prove descendant cancellation.");
 
+  const ordinaryDescendantSource = `const fs = require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(ordinaryDescendantMarker)}, 'ordinary-descendant-write'), 1200); setTimeout(() => {}, 5000);`;
+  const ordinaryShell = await shellOperations.exec(
+    `${JSON.stringify(process.execPath)} -e ${JSON.stringify(ordinaryDescendantSource)} & exit 0`,
+    workspace,
+    { onData: () => undefined },
+  );
+  await delay(1400);
+  matrix.native.ordinaryDescendantMarkerAbsent =
+    ordinaryShell.exitCode === 0 && !existsSync(ordinaryDescendantMarker);
+  if (!matrix.native.ordinaryDescendantMarkerAbsent)
+    throw new Error("Trusted Shell left a descendant after ordinary command completion.");
+
   console.log(
     `macOS Sandbox Runner strict containment matrix passed: ${JSON.stringify({
       workspaceGuard: matrix.workspaceGuard,
       native: matrix.native,
       osWorkspaceContainment: "native-seatbelt-enforced",
-      shellAuto: "disabled",
+      macosTuiTrustedShellAuto: "implementation-only; independent-g2-review-blocked",
       shellAutoDebug: "disabled",
       independentSecurityReview: "blocked",
     })}`,

@@ -1,6 +1,6 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-13
+更新日期：2026-08-14
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
@@ -70,6 +70,8 @@
 - ☑ 完成签名独立部分的 Windows release 打包/校验脚本（`package:desktop:windows:release`、`verify:desktop:windows:release`）：`node --check`、Prettier 与 `git diff --check` 通过；正式签名安装/升级/回滚/卸载仍因签名身份缺失而 Blocked。
 
 ## macOS 白天主动队列：当前 macOS Tahoe `26.x` Apple Silicon
+
+- ◐ macOS TUI Trusted Shell Auto Personal Preview 已完成实现路径（ADR-0010），但正常 composition root 仍保持 capability flag off，等待独立 macOS G2 review：只有显式开启、Auto profile、Git-backed Candy Task Worktree 三项同时满足时，任务才持久化 Trusted Shell capability。普通 `candy_bash` 通过 native runner 离线自动执行；需要 outbound network 的完整命令必须通过独立 `candy_bash_network` 工具逐次审批，拒绝、取消、超时、TUI 退出和 owner loss 均不重放；真实 linked Worktree 的 Git status 可读且 Git metadata 写入被 native profile 拒绝。`npm test` 167/167、Rust 7/7 通过。未完成条件：当前-host real PTY/DeepSeek Flash 旅程、精确 `26.5.2` regression、独立 G2 security review、Windows parity、签名和最终 V1 acceptance；Windows Trusted Shell Auto 继续禁用。
 
 - ☑️ macOS 验收环境已拆分：默认 `npm run acceptance:macos` 以当前 Tahoe `26.x` arm64 主机为 primary（当前主机为 `26.6.1`，最低保留 `26.5.2`），精确 `npm run acceptance:macos:baseline` 作为 `26.5.2` 兼容性回归。两者报告分离，current-host 运行不再因缺少旧版本主机而 preflight 阻断；这不等于跨版本行为自动兼容或最终 V1 Pass。
 

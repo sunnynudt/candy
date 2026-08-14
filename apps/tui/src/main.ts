@@ -8,6 +8,7 @@ import {
   MiniMaxPiAgentEngine,
   PiAgentEngine,
   ProviderContractError,
+  type CandyNetworkApprovalRequest,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
@@ -16,6 +17,8 @@ import {
   type CandyModelId,
   DEFAULT_CANDY_MODEL,
   NativeProcessRunner,
+  type NativeProcessRequest,
+  type NativeProcessResult,
   resolveAppPaths,
   resolveCredential,
   resolveDefaultAppDataRoot,
@@ -62,6 +65,8 @@ export interface TuiTaskSmokeResult {
   readonly queued: readonly string[];
   readonly observations: readonly string[];
 }
+
+const activeTuiOwners = new Set<string>();
 
 export async function runTuiSmoke(): Promise<TuiSmokeResult> {
   const browser = new UnavailableBrowserCapability();
@@ -118,6 +123,13 @@ export interface InteractiveTuiOptions {
   readonly validatorCommand?: CommandValidatorCommand;
   readonly validatorTimeoutMs?: number;
   readonly activeSecrets?: () => readonly string[];
+  readonly shellRunner?: TuiShellRunner;
+  /** Set only by a composition root after the platform-specific G2 gate passes. */
+  readonly trustedShellAutoAvailable?: boolean;
+}
+
+export interface TuiShellRunner {
+  run(request: NativeProcessRequest): Promise<NativeProcessResult>;
 }
 
 export interface TuiAgentEngine {
@@ -175,6 +187,8 @@ export class InteractiveTui {
   readonly #validator: TuiValidator | undefined;
   readonly #validatorTimeoutMs: number;
   readonly #activeSecretsProvider: (() => readonly string[]) | undefined;
+  readonly #shellRunner: TuiShellRunner | undefined;
+  readonly #trustedShellAutoAvailable: boolean;
   readonly #controllers = new Map<string, TaskController>();
   readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
@@ -187,8 +201,12 @@ export class InteractiveTui {
     string,
     { readonly taskId: string; readonly settle: (approved: boolean) => void }
   >();
+  readonly #networkApprovals = new Map<
+    string,
+    { readonly taskId: string; readonly settle: (approved: boolean) => void }
+  >();
   readonly #engine: TuiAgentEngine;
-  readonly #ownerId = `tui:${process.pid}`;
+  readonly #ownerId = `tui:${process.pid}:${randomUUID()}`;
   #currentTaskId: string | undefined;
   #surface: CandyTuiSurface | undefined = undefined;
   #resolveExit: (() => void) | undefined = undefined;
@@ -198,6 +216,7 @@ export class InteractiveTui {
   #approvalProfile: "read-only" | "auto" = "read-only";
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
+  #trustedShellEnabled = false;
   #validatorCommand: CommandValidatorCommand | undefined;
 
   public constructor(options: InteractiveTuiOptions = {}) {
@@ -218,8 +237,11 @@ export class InteractiveTui {
     this.#validator = options.validator ?? createNativeTuiValidator();
     this.#validatorTimeoutMs = options.validatorTimeoutMs ?? DEFAULT_VALIDATOR_TIMEOUT_MS;
     this.#activeSecretsProvider = options.activeSecrets;
+    this.#shellRunner = options.shellRunner ?? createNativeTuiShellRunner();
+    this.#trustedShellAutoAvailable = options.trustedShellAutoAvailable ?? false;
     this.#validatorCommand = options.validatorCommand;
-    this.#store.markOwnerInterrupted(this.#ownerId);
+    this.recoverStaleTuiOwners();
+    activeTuiOwners.add(this.#ownerId);
     for (const metadata of this.#store.list()) {
       this.#controllers.set(
         metadata.taskId,
@@ -230,14 +252,23 @@ export class InteractiveTui {
     if (options.engine !== undefined) {
       this.#engine = options.engine;
     } else {
-      const deepseek = new PiAgentEngine(paths.sessions, async () => {
-        const lease = resolveCredential("deepseek");
-        return lease ? { secret: lease.value, release: lease.release } : undefined;
-      });
-      const minimax = new MiniMaxPiAgentEngine(paths.sessions, async () => {
-        const lease = resolveCredential("minimax-cn");
-        return lease ? { secret: lease.value, release: lease.release } : undefined;
-      });
+      const deepseek = new PiAgentEngine(
+        paths.sessions,
+        async () => {
+          const lease = resolveCredential("deepseek");
+          return lease ? { secret: lease.value, release: lease.release } : undefined;
+        },
+        "deepseek",
+        this.#shellRunner,
+      );
+      const minimax = new MiniMaxPiAgentEngine(
+        paths.sessions,
+        async () => {
+          const lease = resolveCredential("minimax-cn");
+          return lease ? { secret: lease.value, release: lease.release } : undefined;
+        },
+        this.#shellRunner,
+      );
       this.#engine = new TuiModelRouter(deepseek, minimax);
     }
   }
@@ -257,10 +288,10 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
-      "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Shell stays disabled.\n",
+      "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
     );
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
@@ -272,11 +303,15 @@ export class InteractiveTui {
       this.#closing = true;
       for (const task of this.#controllers.values()) {
         const current = task.snapshot();
-        if (current.state === "running" || current.state === "waiting_approval")
+        if (
+          (current.state === "running" || current.state === "waiting_approval") &&
+          current.ownerId === this.#ownerId
+        )
           task.transition("interrupted", current.revision);
       }
       this.#store.markOwnerInterrupted(this.#ownerId);
       for (const approval of this.#deleteApprovals.values()) approval.settle(false);
+      for (const approval of this.#networkApprovals.values()) approval.settle(false);
       for (const controller of this.#abortControllers.values()) controller.abort();
       for (const controller of this.#validatorAbortControllers.values()) controller.abort();
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -284,6 +319,7 @@ export class InteractiveTui {
       this.#resolveExit = undefined;
       await this.#surface.stop();
       this.#surface = undefined;
+      activeTuiOwners.delete(this.#ownerId);
       this.#store.close();
     }
   }
@@ -318,6 +354,10 @@ export class InteractiveTui {
       this.printTasks();
     } else if (trimmed.startsWith(":profile ")) {
       this.setProfile(trimmed.slice(9).trim());
+    } else if (trimmed === ":trusted-shell" || trimmed.startsWith(":trusted-shell ")) {
+      this.setTrustedShell(trimmed.slice(14).trim());
+    } else if (trimmed === ":shell" || trimmed.startsWith(":shell ")) {
+      this.setTrustedShell(trimmed.slice(6).trim());
     } else if (trimmed === ":validator" || trimmed.startsWith(":validator ")) {
       this.configureValidator(trimmed.slice(10).trim());
     } else if (trimmed === ":changes") {
@@ -398,8 +438,19 @@ export class InteractiveTui {
     const selectedModel = this.#selectedModel;
     const attachmentIds = [...this.#selectedAttachmentIds];
     const validatorCommand = this.#validatorCommand;
+    const trustedShell = this.#trustedShellEnabled;
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
+    if (trustedShell) {
+      if (process.platform !== "darwin")
+        throw new Error("macOS Trusted Shell Auto is unavailable on this platform.");
+      if (approvalProfile !== "auto")
+        throw new Error("Trusted Shell Auto requires the Auto approval profile.");
+      if (this.#shellRunner === undefined)
+        throw new Error("Trusted Shell Auto is unavailable on this installation.");
+      if (workspaceBaseline === undefined)
+        throw new Error("Trusted Shell Auto requires a Git-backed Task Worktree.");
+    }
     let worktreePath: string | undefined;
     if (approvalProfile === "auto" && workspaceBaseline !== undefined) {
       const plan = this.planForTask(taskId, workspacePath, workspaceBaseline);
@@ -422,6 +473,7 @@ export class InteractiveTui {
         validatorCommand,
         workspaceBaseline,
         worktreePath,
+        trustedShell,
       );
     } catch (error) {
       if (worktreePath !== undefined) {
@@ -445,6 +497,12 @@ export class InteractiveTui {
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
     if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);
+    if (trustedShell) {
+      this.#trustedShellEnabled = false;
+      this.write(
+        "Trusted Shell Auto enabled for this task: offline commands run automatically; network requires one-command approval\n",
+      );
+    }
     if (!this.#closing) this.drain(new Map([[taskId, prompt]]));
   }
 
@@ -453,10 +511,10 @@ export class InteractiveTui {
       if (this.#abortControllers.has(taskId)) continue;
       const task = this.ensureController(taskId);
       if (!task || !["queued", "paused", "interrupted"].includes(task.snapshot().state)) continue;
-      const running = task.setOwner(this.#ownerId, task.snapshot().revision);
+      task.setOwner(this.#ownerId, task.snapshot().revision);
       const abort = new AbortController();
       this.#abortControllers.set(taskId, abort);
-      void this.runTask(task, running.revision, abort, explicitPrompts.get(taskId));
+      void this.runTask(task, abort, explicitPrompts.get(taskId));
     }
   }
 
@@ -1126,7 +1184,6 @@ export class InteractiveTui {
 
   private async runTask(
     task: TaskController,
-    revision: number,
     abort: AbortController,
     explicitPrompt?: string,
   ): Promise<void> {
@@ -1134,13 +1191,13 @@ export class InteractiveTui {
     try {
       const taskSnapshot = this.#store.get(taskId);
       if (taskSnapshot === undefined) throw new Error("Task metadata is unavailable after start.");
+      if (taskSnapshot.trustedShell && !this.#trustedShellAutoAvailable)
+        throw new Error("Trusted Shell Auto is disabled pending the macOS G2 gate.");
+      const executionPath = await this.resolveExecutionPath(taskSnapshot);
       const prompt =
         explicitPrompt ??
         this.#prompts.get(taskId) ??
-        (await this.#engine.recoverPrompt?.(
-          taskId,
-          taskSnapshot.worktreePath ?? taskSnapshot.workspacePath,
-        ));
+        (await this.#engine.recoverPrompt?.(taskId, executionPath));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
       if (explicitPrompt !== undefined) {
         this.#prompts.set(taskId, explicitPrompt);
@@ -1162,12 +1219,19 @@ export class InteractiveTui {
           taskId,
           prompt,
           model: taskSnapshot.model,
-          cwd: taskSnapshot.worktreePath ?? taskSnapshot.workspacePath,
+          cwd: executionPath,
           approvalProfile: taskSnapshot.approvalProfile,
           ...(taskSnapshot.approvalProfile === "auto"
             ? {
                 fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
                   this.requestFileDeleteApproval(taskId, request, signal),
+              }
+            : {}),
+          ...(taskSnapshot.trustedShell
+            ? {
+                trustedShell: true,
+                shellNetworkApproval: (request: CandyNetworkApprovalRequest, signal: AbortSignal) =>
+                  this.requestNetworkApproval(taskId, request, signal),
               }
             : {}),
           ...(attachments === undefined
@@ -1195,8 +1259,8 @@ export class InteractiveTui {
         }
       }
       const current = task.snapshot();
-      if (current.state === "running" && current.revision === revision) {
-        const completed = task.transition("completed", revision);
+      if (current.state === "running") {
+        const completed = task.transition("completed", current.revision);
         this.write(`\n${completed.taskId} completed\n`);
       }
     } catch (error) {
@@ -1295,7 +1359,7 @@ export class InteractiveTui {
       const validator = this.validatorStatus(task);
       const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
       this.write(
-        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\tvalidator=${validator}\n`,
+        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tvalidator=${validator}\n`,
       );
     }
   }
@@ -1317,10 +1381,51 @@ export class InteractiveTui {
       return;
     }
     this.#approvalProfile = value;
+    if (value === "read-only") this.#trustedShellEnabled = false;
     this.write(
       value === "auto"
-        ? "profile auto: file read/create/edit enabled; delete requires confirmation; Shell disabled\n"
+        ? `profile auto: file read/create/edit enabled; delete requires confirmation; Trusted Shell Auto ${this.#trustedShellEnabled ? "on" : "off"}\n`
         : "profile read-only: file mutation disabled\n",
+    );
+  }
+
+  private setTrustedShell(value: string): void {
+    if (value === "") {
+      this.write(`Trusted Shell Auto: ${this.#trustedShellEnabled ? "on" : "off"}\n`);
+      return;
+    }
+    if (value !== "on" && value !== "off" && value !== "auto") {
+      this.write("trusted-shell must be on, off, or auto\n");
+      return;
+    }
+    if (value === "off") {
+      this.#trustedShellEnabled = false;
+      this.write("Trusted Shell Auto disabled for new tasks\n");
+      return;
+    }
+    if (process.platform !== "darwin") {
+      this.write(
+        "Trusted Shell Auto rejected: macOS Personal Preview is unavailable on this platform\n",
+      );
+      return;
+    }
+    if (this.#approvalProfile !== "auto") {
+      this.write("Trusted Shell Auto rejected: select :profile auto first\n");
+      return;
+    }
+    if (this.#shellRunner === undefined) {
+      this.write(
+        "Trusted Shell Auto rejected: Native Sandbox Runner is unavailable on this installation\n",
+      );
+      return;
+    }
+    if (!this.#trustedShellAutoAvailable) {
+      this.write("Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build\n");
+      return;
+    }
+    this.#trustedShellEnabled = true;
+    this.write(
+      "Trusted Shell Auto enabled for the next Auto Git Task; offline commands run automatically\n",
     );
   }
 
@@ -1349,14 +1454,124 @@ export class InteractiveTui {
     });
   }
 
+  private async requestNetworkApproval(
+    taskId: string,
+    request: CandyNetworkApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (signal.aborted || this.#closing) return false;
+    const task = this.ensureController(taskId);
+    if (task === undefined) return false;
+    const taskSnapshot = task.snapshot();
+    if (taskSnapshot.state !== "running") return false;
+    const taskMetadata = this.#store.get(taskId);
+    if (taskMetadata?.worktreePath === undefined) return false;
+    const [canonicalTaskWorktree, canonicalRequestCwd, taskRoot] = await Promise.all([
+      realpath(taskMetadata.worktreePath).catch(() => undefined),
+      realpath(request.cwd).catch(() => undefined),
+      lstat(taskMetadata.worktreePath).catch(() => undefined),
+    ]);
+    if (
+      canonicalTaskWorktree === undefined ||
+      canonicalRequestCwd === undefined ||
+      canonicalTaskWorktree !== canonicalRequestCwd ||
+      taskRoot?.isSymbolicLink() === true
+    )
+      return false;
+    const current = task.snapshot();
+    if (
+      signal.aborted ||
+      this.#closing ||
+      current.state !== "running" ||
+      current.ownerId !== this.#ownerId
+    )
+      return false;
+    const approvalId = `network-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (approved: boolean): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", denyOnAbort);
+        this.#networkApprovals.delete(approvalId);
+        const latest = task.snapshot();
+        if (latest.state === "waiting_approval") task.transition("running", latest.revision);
+        resolve(approved);
+      };
+      const denyOnAbort = (): void => settle(false);
+      this.#networkApprovals.set(approvalId, { taskId, settle });
+      signal.addEventListener("abort", denyOnAbort, { once: true });
+      const latest = task.snapshot();
+      if (
+        signal.aborted ||
+        this.#closing ||
+        latest.state !== "running" ||
+        latest.ownerId !== this.#ownerId
+      ) {
+        settle(false);
+        return;
+      }
+      try {
+        task.transition("waiting_approval", latest.revision);
+      } catch {
+        settle(false);
+        return;
+      }
+      this.write(
+        [
+          "\nnetwork approval required",
+          `command: ${formatApprovalField(request.command)}`,
+          `reason: ${formatApprovalField(request.reason)}`,
+          `cwd: ${formatApprovalField(canonicalTaskWorktree)}`,
+          `timeout: ${request.timeout === undefined ? "none" : `${request.timeout}s`}`,
+          `:approve ${approvalId} or :deny ${approvalId}`,
+          "",
+        ].join("\n"),
+      );
+    });
+  }
+
+  private recoverStaleTuiOwners(): void {
+    for (const metadata of this.#store.list()) {
+      if (
+        (metadata.state !== "running" && metadata.state !== "waiting_approval") ||
+        metadata.ownerId === undefined ||
+        !metadata.ownerId.startsWith("tui:") ||
+        isTuiOwnerAlive(metadata.ownerId)
+      )
+        continue;
+      this.#store.markOwnerInterrupted(metadata.ownerId);
+    }
+  }
+
+  private async resolveExecutionPath(metadata: TaskMetadata): Promise<string> {
+    const executionPath = metadata.worktreePath ?? metadata.workspacePath;
+    if (!metadata.trustedShell) return executionPath;
+    if (metadata.worktreePath === undefined)
+      throw new Error("Trusted Shell Auto requires a Git Task Worktree.");
+    const [canonicalPath, root] = await Promise.all([
+      realpath(metadata.worktreePath).catch(() => undefined),
+      lstat(metadata.worktreePath).catch(() => undefined),
+    ]);
+    if (canonicalPath === undefined || root?.isSymbolicLink() === true)
+      throw new Error("Trusted Shell Task Worktree is unavailable or symlinked.");
+    return canonicalPath;
+  }
+
   private resolveDeleteApproval(approvalId: string, approved: boolean): void {
     const approval = this.#deleteApprovals.get(approvalId);
-    if (approval === undefined) {
-      this.write(`${approvalId} is not awaiting deletion approval\n`);
+    if (approval !== undefined) {
+      approval.settle(approved);
+      this.write(`${approval.taskId} deletion ${approved ? "approved" : "denied"}\n`);
       return;
     }
-    approval.settle(approved);
-    this.write(`${approval.taskId} deletion ${approved ? "approved" : "denied"}\n`);
+    const networkApproval = this.#networkApprovals.get(approvalId);
+    if (networkApproval !== undefined) {
+      networkApproval.settle(approved);
+      this.write(`${networkApproval.taskId} network ${approved ? "approved" : "denied"}\n`);
+      return;
+    }
+    this.write(`${approvalId} is not awaiting approval\n`);
   }
 
   private write(value: string): void {
@@ -1372,6 +1587,12 @@ function createNativeTuiValidator(): TuiValidator | undefined {
     run: (command, workspace, signal, activeSecrets) =>
       commandValidator.run(command, workspace, signal, {}, activeSecrets),
   };
+}
+
+function createNativeTuiShellRunner(): TuiShellRunner | undefined {
+  if (process.platform !== "darwin") return undefined;
+  const runnerPath = resolveNativeProcessRunnerPath(import.meta.url);
+  return runnerPath === undefined ? undefined : new NativeProcessRunner(runnerPath);
 }
 
 class TuiModelRouter implements TuiAgentEngine {
@@ -1637,10 +1858,39 @@ function containsCredentialMaterial(value: string): boolean {
   );
 }
 
+function isTuiOwnerAlive(ownerId: string): boolean {
+  if (activeTuiOwners.has(ownerId)) return true;
+  const match = /^tui:(\d+)(?::[0-9a-f-]+)?$/u.exec(ownerId);
+  if (match === null) return true;
+  const pid = Number(match[1]);
+  if (pid === process.pid) return false;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  return isProcessAlive(pid);
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    );
+  }
+}
+
 function redactTuiOutput(value: string): string {
   return value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1[REDACTED]`)
     .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, "[REDACTED]");
+}
+
+function formatApprovalField(value: string): string {
+  return JSON.stringify(value);
 }
 
 function transcriptText(value: string): string {

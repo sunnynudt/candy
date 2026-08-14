@@ -130,6 +130,16 @@ test("task controller fences stale revisions and scheduler preserves FIFO with a
   assert.throws(() => scheduler.startAvailable(6), /between 1 and 5/u);
 });
 
+test("task controller returns to running after a one-command approval", () => {
+  const task = new TaskController("task-network-approval");
+  const running = task.setOwner("owner-1", 0);
+  const waiting = task.transition("waiting_approval", running.revision);
+  assert.equal(waiting.state, "waiting_approval");
+  const resumed = task.transition("running", waiting.revision);
+  assert.equal(resumed.state, "running");
+  assert.equal(resumed.ownerId, "owner-1");
+});
+
 test("completed tasks can be explicitly queued for a continuation turn", () => {
   const task = new TaskController("task-continuation");
   const running = task.setOwner("owner-1", 0);

@@ -31,7 +31,7 @@ import {
   parseDeepSeekSseLine,
   ProviderContractError,
 } from "./index.js";
-import { createCandyBashOperations } from "./index.js";
+import { createCandyBashOperations, createCandyNetworkToolDefinition } from "./index.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
@@ -803,13 +803,108 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
     },
     {
       executable: "C:\\Program Files\\Git\\bin\\bash.exe",
-      args: ["--noprofile", "--norc", "-c", "npm test"],
+      args: [
+        "--noprofile",
+        "--norc",
+        "-c",
+        'trap \'status=$?; trap - EXIT; for pid in $(jobs -pr); do kill "$pid" 2>/dev/null || true; done; exit "$status"\' EXIT\nnpm test',
+      ],
       cwd: "C:\\task-worktree",
       workspace: "C:\\task-worktree",
       activeSecrets: ["fixture-secret"],
     },
   );
   assert.equal(Buffer.concat(chunks).toString(), "[REDACTED] output");
+});
+
+test("Candy Trusted Shell runs ordinary commands offline without per-command approval", async () => {
+  const calls: unknown[] = [];
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    runner: {
+      run: async (request) => {
+        calls.push(request);
+        return { code: 0, signal: null, stdout: "offline", stderr: "", cancelled: false };
+      },
+    },
+  });
+  const result = await operations.exec("npm test", "C:\\task-worktree", {
+    onData: () => undefined,
+  });
+  assert.deepEqual(result, { exitCode: 0 });
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0] as { readonly network?: boolean }).network, false);
+});
+
+test("Candy network shell tool requests a bounded one-command elevation and passes network only to that run", async () => {
+  let approvalRequest: unknown;
+  let runnerRequest: unknown;
+  const tool = createCandyNetworkToolDefinition("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async (request) => {
+      approvalRequest = request;
+      return true;
+    },
+    runner: {
+      run: async (request) => {
+        runnerRequest = request;
+        return { code: 7, signal: null, stdout: "network-output", stderr: "", cancelled: false };
+      },
+    },
+  });
+  const result = await tool.execute(
+    "network-1",
+    { command: "git fetch origin", reason: "refresh remote metadata", timeout: 15 } as never,
+    new AbortController().signal,
+    undefined,
+    {} as never,
+  );
+  assert.deepEqual(approvalRequest, {
+    command: "git fetch origin",
+    cwd: "C:\\task-worktree",
+    reason: "refresh remote metadata",
+    timeout: 15,
+  });
+  assert.equal((runnerRequest as { readonly network?: boolean }).network, true);
+  assert.deepEqual(result, {
+    content: [{ type: "text", text: "network-output" }],
+    details: { exitCode: 7 },
+  });
+});
+
+test("Candy network shell tool does not spawn when approval is cancelled before launch", async () => {
+  const controller = new AbortController();
+  let runnerCalled = false;
+  const tool = createCandyNetworkToolDefinition("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async () => {
+      controller.abort();
+      return true;
+    },
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        throw new Error("runner must not be reached");
+      },
+    },
+  });
+  await assert.rejects(
+    tool.execute(
+      "network-cancelled",
+      { command: "git fetch origin", reason: "refresh remote metadata" } as never,
+      controller.signal,
+      undefined,
+      {} as never,
+    ),
+    /aborted/iu,
+  );
+  assert.equal(runnerCalled, false);
 });
 
 test("Candy Bash operations deny before runner execution and reject cwd escape", async () => {
