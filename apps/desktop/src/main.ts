@@ -21,6 +21,7 @@ import {
   resolveAppPaths,
   resolveDefaultAppDataRoot,
   type CredentialName,
+  type CredentialStore,
   type CandyModelId,
 } from "@candy/platform";
 import { AttachmentStore, type BrowserAction, type BrowserTabSnapshot } from "@candy/runtime";
@@ -650,12 +651,33 @@ async function saveWorkspaceSelection(workspacePath: string): Promise<void> {
   });
 }
 
+function containsActiveProviderCredential(
+  content: Uint8Array,
+  credentials: CredentialStore,
+): boolean {
+  const bytes = Buffer.from(content);
+  for (const name of ["deepseek", "minimax-cn"] as const) {
+    const lease = credentials.lease(name);
+    if (!lease) continue;
+    try {
+      if (bytes.includes(Buffer.from(lease.value, "utf8"))) return true;
+    } finally {
+      lease.release();
+    }
+  }
+  return false;
+}
+
 function registerIpcHandlers(): void {
   const credentials =
     process.env.CANDY_DESKTOP_CREDENTIAL_SMOKE === "1"
       ? new InMemoryCredentialStore()
       : new KeyringCredentialStore();
-  const attachments = new AttachmentStore(resolveAppPaths(app.getPath("userData")).attachments);
+  const attachments = new AttachmentStore(
+    resolveAppPaths(app.getPath("userData")).attachments,
+    Date.now,
+    (content) => containsActiveProviderCredential(content, credentials),
+  );
   browserAttachments = attachments;
   ipcMain.handle("browser.allow-site", (event, host: unknown) => {
     assertTrustedRenderer(event);

@@ -46,6 +46,7 @@ Current policy note: the primary macOS acceptance environment is the current Tah
 - High findings: macOS normal-completion process-tree cleanup does not cover detached descendants; Pi public file reads can place active provider credentials into session content; and Trusted Shell does not enforce the no-commit/no-push boundary before approval/spawn.
 - Medium findings: approval responses are not fenced to the current task owner, and Desktop attachment ingestion does not centrally screen active-provider credentials before persistence/submission.
 - Current-host reproduction: an intentionally detached child remained able to write inside the Task Worktree 1.6 seconds after the Trusted Shell command returned. The findings are source-backed and do not rely on Windows, exact `26.5.2`, signing, or external deployment evidence.
+- The implementation checkpoint now adds a macOS process-group supervisor plus detached reaper, active-secret file/attachment guards, publication-command denial, and approval owner fencing. The strict native smoke covers detached-descendant normal completion and parent-loss cleanup. A fresh independent security review is still required; these remediation tests are implementation evidence, not approval.
 - Remediation and a fresh macOS G2 review are required before enabling the normal composition root. Shell Auto and Shell Auto Debug remain disabled.
 
 ## WP1 checkpoint oversight

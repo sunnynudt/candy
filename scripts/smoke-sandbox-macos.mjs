@@ -45,6 +45,7 @@ const matrix = {
     descendantCancelled: false,
     descendantMarkerAbsent: false,
     ordinaryDescendantMarkerAbsent: false,
+    detachedDescendantMarkerAbsent: false,
     parentExitLauncherKilled: false,
     parentExitMarkerAbsent: false,
   },
@@ -70,6 +71,7 @@ const swapDestination = path.join(outside, "swap-destination");
 const swapMarker = path.join(swapDestination, "race.txt");
 const descendantMarker = path.join(workspace, "descendant-marker.txt");
 const ordinaryDescendantMarker = path.join(workspace, "ordinary-descendant-marker.txt");
+const detachedDescendantMarker = path.join(workspace, "detached-descendant-marker.txt");
 const parentExitMarker = path.join(workspace, "parent-exit-marker.txt");
 let parentExitLauncher;
 
@@ -297,6 +299,19 @@ try {
     ordinaryShell.exitCode === 0 && !existsSync(ordinaryDescendantMarker);
   if (!matrix.native.ordinaryDescendantMarkerAbsent)
     throw new Error("Trusted Shell left a descendant after ordinary command completion.");
+
+  const detachedDescendantSource = `const fs = require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(detachedDescendantMarker)}, 'detached-descendant-write'), 900); setTimeout(() => {}, 5000);`;
+  const detachedParentSource = `const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(detachedDescendantSource)}], {detached:true, stdio:'ignore'}); child.unref(); setTimeout(() => {}, 250);`;
+  const detachedShell = await shellOperations.exec(
+    `${JSON.stringify(process.execPath)} -e ${JSON.stringify(detachedParentSource)}`,
+    workspace,
+    { onData: () => undefined },
+  );
+  await delay(1100);
+  matrix.native.detachedDescendantMarkerAbsent =
+    detachedShell.exitCode === 0 && !existsSync(detachedDescendantMarker);
+  if (!matrix.native.detachedDescendantMarkerAbsent)
+    throw new Error("Trusted Shell left a detached descendant after ordinary command completion.");
 
   const parentExitSource = `const fs = require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(parentExitMarker)}, 'parent-exit-write'), 1200); setTimeout(() => {}, 5000);`;
   const launcherSource = `import { NativeProcessRunner } from "@candy/platform";

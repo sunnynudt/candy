@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { appendFile, mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -276,6 +276,27 @@ test("attachment store hashes image bytes, keeps binary outside session, and rej
   await assert.rejects(store.get(metadata.id), /integrity/u);
   await assert.rejects(store.put("video", "video/mp4", new Uint8Array([1])), /unavailable/u);
   assert.equal(await store.cleanupBefore(101), 1);
+});
+
+test("attachment store applies a credential guard before persisting bytes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-guard-"));
+  const store = new AttachmentStore(root, Date.now, () => true);
+  try {
+    await assert.rejects(
+      store.put(
+        "image",
+        "image/png",
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      ),
+      /credential/iu,
+    );
+    assert.deepEqual(await readdir(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("browser state rejects stale revisions, disallowed sites, sensitive actions, and honors Take Control", () => {

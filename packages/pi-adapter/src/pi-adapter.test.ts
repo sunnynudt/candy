@@ -127,6 +127,50 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
   }
 });
 
+test("Candy workspace tools redact reads and reject credential-bearing writes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-credential-tools-"));
+  try {
+    await writeFile(path.join(root, "secret.txt"), "before fixture-secret after\n");
+    const tools = createCandyWorkspaceTools(root, "auto", undefined, undefined, ["fixture-secret"]);
+    const read = tools.find((tool) => tool.name === "candy_read");
+    const write = tools.find((tool) => tool.name === "candy_write");
+    assert.ok(read);
+    assert.ok(write);
+    const readResult = await read.execute(
+      "read-secret",
+      { path: "secret.txt" },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const readText = readResult.content
+      .filter(
+        (content): content is { readonly type: "text"; readonly text: string } =>
+          content.type === "text",
+      )
+      .map((content) => content.text)
+      .join("\n");
+    assert.doesNotMatch(readText, /fixture-secret/u);
+    assert.match(readText, /\[REDACTED\]/u);
+    await assert.rejects(
+      write.execute(
+        "write-secret",
+        { path: "new.txt", content: "fixture-secret" },
+        new AbortController().signal,
+        undefined,
+        {} as never,
+      ),
+      /credentials/iu,
+    );
+    assert.equal(
+      await readFile(path.join(root, "new.txt"), "utf8").catch(() => undefined),
+      undefined,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy workspace browse tools stay bounded and inside the selected workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-"));
   const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-outside-"));
@@ -955,6 +999,64 @@ test("Candy Bash operations reject credential-shaped commands before approval or
       onData: () => undefined,
     }),
     /credentials/iu,
+  );
+  assert.equal(approved, false);
+  assert.equal(runnerCalled, false);
+});
+
+test("Candy Trusted Shell rejects publication commands before approval or spawn", async () => {
+  let approved = false;
+  let runnerCalled = false;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async () => {
+      approved = true;
+      return true;
+    },
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        throw new Error("must not run");
+      },
+    },
+  });
+  await assert.rejects(
+    operations.exec("git -C repo commit -am change", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /publication/iu,
+  );
+  assert.equal(approved, false);
+  assert.equal(runnerCalled, false);
+
+  const network = createCandyNetworkToolDefinition("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async () => {
+      approved = true;
+      return true;
+    },
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        throw new Error("must not run");
+      },
+    },
+  });
+  approved = false;
+  runnerCalled = false;
+  await assert.rejects(
+    network.execute(
+      "network-publish",
+      { command: "git push origin HEAD", reason: "publish changes" } as never,
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    ),
+    /publication/iu,
   );
   assert.equal(approved, false);
   assert.equal(runnerCalled, false);

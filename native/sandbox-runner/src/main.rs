@@ -1,13 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 #[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(any(target_os = "macos", windows))]
 use std::io::Read;
 use std::io::{self, BufRead, Write};
+#[cfg(target_os = "macos")]
+use std::os::raw::c_void;
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::thread;
 #[cfg(target_os = "macos")]
@@ -77,6 +83,11 @@ struct ErrorResponse {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Some((parent_pid, process_group, target_pid)) = macos_reaper_arguments() {
+        run_macos_reaper(parent_pid, process_group, target_pid);
+        return;
+    }
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
     for line in stdin.lock().lines() {
@@ -90,6 +101,21 @@ fn main() {
         }
         let _ = stdout.flush();
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_reaper_arguments() -> Option<(u32, u32, u32)> {
+    let mut arguments = std::env::args();
+    if arguments.nth(1).as_deref() != Some("--macos-reaper") {
+        return None;
+    }
+    let parent_pid = arguments.next()?.parse().ok()?;
+    let process_group = arguments.next()?.parse().ok()?;
+    let target_pid = arguments.next()?.parse().ok()?;
+    if arguments.next().is_some() {
+        return None;
+    }
+    Some((parent_pid, process_group, target_pid))
 }
 
 fn response_for_line(line: &str) -> String {
@@ -154,12 +180,55 @@ fn response_for_line(line: &str) -> String {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn getppid() -> i32;
-    fn getpgrp() -> i32;
     fn kill(pid: i32, signal: i32) -> i32;
+    fn setpgid(pid: i32, pgid: i32) -> i32;
+    fn signal(signal: i32, handler: extern "C" fn(i32)) -> extern "C" fn(i32);
 }
 
 #[cfg(target_os = "macos")]
+#[link(name = "proc")]
+unsafe extern "C" {
+    fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
+    fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
+}
+
+#[cfg(target_os = "macos")]
+static MACOS_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct MacosProcBsdInfo {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    pbi_uid: u32,
+    pbi_gid: u32,
+    pbi_ruid: u32,
+    pbi_rgid: u32,
+    pbi_svuid: u32,
+    pbi_svgid: u32,
+    rfu_1: u32,
+    pbi_comm: [u8; 16],
+    pbi_name: [u8; 32],
+    pbi_nfiles: u32,
+    pbi_pgid: u32,
+    pbi_pjobc: u32,
+    e_tdev: u32,
+    e_tpgid: u32,
+    pbi_nice: i32,
+    pbi_start_tvsec: u64,
+    pbi_start_tvusec: u64,
+}
+
+#[cfg(target_os = "macos")]
+type TrackedMacosProcesses = BTreeMap<i32, (u64, u64)>;
+
+#[cfg(target_os = "macos")]
 fn run_macos(request: RunRequest) -> String {
+    install_macos_signal_handler();
+    MACOS_CANCEL_REQUESTED.store(false, Ordering::Relaxed);
     let workspace = match fs::canonicalize(&request.workspace) {
         Ok(path) => path,
         Err(_) => return error_response("invalid_path"),
@@ -217,7 +286,8 @@ fn run_macos(request: RunRequest) -> String {
         &process_exec_paths,
         &read_only_paths,
     );
-    let mut child = match Command::new("/usr/bin/sandbox-exec")
+    let mut command = Command::new("/usr/bin/sandbox-exec");
+    command
         .arg("-p")
         .arg(profile)
         .arg("--")
@@ -227,28 +297,40 @@ fn run_macos(request: RunRequest) -> String {
         .env_clear()
         .envs(request.environment)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        });
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(_) => return completed_macos_error(request.request_id),
     };
+    let child_pid = child.id();
+    let process_group = child_pid;
+    spawn_macos_reaper(request.parent_pid, process_group, child_pid);
     let Some(stdout) = child.stdout.take() else {
-        terminate_macos_process_group(macos_process_group_id());
+        terminate_macos_process_group(process_group, &BTreeMap::new(), true);
         let _ = child.wait();
         return completed_macos_error(request.request_id);
     };
     let Some(stderr) = child.stderr.take() else {
-        terminate_macos_process_group(macos_process_group_id());
+        terminate_macos_process_group(process_group, &BTreeMap::new(), true);
         let _ = child.wait();
         return completed_macos_error(request.request_id);
     };
     let stdout_thread = thread::spawn(|| read_bounded(stdout));
     let stderr_thread = thread::spawn(|| read_bounded(stderr));
-    let process_group = macos_process_group_id();
     let parent_pid = request.parent_pid;
+    let mut descendants = BTreeMap::new();
     let mut status = None;
     let mut parent_lost = false;
+    let mut cancelled = false;
     loop {
         match child.try_wait() {
             Ok(Some(value)) => {
@@ -256,9 +338,16 @@ fn run_macos(request: RunRequest) -> String {
                 break;
             }
             Ok(None) => {
+                descendants.extend(macos_descendant_pids(child_pid));
+                if MACOS_CANCEL_REQUESTED.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    terminate_macos_process_group(process_group, &descendants, true);
+                    status = child.wait().ok();
+                    break;
+                }
                 if parent_pid > 0 && macos_parent_pid() != parent_pid {
                     parent_lost = true;
-                    terminate_macos_process_group(process_group);
+                    terminate_macos_process_group(process_group, &descendants, true);
                     status = child.wait().ok();
                     break;
                 }
@@ -268,8 +357,12 @@ fn run_macos(request: RunRequest) -> String {
         }
     }
     if status.is_none() {
-        terminate_macos_process_group(process_group);
+        cancelled = true;
+        terminate_macos_process_group(process_group, &descendants, true);
         status = child.wait().ok();
+    }
+    if status.is_some() && !parent_lost && !cancelled {
+        terminate_macos_process_group(process_group, &descendants, false);
     }
     let stdout = stdout_thread.join().unwrap_or_default();
     let stderr = stderr_thread.join().unwrap_or_default();
@@ -281,7 +374,7 @@ fn run_macos(request: RunRequest) -> String {
             code: status.code(),
             stdout,
             stderr,
-            cancelled: parent_lost,
+            cancelled: parent_lost || cancelled,
         },
         None => return completed_macos_error(request.request_id),
     };
@@ -308,24 +401,183 @@ fn macos_parent_pid() -> u32 {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_process_group_id() -> u32 {
-    unsafe { getpgrp() }.max(0) as u32
+extern "C" fn macos_termination_handler(_: i32) {
+    MACOS_CANCEL_REQUESTED.store(true, Ordering::Relaxed);
 }
 
 #[cfg(target_os = "macos")]
-fn terminate_macos_process_group(pid: u32) {
-    let Ok(pid) = i32::try_from(pid) else {
+fn install_macos_signal_handler() {
+    unsafe {
+        signal(1, macos_termination_handler);
+        signal(15, macos_termination_handler);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_macos_reaper(parent_pid: u32, process_group: u32, target_pid: u32) {
+    let Ok(executable) = std::env::current_exe() else {
         return;
     };
-    if pid <= 0 {
+    let mut command = Command::new(executable);
+    command
+        .arg("--macos-reaper")
+        .arg(parent_pid.to_string())
+        .arg(process_group.to_string())
+        .arg(target_pid.to_string())
+        .current_dir("/")
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(|| {
+            if setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        });
+    }
+    let _ = command.spawn();
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_reaper(parent_pid: u32, process_group: u32, target_pid: u32) {
+    let mut descendants = BTreeMap::new();
+    loop {
+        descendants.extend(macos_descendant_pids(target_pid));
+        let parent_alive = parent_pid == 0 || macos_process_exists(parent_pid);
+        if !parent_alive {
+            terminate_macos_process_group(process_group, &descendants, true);
+            return;
+        }
+        if !macos_process_exists(target_pid) {
+            terminate_macos_process_group(process_group, &descendants, false);
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_exists(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    pid > 0 && unsafe { kill(pid, 0) == 0 }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_descendant_pids(root_pid: u32) -> TrackedMacosProcesses {
+    let Ok(root_pid) = i32::try_from(root_pid) else {
+        return BTreeMap::new();
+    };
+    if root_pid <= 0 {
+        return BTreeMap::new();
+    }
+    let mut pids = [0_i32; 4096];
+    let returned = unsafe {
+        proc_listallpids(
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(&pids) as i32,
+        )
+    };
+    if returned <= 0 {
+        return BTreeMap::new();
+    }
+    let mut children = BTreeMap::<i32, Vec<(i32, (u64, u64))>>::new();
+    for pid in pids.into_iter().filter(|pid| *pid > 0) {
+        let mut info = std::mem::MaybeUninit::<MacosProcBsdInfo>::zeroed();
+        let result = unsafe {
+            proc_pidinfo(
+                pid,
+                3,
+                0,
+                info.as_mut_ptr().cast(),
+                std::mem::size_of::<MacosProcBsdInfo>() as i32,
+            )
+        };
+        if result < std::mem::size_of::<MacosProcBsdInfo>() as i32 {
+            continue;
+        }
+        let info = unsafe { info.assume_init() };
+        children
+            .entry(info.pbi_ppid as i32)
+            .or_default()
+            .push((pid, (info.pbi_start_tvsec, info.pbi_start_tvusec)));
+    }
+    let mut descendants = BTreeMap::new();
+    let mut pending = VecDeque::from([root_pid]);
+    while let Some(parent_pid) = pending.pop_front() {
+        for (child_pid, start_time) in children.get(&parent_pid).into_iter().flatten() {
+            if descendants.insert(*child_pid, *start_time).is_none() {
+                pending.push_back(*child_pid);
+            }
+        }
+    }
+    descendants
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_macos_process_group(
+    process_group: u32,
+    descendants: &TrackedMacosProcesses,
+    include_group: bool,
+) {
+    let Ok(process_group) = i32::try_from(process_group) else {
+        return;
+    };
+    if process_group <= 0 {
         return;
     }
-    unsafe {
-        kill(-pid, 15);
+    if include_group {
+        unsafe {
+            kill(-process_group, 15);
+            kill(process_group, 15);
+        }
     }
-    thread::sleep(Duration::from_millis(250));
-    unsafe {
-        kill(-pid, 9);
+    signal_tracked_macos_processes(descendants, 15);
+    if !descendants.is_empty() {
+        thread::sleep(Duration::from_millis(250));
+    }
+    if include_group {
+        unsafe {
+            kill(-process_group, 9);
+            kill(process_group, 9);
+        }
+    }
+    signal_tracked_macos_processes(descendants, 9);
+}
+
+#[cfg(target_os = "macos")]
+fn signal_tracked_macos_processes(processes: &TrackedMacosProcesses, signal: i32) {
+    for (pid, start_time) in processes {
+        let mut info = std::mem::MaybeUninit::<MacosProcBsdInfo>::zeroed();
+        let result = unsafe {
+            proc_pidinfo(
+                *pid,
+                3,
+                0,
+                info.as_mut_ptr().cast(),
+                std::mem::size_of::<MacosProcBsdInfo>() as i32,
+            )
+        };
+        if result < std::mem::size_of::<MacosProcBsdInfo>() as i32 {
+            // A detached child may be reparented between the last process
+            // snapshot and cleanup. libproc can then hide its BSD info, so
+            // fall back to signaling the still-tracked PID directly.
+            unsafe {
+                kill(*pid, signal);
+            }
+            continue;
+        }
+        let info = unsafe { info.assume_init() };
+        if (info.pbi_start_tvsec, info.pbi_start_tvusec) != *start_time {
+            continue;
+        }
+        unsafe {
+            kill(*pid, signal);
+        }
     }
 }
 

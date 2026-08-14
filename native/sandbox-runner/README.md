@@ -13,11 +13,13 @@ and returns a typed completion response. The TypeScript caller separately
 enforces selected-workspace policy and provider-secret isolation.
 
 The TypeScript boundary includes the Candy parent PID in each request. The
-macOS runner keeps the helper and sandboxed command in the same Candy-owned
-detached process group so ordinary cancellation terminates both; while a
-command is active it also watches the parent PID and terminates that group if
-Candy exits unexpectedly. A zero or omitted parent PID is retained only for
-direct protocol fixtures and is not emitted by the TypeScript caller.
+macOS runner puts the sandboxed command in its own Candy-owned process group,
+catches cancellation in the supervisor, and starts a detached reaper that
+watches the Candy parent independently. The reaper terminates the complete
+owned group on cancellation or parent loss, and tracks/reclaims detached
+descendants after normal command completion. A zero or omitted parent PID is
+retained only for direct protocol fixtures and is not emitted by the
+TypeScript caller.
 
 On Windows, the same protocol launches a suspended absolute executable,
 assigns it to a Job Object before resume, enables `KILL_ON_JOB_CLOSE`, bounds
@@ -27,9 +29,8 @@ network isolation.
 
 The macOS strict-containment smoke proves supported validator execution,
 outside-workspace read/write denial, symlink and symlink-swap denial, loopback
-network denial, ordinary descendant cancellation, and cleanup after the
-native runner's parent is killed on the acceptance host. It does not prove
-detached-descendant cleanup after normal command completion, and it is not a
+network denial, ordinary and detached descendant cleanup, and cleanup after
+the native runner's parent is killed on the acceptance host. It is not a
 completed macOS G2 security review. Under ADR-0010, macOS Personal Preview
 enablement is independently gated from Windows; the macOS composition root
 must keep shell-enabled Auto and Auto Debug unavailable until the macOS G2

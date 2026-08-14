@@ -1675,6 +1675,88 @@ test("app-server keeps a running task read-only to a second owner", async () => 
   }
 });
 
+test("app-server rejects a second owner approval response without resolving the request", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-approval-owners-"));
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const { repository } = createGitFixture(root);
+  const worktreeRoot = path.join(root, "worktrees");
+  const background: ProtocolMessage[] = [];
+  const first = new AppServerController({
+    databasePath,
+    ownerId: "owner-1",
+    worktreeRoot,
+    bashRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        if (!input.shellApproval) throw new Error("shell approval missing");
+        await input.shellApproval(
+          { command: "git status --short", cwd: input.cwd! },
+          new AbortController().signal,
+        );
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  const second = new AppServerController({ databasePath, ownerId: "owner-2" });
+  try {
+    await first.dispatch(
+      command("approval-owner-task", "create", 0, {
+        type: "task.create",
+        prompt: "inspect",
+        approvalProfile: "auto",
+        trustedShell: true,
+        workspacePath: repository,
+      }),
+    );
+    await first.dispatch(
+      command("approval-owner-task", "run", 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const waiting = await waitForSnapshotState(
+      background,
+      "approval-owner-task",
+      "waiting_approval",
+    );
+    const remote = await second.dispatch(
+      command("approval-owner-task", "remote-approve", waiting.revision, {
+        type: "approval.respond",
+        approvalId: waiting.event.snapshot.approvalId!,
+        decision: "approve",
+      }),
+    );
+    const remoteSnapshot = remote.at(-1);
+    assert.ok(remoteSnapshot?.kind === "event" && remoteSnapshot.event.type === "snapshot");
+    if (remoteSnapshot?.kind === "event" && remoteSnapshot.event.type === "snapshot") {
+      assert.equal(remoteSnapshot.event.snapshot.state, "waiting_approval");
+      assert.equal(remoteSnapshot.event.snapshot.ownerId, "owner-1");
+    }
+    assert.equal(
+      background.some(
+        (message) => message.kind === "event" && message.event.type === "tool.completed",
+      ),
+      false,
+    );
+    const denied = await first.dispatch(
+      command("approval-owner-task", "approve", waiting.revision, {
+        type: "approval.respond",
+        approvalId: waiting.event.snapshot.approvalId!,
+        decision: "deny",
+      }),
+      (message) => background.push(message),
+    );
+    const deniedSnapshot = denied.at(-1);
+    assert.ok(deniedSnapshot?.kind === "event" && deniedSnapshot.event.type === "snapshot");
+    if (deniedSnapshot?.kind === "event" && deniedSnapshot.event.type === "snapshot")
+      assert.equal(deniedSnapshot.event.snapshot.state, "paused");
+  } finally {
+    first.close();
+    second.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server resolves Candy-owned image attachments into the selected MiniMax turn", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-attachments-"));
   const attachmentStore = new AttachmentStore(path.join(root, "attachments"));

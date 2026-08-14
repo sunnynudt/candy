@@ -478,6 +478,8 @@ export class AppServerController {
     }
 
     if (command.type === "approval.respond") {
+      if (existing.ownerId !== undefined && existing.ownerId !== this.#ownerId)
+        return [this.snapshot(existing)];
       if (existing.state !== "waiting_approval")
         throw new Error("Task is not waiting for approval.");
       if (command.approvalId !== approvalIdFor(existing.taskId, existing.revision))

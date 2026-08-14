@@ -130,10 +130,19 @@ export interface ImageAttachmentPayload {
   readonly data: string;
 }
 
+export type AttachmentContentGuard = (content: Uint8Array) => boolean;
+
+function containsCredentialMaterial(value: string): boolean {
+  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
+    value,
+  );
+}
+
 export class AttachmentStore {
   public constructor(
     private readonly root: string,
     private readonly clock: () => number = Date.now,
+    private readonly contentGuard?: AttachmentContentGuard,
   ) {}
 
   public async put(
@@ -146,6 +155,11 @@ export class AttachmentStore {
     if (!IMAGE_MIME_TYPES.has(mimeType)) throw new Error("Unsupported image MIME type.");
     if (content.byteLength > MAX_ATTACHMENT_BYTES)
       throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
+    if (
+      containsCredentialMaterial(Buffer.from(content).toString("latin1")) ||
+      this.contentGuard?.(content) === true
+    )
+      throw new Error("Attachment content contains credential material.");
     if (!isValidImageContent(mimeType, content)) throw new Error("Image content is corrupt.");
     const sha256 = createHash("sha256").update(content).digest("hex");
     const id = `att_${sha256}`;

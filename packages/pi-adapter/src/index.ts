@@ -384,6 +384,48 @@ function containsCredentialMaterial(value: string): boolean {
   );
 }
 
+function containsActiveSecretBytes(value: Uint8Array, activeSecrets: readonly string[]): boolean {
+  const bytes = Buffer.from(value);
+  return activeSecrets.some(
+    (secret) => secret.length > 0 && bytes.includes(Buffer.from(secret, "utf8")),
+  );
+}
+
+function containsShellPublicationAction(command: string): boolean {
+  for (const segment of command.split(/[;&|()\n]+/u)) {
+    const tokens = segment
+      .trim()
+      .split(/\s+/u)
+      .map((token) => token.replace(/^["']|["']$/gu, "").toLowerCase())
+      .filter((token) => token.length > 0);
+    if (
+      tokens.some((token, index) => {
+        const executable = token.split(/[\\/]/u).at(-1);
+        return (
+          executable === "git" &&
+          tokens
+            .slice(index + 1)
+            .some((subcommand) => subcommand === "commit" || subcommand === "push")
+        );
+      })
+    )
+      return true;
+    if (tokens.some((token) => ["publish", "release", "deploy"].includes(token))) return true;
+    if (
+      tokens.some(
+        (token, index) =>
+          ["npm", "pnpm", "yarn", "cargo", "docker"].includes(token) &&
+          ["publish", "push"].includes(tokens[index + 1] ?? ""),
+      ) ||
+      tokens.some(
+        (token, index) => token === "gh" && ["release", "pr"].includes(tokens[index + 1] ?? ""),
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
 export interface CandyWorkspaceToolOperations {
   readonly readFile: (absolutePath: string) => Promise<Buffer>;
   readonly access: (absolutePath: string) => Promise<void>;
@@ -470,6 +512,8 @@ export function createCandyBashOperations(
         )
       )
         throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+      if (containsShellPublicationAction(command))
+        throw new Error("Repository publication and external release actions are forbidden.");
       const approved =
         options.onApproval === undefined
           ? true
@@ -620,6 +664,8 @@ export function createCandyNetworkToolDefinition(
         )
       )
         throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+      if (containsShellPublicationAction(input.command))
+        throw new Error("Repository publication and external release actions are forbidden.");
       const approved = await options.onApproval(
         {
           command: input.command,
@@ -759,6 +805,7 @@ async function resolveCandyShellReadOnlyPaths(root: string): Promise<readonly st
  */
 export function createCandyWorkspaceOperations(
   workspaceRoot: string,
+  activeSecrets: readonly string[] = [],
 ): CandyWorkspaceToolOperations {
   const root = path.resolve(workspaceRoot);
   return {
@@ -772,6 +819,11 @@ export function createCandyWorkspaceOperations(
     },
     writeFile: async (absolutePath, content) => {
       await assertWorkspacePath(root, absolutePath, true);
+      if (
+        containsCredentialMaterial(content) ||
+        activeSecrets.some((secret) => secret.length > 0 && content.includes(secret))
+      )
+        throw new Error("Provider credentials are forbidden in workspace writes.");
       await writeFile(absolutePath, content, "utf8");
     },
     mkdir: async (directory) => {
@@ -780,6 +832,20 @@ export function createCandyWorkspaceOperations(
       await assertWorkspacePath(root, directory, false);
     },
   };
+}
+
+async function readWorkspaceFileForModel(
+  operations: CandyWorkspaceToolOperations,
+  absolutePath: string,
+  activeSecrets: readonly string[],
+): Promise<Buffer> {
+  const content = await operations.readFile(absolutePath);
+  if (content.includes(0)) {
+    if (containsActiveSecretBytes(content, activeSecrets))
+      throw new Error("Provider credentials are forbidden in binary workspace reads.");
+    return content;
+  }
+  return Buffer.from(redactBashOutput(content.toString("utf8"), activeSecrets), "utf8");
 }
 
 export interface FileDeleteApprovalRequest {
@@ -1130,10 +1196,14 @@ export function createCandyWorkspaceTools(
   fileDeleteApproval?: FileDeleteApproval,
   activeSecrets: readonly string[] = [],
 ) {
-  const operations = createCandyWorkspaceOperations(workspaceRoot);
+  const operations = createCandyWorkspaceOperations(workspaceRoot, activeSecrets);
   const browseTools = createCandyWorkspaceBrowseTools(workspaceRoot, activeSecrets);
   const read = piSdk.createReadToolDefinition(workspaceRoot, {
-    operations: { readFile: operations.readFile, access: operations.access },
+    operations: {
+      readFile: (absolutePath) =>
+        readWorkspaceFileForModel(operations, absolutePath, activeSecrets),
+      access: operations.access,
+    },
   });
   const tools: piSdk.ToolDefinition[] = [
     {
