@@ -21,11 +21,20 @@ descendants after normal command completion. A zero or omitted parent PID is
 retained only for direct protocol fixtures and is not emitted by the
 TypeScript caller.
 
-On Windows, the same protocol launches a suspended absolute executable,
-assigns it to a Job Object before resume, enables `KILL_ON_JOB_CLOSE`, bounds
-output, rejects workspace/cwd reparse paths, and cleans up the owned process
-tree. The Windows `network: false` field is protocol validation, not OS-level
-network isolation.
+On Windows, the same protocol launches through the Windows 11
+`Experimental_CreateProcessInSandbox` AppContainer/BFS API with a default
+denied network and explicit workspace/toolchain grants, then assigns the
+suspended process to a Job Object before resume. The runner rejects the
+request when the API is missing or returns an unsupported-host result; it
+never falls back to the older unsandboxed `CreateProcessW` path. Output is
+bounded, workspace/cwd reparse paths are rejected, and the owned process tree
+is cleaned up. `network: true` adds only the explicit `internetClient`
+capability for that one process.
+
+The API is experimental and host-gated. On a Windows 11 host where
+`processmodel.dll` returns `ERROR_CALL_NOT_IMPLEMENTED`, the runner reports
+`sandbox_unavailable` and the TUI capability remains disabled. That result is
+an intentional blocked state, not evidence of OS-level containment.
 
 The macOS strict-containment smoke proves supported validator execution,
 outside-workspace read/write denial, symlink and symlink-swap denial, loopback

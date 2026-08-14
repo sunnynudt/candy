@@ -362,6 +362,48 @@ test("native runner parses the max completed frame through the Windows adapter",
   assert.equal(Buffer.byteLength(result.stderr, "utf8"), MAX_OUTPUT_BYTES);
 });
 
+test("native Windows adapter forwards the explicit network capability", async () => {
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: () => boolean;
+  };
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = (): boolean => false;
+  child.stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as { network?: boolean };
+    assert.equal(request.network, true);
+    child.stdout.end(
+      `${JSON.stringify({
+        v: 1,
+        kind: "completed",
+        requestId: JSON.parse(chunk.toString()).requestId,
+        code: 0,
+        stdout: "",
+        stderr: "",
+        cancelled: false,
+      })}\n`,
+    );
+    child.stderr.end();
+    queueMicrotask(() => child.emit("close", 0, null));
+  });
+  const result = await new NativeProcessRunner(
+    "C:\\candy\\candy-sandbox-runner.exe",
+    "win32",
+    () => child,
+  ).run({
+    executable: "C:\\candy\\node.exe",
+    args: [],
+    cwd: "C:\\candy",
+    workspace: "C:\\candy",
+    network: true,
+  });
+  assert.equal(result.code, 0);
+});
+
 test("native runner cancels the Windows wrapper without passing a POSIX signal", async () => {
   const child = new EventEmitter() as EventEmitter & {
     pid: number;

@@ -103,7 +103,7 @@ export class NativeProcessRunner {
       throw new Error("Sandbox commands require absolute executable and cwd paths.");
     if (!path.isAbsolute(request.workspace))
       throw new Error("Sandbox commands require an absolute workspace path.");
-    if (request.network === true && this.platform !== "darwin")
+    if (request.network === true && this.platform !== "darwin" && this.platform !== "win32")
       throw new Error("Sandbox command network capability is unavailable on this platform.");
     if (request.environment) assertSafeProcessEnvironment(request.environment);
 

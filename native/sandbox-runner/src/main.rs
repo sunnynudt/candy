@@ -149,7 +149,7 @@ fn response_for_line(line: &str) -> String {
     {
         return error_response("secret_forbidden");
     }
-    if request.network && !cfg!(target_os = "macos") {
+    if request.network && !cfg!(any(target_os = "macos", windows)) {
         return error_response("network_forbidden");
     }
     if !is_absolute_path(Path::new(&request.cwd))
@@ -788,6 +788,8 @@ const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
+const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+#[cfg(windows)]
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
 #[cfg(windows)]
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
@@ -887,20 +889,12 @@ extern "system" {
         attributes: *mut SecurityAttributes,
         size: u32,
     ) -> i32;
-    fn CreateProcessW(
-        application_name: *const u16,
-        command_line: *mut u16,
-        process_attributes: *mut SecurityAttributes,
-        thread_attributes: *mut SecurityAttributes,
-        inherit_handles: i32,
-        creation_flags: u32,
-        environment: *mut c_void,
-        current_directory: *const u16,
-        startup_info: *mut StartupInfo,
-        process_information: *mut ProcessInformation,
-    ) -> i32;
     fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
     fn GetFileAttributesW(path: *const u16) -> u32;
+    fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;
+    fn LoadLibraryExW(path: *const u16, file: Handle, flags: u32) -> Handle;
+    fn FreeLibrary(module: Handle) -> i32;
+    fn GetLastError() -> u32;
     fn ResumeThread(thread: Handle) -> u32;
     fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
     fn SetInformationJobObject(
@@ -974,6 +968,256 @@ fn run_windows(request: RunRequest) -> String {
 }
 
 #[cfg(windows)]
+type ExperimentalCreateProcessInSandbox = unsafe extern "system" fn(
+    application_name: *const u16,
+    command_line: *mut u16,
+    process_attributes: *mut SecurityAttributes,
+    thread_attributes: *mut SecurityAttributes,
+    inherit_handles: i32,
+    creation_flags: u32,
+    environment: *mut c_void,
+    current_directory: *const u16,
+    startup_info: *mut StartupInfo,
+    identity: *const u16,
+    sandbox_specification: *const c_void,
+    sandbox_specification_size: u32,
+    process_information: *mut ProcessInformation,
+) -> i32;
+
+#[cfg(windows)]
+fn create_process_in_windows_sandbox(
+    request: &RunRequest,
+    executable: *const u16,
+    command_line: *mut u16,
+    environment: *mut c_void,
+    cwd: *const u16,
+    startup: *mut StartupInfo,
+    information: *mut ProcessInformation,
+    paths: &CanonicalLaunchPaths,
+) -> Result<(), &'static str> {
+    let module = unsafe {
+        LoadLibraryExW(
+            wide_null("processmodel.dll").as_ptr(),
+            null_mut(),
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
+    if module.is_null() {
+        return Err("sandbox_unavailable");
+    }
+    let function =
+        unsafe { GetProcAddress(module, b"Experimental_CreateProcessInSandbox\0".as_ptr()) };
+    if function.is_null() {
+        unsafe { FreeLibrary(module) };
+        return Err("sandbox_unavailable");
+    }
+    let specification = sandbox_specification(request, paths)?;
+    let identity = wide_null(&sandbox_identity(&request.request_id));
+    let created = unsafe {
+        std::mem::transmute::<*mut c_void, ExperimentalCreateProcessInSandbox>(function)(
+            executable,
+            command_line,
+            null_mut(),
+            null_mut(),
+            0,
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+            environment,
+            cwd,
+            startup,
+            identity.as_ptr(),
+            specification.as_ptr().cast(),
+            specification.len() as u32,
+            information,
+        )
+    } != 0;
+    let error = if created {
+        0
+    } else {
+        unsafe { GetLastError() }
+    };
+    unsafe { FreeLibrary(module) };
+    if created {
+        Ok(())
+    } else {
+        Err(match error {
+            5 => "sandbox_access_denied",
+            13 | 87 | 13_005 => "sandbox_invalid_spec",
+            1168 => "sandbox_capability_unavailable",
+            0 | 120 => "sandbox_unavailable",
+            _ => "sandbox_launch_failed",
+        })
+    }
+}
+
+#[cfg(windows)]
+fn sandbox_identity(request_id: &str) -> String {
+    let suffix = request_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+        .collect::<String>();
+    format!(
+        "CandyTaskSandbox_{}",
+        if suffix.is_empty() { "run" } else { &suffix }
+    )
+}
+
+#[cfg(windows)]
+fn sandbox_specification(
+    request: &RunRequest,
+    paths: &CanonicalLaunchPaths,
+) -> Result<Vec<u8>, &'static str> {
+    let read_only_paths = request
+        .process_exec_paths
+        .iter()
+        .chain(request.read_only_paths.iter())
+        .map(|value| canonical_sandbox_path(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut read_only_paths = read_only_paths;
+    read_only_paths.push(
+        paths
+            .executable
+            .parent()
+            .ok_or("invalid_path")?
+            .to_path_buf(),
+    );
+    read_only_paths.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+    read_only_paths.dedup_by(|left, right| same_windows_path(left, right));
+
+    build_flatbuffer_sandbox_spec(
+        &paths.workspace.to_string_lossy(),
+        request.network,
+        &read_only_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[cfg(windows)]
+fn canonical_sandbox_path(value: &str) -> Result<std::path::PathBuf, &'static str> {
+    let path = Path::new(value);
+    if !path.is_absolute() || has_reparse_component(path) {
+        return Err("reparse_forbidden");
+    }
+    let canonical = fs::canonicalize(path).map_err(|_| "invalid_path")?;
+    if has_reparse_component(&canonical) {
+        return Err("reparse_forbidden");
+    }
+    Ok(canonical)
+}
+
+#[cfg(windows)]
+fn build_flatbuffer_sandbox_spec(
+    workspace: &str,
+    network: bool,
+    read_only_paths: &[String],
+) -> Result<Vec<u8>, &'static str> {
+    const VTABLE_POSITION: usize = 8;
+    const TABLE_POSITION: usize = 32;
+    const TABLE_SIZE: usize = 40;
+    const VTABLE_SIZE: usize = 22;
+
+    let mut bytes = vec![0_u8; TABLE_POSITION + TABLE_SIZE];
+    write_u32(&mut bytes, 0, TABLE_POSITION as u32);
+    bytes[4..8].copy_from_slice(b"SBOX");
+    write_u16(&mut bytes, VTABLE_POSITION, VTABLE_SIZE as u16);
+    write_u16(&mut bytes, VTABLE_POSITION + 2, TABLE_SIZE as u16);
+    for (index, offset) in [4_u16, 8, 9, 10, 0, 24, 28, 32, 0].into_iter().enumerate() {
+        write_u16(&mut bytes, VTABLE_POSITION + 4 + index * 2, offset);
+    }
+    write_i32(
+        &mut bytes,
+        TABLE_POSITION,
+        (TABLE_POSITION - VTABLE_POSITION) as i32,
+    );
+
+    let version = append_flatbuffer_string(&mut bytes, "0.1.0")?;
+    let capability = if network {
+        Some(append_flatbuffer_string(&mut bytes, "internetClient")?)
+    } else {
+        None
+    };
+    let read_write = append_flatbuffer_string_vector(&mut bytes, &[workspace.to_owned()])?;
+    let read_only = append_flatbuffer_string_vector(&mut bytes, read_only_paths)?;
+
+    set_relative_uoffset(&mut bytes, TABLE_POSITION + 4, version)?;
+    bytes[TABLE_POSITION + 8] = 1;
+    bytes[TABLE_POSITION + 10] = 1;
+    if let Some(capability) = capability {
+        set_relative_uoffset(&mut bytes, TABLE_POSITION + 24, capability)?;
+    }
+    set_relative_uoffset(&mut bytes, TABLE_POSITION + 28, read_write)?;
+    set_relative_uoffset(&mut bytes, TABLE_POSITION + 32, read_only)?;
+    Ok(bytes)
+}
+
+#[cfg(windows)]
+fn align_flatbuffer(bytes: &mut Vec<u8>, alignment: usize) {
+    let padding = (alignment - bytes.len() % alignment) % alignment;
+    bytes.resize(bytes.len() + padding, 0);
+}
+
+#[cfg(windows)]
+fn append_flatbuffer_string(bytes: &mut Vec<u8>, value: &str) -> Result<usize, &'static str> {
+    if value.contains('\0') || value.len() > u32::MAX as usize {
+        return Err("invalid_message");
+    }
+    align_flatbuffer(bytes, 4);
+    let position = bytes.len();
+    bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+    bytes.push(0);
+    Ok(position)
+}
+
+#[cfg(windows)]
+fn append_flatbuffer_string_vector(
+    bytes: &mut Vec<u8>,
+    values: &[String],
+) -> Result<usize, &'static str> {
+    if values.len() > u32::MAX as usize {
+        return Err("invalid_message");
+    }
+    align_flatbuffer(bytes, 4);
+    let position = bytes.len();
+    bytes.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    bytes.resize(bytes.len() + values.len() * 4, 0);
+    for (index, value) in values.iter().enumerate() {
+        let string_position = append_flatbuffer_string(bytes, value)?;
+        set_relative_uoffset(bytes, position + 4 + index * 4, string_position)?;
+    }
+    Ok(position)
+}
+
+#[cfg(windows)]
+fn set_relative_uoffset(
+    bytes: &mut [u8],
+    position: usize,
+    target: usize,
+) -> Result<(), &'static str> {
+    if target <= position || target - position > u32::MAX as usize {
+        return Err("invalid_message");
+    }
+    write_u32(bytes, position, (target - position) as u32);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_u16(bytes: &mut [u8], position: usize, value: u16) {
+    bytes[position..position + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(windows)]
+fn write_u32(bytes: &mut [u8], position: usize, value: u32) {
+    bytes[position..position + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(windows)]
+fn write_i32(bytes: &mut [u8], position: usize, value: i32) {
+    bytes[position..position + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(windows)]
 fn create_windows_process(
     request: &RunRequest,
     job: Handle,
@@ -1006,29 +1250,25 @@ fn create_windows_process(
     startup.std_output = stdout_write;
     startup.std_error = stderr_write;
     let mut information = unsafe { std::mem::zeroed::<ProcessInformation>() };
-    let created = unsafe {
-        CreateProcessW(
-            executable.as_ptr(),
-            command_line.as_mut_ptr(),
-            null_mut(),
-            null_mut(),
-            1,
-            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
-            environment.as_mut_ptr().cast(),
-            cwd.as_ptr(),
-            &mut startup,
-            &mut information,
-        )
-    } != 0;
+    let created = create_process_in_windows_sandbox(
+        request,
+        executable.as_ptr(),
+        command_line.as_mut_ptr(),
+        environment.as_mut_ptr().cast(),
+        cwd.as_ptr(),
+        &mut startup,
+        &mut information,
+        paths,
+    );
     unsafe {
         CloseHandle(stdin_read);
         CloseHandle(stdin_write);
         CloseHandle(stdout_write);
         CloseHandle(stderr_write);
     }
-    if !created {
+    if let Err(code) = created {
         close_many([stdout_read, stderr_read]);
-        return Err("launch_failed");
+        return Err(code);
     }
     if unsafe { AssignProcessToJobObject(job, information.process) } == 0 {
         unsafe {
@@ -1421,6 +1661,26 @@ mod tests {
         assert!(response_for_line(&line).contains("line_too_large"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_sandbox_spec_is_app_container_and_network_is_explicit() {
+        let offline = super::build_flatbuffer_sandbox_spec(
+            r"C:\workspace",
+            false,
+            &[r"C:\toolchain".to_owned()],
+        )
+        .expect("offline spec");
+        assert_eq!(&offline[4..8], b"SBOX");
+        assert_eq!(u32::from_le_bytes(offline[0..4].try_into().unwrap()), 32);
+        assert_eq!(offline[40], 1, "app_container must be enabled");
+        assert_eq!(offline[42], 1, "win32k must be disabled");
+        assert!(!String::from_utf8_lossy(&offline).contains("internetClient"));
+
+        let network =
+            super::build_flatbuffer_sandbox_spec(r"C:\workspace", true, &[]).expect("network spec");
+        assert!(String::from_utf8_lossy(&network).contains("internetClient"));
+    }
+
     #[test]
     fn rejects_network_and_relative_paths_before_launch() {
         let response = response_for_line(
@@ -1428,8 +1688,10 @@ mod tests {
         );
         #[cfg(target_os = "macos")]
         assert!(response.contains("invalid_path"));
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
         assert!(response.contains("network_forbidden"));
+        #[cfg(windows)]
+        assert!(response.contains("invalid_path"));
         let response = response_for_line(
             r#"{"v":1,"kind":"run","requestId":"fixture","executable":"node","args":[],"cwd":"relative","workspace":"/tmp","network":false,"environment":{}}"#,
         );

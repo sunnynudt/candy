@@ -15,11 +15,15 @@ runner protocol, and operating-system enforcement of all of the following:
 - Job Object ownership and cleanup for every descendant;
 - the reviewed Git for Windows Bash executable and approved toolchain surface.
 
-The immutable source attestation currently records the existing native backend
-as `job-object-reparse-v1` and remains `approved: false`. Job Objects and
-TypeScript path checks do not provide the required workspace or network
-containment, so enabling the TUI on their basis would create a weaker feature
-with the Trusted Shell Auto name.
+The immutable source attestation currently records the native backend as
+`appcontainer-bfs-job-v1` and remains `approved: false`. The runner now calls
+the Windows 11 `Experimental_CreateProcessInSandbox` entry point from the
+system `processmodel.dll`, encodes the `SBOX` AppContainer/BFS specification,
+and refuses to fall back to `CreateProcessW`. The current Windows host exposes
+the entry point but returns `ERROR_CALL_NOT_IMPLEMENTED` (120), so this
+checkpoint proves fail-closed behavior and not containment. Job Objects and
+TypeScript path checks alone still do not provide the required workspace or
+network containment.
 
 ## Consequences
 
@@ -36,9 +40,10 @@ cannot enable either platform gate.
 
 ## Required evidence before enabling
 
-An enablement change must add a reviewed Windows native backend and rerun the
-Windows negative matrix for outside reads/writes, junctions and reparse-point
-swaps, network denial and one-command elevation, descendant cleanup, timeout,
+An enablement change must run on a host where the native API is implemented,
+add the reviewed Windows native backend evidence, and rerun the Windows
+negative matrix for outside reads/writes, junctions and reparse-point swaps,
+network denial and one-command elevation, descendant cleanup, timeout,
 cancellation, parent loss, and ordinary-user execution. It must then record
 the exact source revision, native digest, protocol version, Windows build,
 architecture, Node/npm/Pi closure, Git for Windows version, and TUI evidence.
