@@ -330,7 +330,8 @@ test("native runner parses the max completed frame through the Windows adapter",
   child.stderr = new PassThrough();
   child.kill = (): boolean => false;
   child.stdin.on("data", (chunk: Buffer) => {
-    const request = JSON.parse(chunk.toString()) as { requestId: string };
+    const request = JSON.parse(chunk.toString()) as { requestId: string; parentPid: number };
+    assert.equal(request.parentPid, process.pid);
     const output = String.fromCharCode(1).repeat(MAX_OUTPUT_BYTES);
     const response = `${JSON.stringify({
       v: 1,
@@ -423,6 +424,7 @@ function serializedNativeRequestBytes(
     cwd: "/tmp",
     workspace: "/tmp",
     network: false,
+    parentPid: process.pid,
     environment: cleanChildEnvironment(process.env, activeSecrets),
   });
   return Buffer.byteLength(payload, "utf8");

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -45,6 +45,8 @@ const matrix = {
     descendantCancelled: false,
     descendantMarkerAbsent: false,
     ordinaryDescendantMarkerAbsent: false,
+    parentExitLauncherKilled: false,
+    parentExitMarkerAbsent: false,
   },
 };
 
@@ -68,6 +70,8 @@ const swapDestination = path.join(outside, "swap-destination");
 const swapMarker = path.join(swapDestination, "race.txt");
 const descendantMarker = path.join(workspace, "descendant-marker.txt");
 const ordinaryDescendantMarker = path.join(workspace, "ordinary-descendant-marker.txt");
+const parentExitMarker = path.join(workspace, "parent-exit-marker.txt");
+let parentExitLauncher;
 
 async function expectRejected(operation, message) {
   try {
@@ -293,6 +297,23 @@ try {
   if (!matrix.native.ordinaryDescendantMarkerAbsent)
     throw new Error("Trusted Shell left a descendant after ordinary command completion.");
 
+  const parentExitSource = `const fs = require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(parentExitMarker)}, 'parent-exit-write'), 1200); setTimeout(() => {}, 5000);`;
+  const launcherSource = `import { NativeProcessRunner } from "@candy/platform";
+const runner = new NativeProcessRunner(${JSON.stringify(runnerPath)}, "darwin");
+await runner.run({ executable: process.execPath, args: ["-e", ${JSON.stringify(parentExitSource)}], cwd: ${JSON.stringify(workspace)}, workspace: ${JSON.stringify(workspace)} });`;
+  parentExitLauncher = spawn(process.execPath, ["--input-type=module", "-e", launcherSource], {
+    cwd: process.cwd(),
+    stdio: "ignore",
+  });
+  await delay(150);
+  parentExitLauncher.kill("SIGKILL");
+  await new Promise((resolve) => parentExitLauncher.once("close", resolve));
+  matrix.native.parentExitLauncherKilled = true;
+  await delay(1400);
+  matrix.native.parentExitMarkerAbsent = !existsSync(parentExitMarker);
+  if (!matrix.native.parentExitMarkerAbsent)
+    throw new Error("macOS native runner left a descendant after its parent exited.");
+
   console.log(
     `macOS Sandbox Runner strict containment matrix passed: ${JSON.stringify({
       workspaceGuard: matrix.workspaceGuard,
@@ -304,6 +325,7 @@ try {
     })}`,
   );
 } finally {
+  parentExitLauncher?.kill("SIGKILL");
   await unlink(symlinkRoot).catch(() => undefined);
   await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }

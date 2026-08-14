@@ -124,6 +124,7 @@ export class NativeProcessRunner {
       allowProcessExec: request.allowProcessExec === true,
       processExecPaths: request.processExecPaths ?? [],
       readOnlyPaths: request.readOnlyPaths ?? [],
+      parentPid: process.pid,
       environment,
     });
     const activeSecretLocation = activeSecretMaterialLocation(request, environment, payload);

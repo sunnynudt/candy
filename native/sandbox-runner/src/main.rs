@@ -2,10 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
 use std::fs;
+#[cfg(any(target_os = "macos", windows))]
+use std::io::Read;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 #[cfg(target_os = "macos")]
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::thread;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 #[cfg(windows)]
 use std::ffi::c_void;
@@ -46,6 +52,8 @@ struct RunRequest {
     process_exec_paths: Vec<String>,
     #[serde(rename = "readOnlyPaths", default)]
     read_only_paths: Vec<String>,
+    #[serde(rename = "parentPid", default)]
+    parent_pid: u32,
     environment: BTreeMap<String, String>,
 }
 
@@ -144,6 +152,13 @@ fn response_for_line(line: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn getppid() -> i32;
+    fn getpgrp() -> i32;
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(target_os = "macos")]
 fn run_macos(request: RunRequest) -> String {
     let workspace = match fs::canonicalize(&request.workspace) {
         Ok(path) => path,
@@ -202,7 +217,7 @@ fn run_macos(request: RunRequest) -> String {
         &process_exec_paths,
         &read_only_paths,
     );
-    let output = Command::new("/usr/bin/sandbox-exec")
+    let mut child = match Command::new("/usr/bin/sandbox-exec")
         .arg("-p")
         .arg(profile)
         .arg("--")
@@ -211,28 +226,107 @@ fn run_macos(request: RunRequest) -> String {
         .current_dir(cwd)
         .env_clear()
         .envs(request.environment)
-        .output();
-    let response = match output {
-        Ok(output) => CompletedResponse {
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return completed_macos_error(request.request_id),
+    };
+    let Some(stdout) = child.stdout.take() else {
+        terminate_macos_process_group(macos_process_group_id());
+        let _ = child.wait();
+        return completed_macos_error(request.request_id);
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_macos_process_group(macos_process_group_id());
+        let _ = child.wait();
+        return completed_macos_error(request.request_id);
+    };
+    let stdout_thread = thread::spawn(|| read_bounded(stdout));
+    let stderr_thread = thread::spawn(|| read_bounded(stderr));
+    let process_group = macos_process_group_id();
+    let parent_pid = request.parent_pid;
+    let mut status = None;
+    let mut parent_lost = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(value)) => {
+                status = Some(value);
+                break;
+            }
+            Ok(None) => {
+                if parent_pid > 0 && macos_parent_pid() != parent_pid {
+                    parent_lost = true;
+                    terminate_macos_process_group(process_group);
+                    status = child.wait().ok();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => break,
+        }
+    }
+    if status.is_none() {
+        terminate_macos_process_group(process_group);
+        status = child.wait().ok();
+    }
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    let response = match status {
+        Some(status) => CompletedResponse {
             v: PROTOCOL_VERSION,
             kind: "completed",
             request_id: request.request_id,
-            code: output.status.code(),
-            stdout: bounded_utf8(output.stdout),
-            stderr: bounded_utf8(output.stderr),
-            cancelled: false,
+            code: status.code(),
+            stdout,
+            stderr,
+            cancelled: parent_lost,
         },
-        Err(_) => CompletedResponse {
-            v: PROTOCOL_VERSION,
-            kind: "completed",
-            request_id: request.request_id,
-            code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            cancelled: false,
-        },
+        None => return completed_macos_error(request.request_id),
     };
     serde_json::to_string(&response).unwrap_or_else(|_| error_response("runtime_error"))
+}
+
+#[cfg(target_os = "macos")]
+fn completed_macos_error(request_id: String) -> String {
+    serde_json::to_string(&CompletedResponse {
+        v: PROTOCOL_VERSION,
+        kind: "completed",
+        request_id,
+        code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+        cancelled: false,
+    })
+    .unwrap_or_else(|_| error_response("runtime_error"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_parent_pid() -> u32 {
+    unsafe { getppid() }.max(0) as u32
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_group_id() -> u32 {
+    unsafe { getpgrp() }.max(0) as u32
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_macos_process_group(pid: u32) {
+    let Ok(pid) = i32::try_from(pid) else {
+        return;
+    };
+    if pid <= 0 {
+        return;
+    }
+    unsafe {
+        kill(-pid, 15);
+    }
+    thread::sleep(Duration::from_millis(250));
+    unsafe {
+        kill(-pid, 9);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -767,8 +861,8 @@ fn close_many<const N: usize>(handles: [Handle; N]) {
     }
 }
 
-#[cfg(windows)]
-fn read_bounded(mut file: File) -> String {
+#[cfg(any(target_os = "macos", windows))]
+fn read_bounded<R: Read>(mut file: R) -> String {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 8192];
     loop {
