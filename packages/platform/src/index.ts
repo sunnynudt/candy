@@ -917,6 +917,8 @@ export function cleanChildEnvironment(
     "TMP",
     "HOME",
     "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
     "ComSpec",
   ]) {
     const value = source[key];

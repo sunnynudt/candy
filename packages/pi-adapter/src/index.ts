@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import {
   access,
   lstat,
@@ -545,6 +545,15 @@ export function createCandyBashOperations(
       if (execution.signal?.aborted) abort();
       else execution.signal?.addEventListener("abort", abort, { once: true });
       try {
+        const processExecPath = resolveCandyShellProcessExecPath();
+        if (controller.signal.aborted) {
+          if (
+            controller.signal.reason instanceof Error &&
+            controller.signal.reason.message === "timeout"
+          )
+            throw new Error(`timeout:${execution.timeout}`);
+          throw new Error("aborted");
+        }
         const result = await options.runner.run({
           executable: bashPath,
           args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(command)],
@@ -552,8 +561,8 @@ export function createCandyBashOperations(
           workspace: root,
           network: false,
           allowProcessExec: true,
-          processExecPaths: [path.dirname(process.execPath)],
-          readOnlyPaths: await resolveCandyShellReadOnlyPaths(root),
+          processExecPaths: [processExecPath],
+          readOnlyPaths: resolveCandyShellReadOnlyPaths(root),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
@@ -695,6 +704,8 @@ export function createCandyNetworkToolDefinition(
       if (executionSignal.aborted) abort();
       else executionSignal.addEventListener("abort", abort, { once: true });
       try {
+        const processExecPath = resolveCandyShellProcessExecPath();
+        if (controller.signal.aborted) throw new Error("Operation aborted");
         const result = await options.runner.run({
           executable: bashPath,
           args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(input.command)],
@@ -702,8 +713,8 @@ export function createCandyNetworkToolDefinition(
           workspace: root,
           network: true,
           allowProcessExec: true,
-          processExecPaths: [path.dirname(process.execPath)],
-          readOnlyPaths: await resolveCandyShellReadOnlyPaths(root),
+          processExecPaths: [processExecPath],
+          readOnlyPaths: resolveCandyShellReadOnlyPaths(root),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
@@ -783,36 +794,55 @@ function createCandyShellEnvironment(
   return environment;
 }
 
-async function resolveCandyShellReadOnlyPaths(root: string): Promise<readonly string[]> {
+function resolveCandyShellReadOnlyPaths(root: string): readonly string[] {
   const marker = path.join(root, ".git");
-  const markerMetadata = await lstat(marker).catch(() => undefined);
+  const markerMetadata = trySync(() => lstatSync(marker));
   if (markerMetadata === undefined) return [];
   if (markerMetadata.isSymbolicLink())
     throw new Error("Trusted Shell Git metadata marker cannot be a symbolic link.");
   const paths = [marker];
   let gitDirectory: string | undefined;
   if (markerMetadata.isDirectory()) {
-    gitDirectory = await realpath(marker).catch(() => undefined);
+    gitDirectory = trySync(() => realpathSync.native(marker));
   } else if (markerMetadata.isFile()) {
-    const contents = await readFile(marker, "utf8").catch(() => "");
+    const contents = trySync(() => readFileSync(marker, "utf8")) ?? "";
     const target = contents.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1];
     if (target !== undefined) {
-      gitDirectory = await realpath(
-        path.isAbsolute(target) ? target : path.resolve(path.dirname(marker), target),
-      ).catch(() => undefined);
+      gitDirectory = trySync(() =>
+        realpathSync.native(
+          path.isAbsolute(target) ? target : path.resolve(path.dirname(marker), target),
+        ),
+      );
     }
   }
   if (gitDirectory === undefined) return paths;
   paths.push(gitDirectory);
-  const commondir = await readFile(path.join(gitDirectory, "commondir"), "utf8").catch(() => "");
+  const commondir = trySync(() => readFileSync(path.join(gitDirectory, "commondir"), "utf8")) ?? "";
   const commonTarget = commondir.trim();
   if (commonTarget.length > 0) {
-    const commonDirectory = await realpath(
-      path.isAbsolute(commonTarget) ? commonTarget : path.resolve(gitDirectory, commonTarget),
-    ).catch(() => undefined);
+    const commonDirectory = trySync(() =>
+      realpathSync.native(
+        path.isAbsolute(commonTarget) ? commonTarget : path.resolve(gitDirectory, commonTarget),
+      ),
+    );
     if (commonDirectory !== undefined) paths.push(commonDirectory);
   }
   return [...new Set(paths)];
+}
+
+function resolveCandyShellProcessExecPath(): string {
+  const executable = trySync(() => realpathSync.native(process.execPath));
+  if (executable === undefined)
+    throw new Error("Candy Trusted Shell could not canonicalize the runtime executable.");
+  return path.dirname(executable);
+}
+
+function trySync<T>(operation: () => T): T | undefined {
+  try {
+    return operation();
+  } catch {
+    return undefined;
+  }
 }
 
 /**

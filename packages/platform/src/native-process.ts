@@ -379,7 +379,11 @@ function parseNativeProcessResponse(
     parsed === null ||
     (parsed as { readonly kind?: unknown }).kind !== "completed"
   ) {
-    throw new Error("Sandbox Runner rejected the validator request.");
+    const code =
+      typeof parsed === "object" && parsed !== null && "code" in parsed
+        ? String((parsed as { readonly code?: unknown }).code)
+        : "unknown";
+    throw new Error(`Sandbox Runner rejected the validator request (${code}).`);
   }
   const response = parsed as Partial<NativeProcessCompletedResponse>;
   if (

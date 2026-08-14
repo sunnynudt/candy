@@ -34,6 +34,10 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 #[cfg(windows)]
 use std::ptr::{null, null_mut};
 #[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::Arc;
+#[cfg(windows)]
 use std::thread;
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -148,6 +152,9 @@ fn response_for_line(line: &str) -> String {
         .all(|key| is_safe_environment_key(key))
     {
         return error_response("secret_forbidden");
+    }
+    if !request.allow_process_exec && !request.process_exec_paths.is_empty() {
+        return error_response("invalid_message");
     }
     if request.network && !cfg!(any(target_os = "macos", windows)) {
         return error_response("network_forbidden");
@@ -790,11 +797,45 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 #[cfg(windows)]
+const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
+#[cfg(windows)]
+const PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES: usize = 0x0002_0009;
+#[cfg(windows)]
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x0002_0002;
+#[cfg(windows)]
+const SE_GROUP_ENABLED: u32 = 0x0000_0004;
+#[cfg(windows)]
+const SE_FILE_OBJECT: u32 = 1;
+#[cfg(windows)]
+const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+#[cfg(windows)]
+const GRANT_ACCESS: u32 = 1;
+#[cfg(windows)]
+const DENY_ACCESS: u32 = 3;
+#[cfg(windows)]
+const REVOKE_ACCESS: u32 = 4;
+#[cfg(windows)]
+const SUB_CONTAINERS_AND_OBJECTS_INHERIT: u32 = 0x0000_0003;
+#[cfg(windows)]
+const FILE_GENERIC_READ: u32 = 0x0012_0089;
+#[cfg(windows)]
+const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
+#[cfg(windows)]
+const FILE_GENERIC_EXECUTE: u32 = 0x0012_00a0;
+#[cfg(windows)]
+const FILE_DELETE_CHILD: u32 = 0x0000_0040;
+#[cfg(windows)]
+const DELETE_ACCESS: u32 = 0x0001_0000;
+#[cfg(windows)]
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
 #[cfg(windows)]
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
 #[cfg(windows)]
 const WAIT_OBJECT_0: u32 = 0;
+#[cfg(windows)]
+const WAIT_TIMEOUT: u32 = 258;
+#[cfg(windows)]
+const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
 #[cfg(windows)]
 const INFINITE: u32 = u32::MAX;
 
@@ -830,6 +871,48 @@ struct StartupInfo {
     std_input: Handle,
     std_output: Handle,
     std_error: Handle,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct StartupInfoEx {
+    startup: StartupInfo,
+    attribute_list: *mut c_void,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct SidAndAttributes {
+    sid: *mut c_void,
+    attributes: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct SecurityCapabilities {
+    app_container_sid: *mut c_void,
+    capabilities: *mut SidAndAttributes,
+    capability_count: u32,
+    reserved: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct Trustee {
+    multiple_trustee: *mut c_void,
+    multiple_trustee_operation: u32,
+    trustee_form: u32,
+    trustee_type: u32,
+    name: *mut u16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct ExplicitAccess {
+    access_permissions: u32,
+    access_mode: u32,
+    inheritance: u32,
+    trustee: Trustee,
 }
 
 #[cfg(windows)]
@@ -889,12 +972,43 @@ extern "system" {
         attributes: *mut SecurityAttributes,
         size: u32,
     ) -> i32;
+    fn CreateProcessW(
+        application_name: *const u16,
+        command_line: *mut u16,
+        process_attributes: *mut SecurityAttributes,
+        thread_attributes: *mut SecurityAttributes,
+        inherit_handles: i32,
+        creation_flags: u32,
+        environment: *mut c_void,
+        current_directory: *const u16,
+        startup_info: *mut StartupInfo,
+        process_information: *mut ProcessInformation,
+    ) -> i32;
     fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
     fn GetFileAttributesW(path: *const u16) -> u32;
     fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;
     fn LoadLibraryExW(path: *const u16, file: Handle, flags: u32) -> Handle;
+    fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
     fn FreeLibrary(module: Handle) -> i32;
     fn GetLastError() -> u32;
+    fn InitializeProcThreadAttributeList(
+        attribute_list: *mut c_void,
+        attribute_count: u32,
+        flags: u32,
+        size: *mut usize,
+    ) -> i32;
+    fn UpdateProcThreadAttribute(
+        attribute_list: *mut c_void,
+        flags: u32,
+        attribute: usize,
+        value: *mut c_void,
+        size: usize,
+        previous_value: *mut c_void,
+        return_size: *mut usize,
+    ) -> i32;
+    fn DeleteProcThreadAttributeList(attribute_list: *mut c_void);
+    fn LocalFree(memory: *mut c_void) -> *mut c_void;
+    fn GetLengthSid(sid: *mut c_void) -> u32;
     fn ResumeThread(thread: Handle) -> u32;
     fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
     fn SetInformationJobObject(
@@ -905,6 +1019,55 @@ extern "system" {
     ) -> i32;
     fn TerminateJobObject(job: Handle, exit_code: u32) -> i32;
     fn WaitForSingleObject(handle: Handle, milliseconds: u32) -> u32;
+}
+
+#[cfg(windows)]
+#[link(name = "advapi32")]
+extern "system" {
+    fn FreeSid(sid: *mut c_void) -> *mut c_void;
+    fn GetNamedSecurityInfoW(
+        object_name: *mut u16,
+        object_type: u32,
+        security_info: u32,
+        owner: *mut *mut c_void,
+        group: *mut *mut c_void,
+        dacl: *mut *mut c_void,
+        sacl: *mut *mut c_void,
+        security_descriptor: *mut *mut c_void,
+    ) -> u32;
+    fn SetEntriesInAclW(
+        count: u32,
+        entries: *mut ExplicitAccess,
+        old_acl: *mut c_void,
+        new_acl: *mut *mut c_void,
+    ) -> u32;
+    fn SetNamedSecurityInfoW(
+        object_name: *mut u16,
+        object_type: u32,
+        security_info: u32,
+        owner: *mut c_void,
+        group: *mut c_void,
+        dacl: *mut c_void,
+        sacl: *mut c_void,
+    ) -> u32;
+}
+
+#[cfg(windows)]
+#[link(name = "userenv")]
+extern "system" {
+    fn CreateAppContainerProfile(
+        app_container_name: *const u16,
+        display_name: *const u16,
+        description: *const u16,
+        capabilities: *mut SidAndAttributes,
+        capability_count: u32,
+        app_container_sid: *mut *mut c_void,
+    ) -> i32;
+    fn DeleteAppContainerProfile(app_container_name: *const u16) -> i32;
+    fn DeriveAppContainerSidFromAppContainerName(
+        app_container_name: *const u16,
+        app_container_sid: *mut *mut c_void,
+    ) -> i32;
 }
 
 #[cfg(windows)]
@@ -985,6 +1148,24 @@ type ExperimentalCreateProcessInSandbox = unsafe extern "system" fn(
 ) -> i32;
 
 #[cfg(windows)]
+struct WindowsAppContainerProfile {
+    identity: Vec<u16>,
+    access: Option<WindowsAppContainerAccess>,
+}
+
+#[cfg(windows)]
+struct WindowsAppContainerAccess {
+    paths: Vec<std::path::PathBuf>,
+    sid: Vec<u8>,
+}
+
+#[cfg(windows)]
+struct CapabilitySidAllocation {
+    pointer: *mut *mut c_void,
+    count: u32,
+}
+
+#[cfg(windows)]
 fn create_process_in_windows_sandbox(
     request: &RunRequest,
     executable: *const u16,
@@ -994,7 +1175,7 @@ fn create_process_in_windows_sandbox(
     startup: *mut StartupInfo,
     information: *mut ProcessInformation,
     paths: &CanonicalLaunchPaths,
-) -> Result<(), &'static str> {
+) -> Result<Option<WindowsAppContainerProfile>, &'static str> {
     let module = unsafe {
         LoadLibraryExW(
             wide_null("processmodel.dll").as_ptr(),
@@ -1011,7 +1192,13 @@ fn create_process_in_windows_sandbox(
         unsafe { FreeLibrary(module) };
         return Err("sandbox_unavailable");
     }
-    let specification = sandbox_specification(request, paths)?;
+    let specification = match sandbox_specification(request, paths) {
+        Ok(specification) => specification,
+        Err(code) => {
+            unsafe { FreeLibrary(module) };
+            return Err(code);
+        }
+    };
     let identity = wide_null(&sandbox_identity(&request.request_id));
     let created = unsafe {
         std::mem::transmute::<*mut c_void, ExperimentalCreateProcessInSandbox>(function)(
@@ -1037,28 +1224,535 @@ fn create_process_in_windows_sandbox(
     };
     unsafe { FreeLibrary(module) };
     if created {
-        Ok(())
+        Ok(None)
     } else {
-        Err(match error {
+        match error {
+            120 => create_process_in_standard_appcontainer(
+                request,
+                executable,
+                cwd,
+                startup,
+                information,
+                paths,
+            ),
+            _ => Err(match error {
+                5 => "sandbox_access_denied",
+                13 | 87 | 13_005 => "sandbox_invalid_spec",
+                1168 => "sandbox_capability_unavailable",
+                0 => "sandbox_unavailable",
+                _ => "sandbox_launch_failed",
+            }),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn create_process_in_standard_appcontainer(
+    request: &RunRequest,
+    executable: *const u16,
+    cwd: *const u16,
+    startup: *mut StartupInfo,
+    information: *mut ProcessInformation,
+    paths: &CanonicalLaunchPaths,
+) -> Result<Option<WindowsAppContainerProfile>, &'static str> {
+    // The standard AppContainer API provides the package boundary but no
+    // equivalent to the experimental process-exec allowlist. Keep Trusted
+    // Shell fail-closed on hosts that cannot provide the full capability.
+    if request.allow_process_exec {
+        return Err("sandbox_capability_unavailable");
+    }
+    let mut fallback_command_line = wide_null(&command_line(&request.executable, &request.args));
+    let mut fallback_environment_values = std::env::vars().collect::<BTreeMap<_, _>>();
+    fallback_environment_values.retain(|key, value| {
+        is_safe_environment_key(key) && !contains_forbidden_secret_material(value)
+    });
+    fallback_environment_values.extend(request.environment.clone());
+    let mut fallback_environment = wide_environment(&fallback_environment_values)?;
+    let identity = wide_null(&sandbox_identity(&request.request_id));
+    let display_name = wide_null("Candy Trusted Shell");
+    let description = wide_null("Candy task command sandbox");
+    let mut package_sid = null_mut();
+    let (mut capabilities, capability_sids) = appcontainer_capabilities(request.network)?;
+    let created_profile = unsafe {
+        CreateAppContainerProfile(
+            identity.as_ptr(),
+            display_name.as_ptr(),
+            description.as_ptr(),
+            if capabilities.is_empty() {
+                null_mut()
+            } else {
+                capabilities.as_mut_ptr()
+            },
+            capabilities.len() as u32,
+            &mut package_sid,
+        )
+    };
+    if created_profile != 0 && created_profile != 0x8007_00b7_u32 as i32 {
+        free_capability_sids(capability_sids);
+        return Err("sandbox_profile_failed");
+    }
+    if package_sid.is_null()
+        && unsafe { DeriveAppContainerSidFromAppContainerName(identity.as_ptr(), &mut package_sid) }
+            != 0
+    {
+        free_capability_sids(capability_sids);
+        return Err("sandbox_profile_failed");
+    }
+
+    let access = match grant_standard_appcontainer_access(package_sid, request, paths) {
+        Ok(access) => access,
+        Err(code) => {
+            unsafe { FreeSid(package_sid) };
+            free_capability_sids(capability_sids);
+            unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+            return Err(code);
+        }
+    };
+
+    let mut attribute_size = 0_usize;
+    unsafe {
+        InitializeProcThreadAttributeList(null_mut(), 2, 0, &mut attribute_size);
+    }
+    if attribute_size == 0 {
+        revoke_standard_appcontainer_access(Some(&access));
+        unsafe { FreeSid(package_sid) };
+        free_capability_sids(capability_sids);
+        unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        return Err("sandbox_attribute_failed");
+    }
+    let mut attribute_storage = vec![0_u8; attribute_size];
+    let attribute_list = attribute_storage.as_mut_ptr().cast::<c_void>();
+    let initialized =
+        unsafe { InitializeProcThreadAttributeList(attribute_list, 2, 0, &mut attribute_size) }
+            != 0;
+    if !initialized {
+        revoke_standard_appcontainer_access(Some(&access));
+        unsafe { FreeSid(package_sid) };
+        free_capability_sids(capability_sids);
+        unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        return Err("sandbox_attribute_failed");
+    }
+    let mut security_capabilities = SecurityCapabilities {
+        app_container_sid: package_sid,
+        capability_count: capabilities.len() as u32,
+        capabilities: if capabilities.is_empty() {
+            null_mut()
+        } else {
+            capabilities.as_mut_ptr()
+        },
+        reserved: 0,
+    };
+    let updated = unsafe {
+        UpdateProcThreadAttribute(
+            attribute_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+            (&mut security_capabilities as *mut SecurityCapabilities).cast(),
+            std::mem::size_of::<SecurityCapabilities>(),
+            null_mut(),
+            null_mut(),
+        )
+    } != 0;
+    if !updated {
+        revoke_standard_appcontainer_access(Some(&access));
+        unsafe {
+            DeleteProcThreadAttributeList(attribute_list);
+            FreeSid(package_sid);
+        }
+        free_capability_sids(capability_sids);
+        unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        return Err("sandbox_attribute_failed");
+    }
+
+    let mut inherited_handles = unsafe {
+        [
+            (*startup).std_input,
+            (*startup).std_output,
+            (*startup).std_error,
+        ]
+    };
+    let updated = unsafe {
+        UpdateProcThreadAttribute(
+            attribute_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherited_handles.as_mut_ptr().cast(),
+            std::mem::size_of_val(&inherited_handles),
+            null_mut(),
+            null_mut(),
+        )
+    } != 0;
+    if !updated {
+        revoke_standard_appcontainer_access(Some(&access));
+        unsafe {
+            DeleteProcThreadAttributeList(attribute_list);
+            FreeSid(package_sid);
+        }
+        free_capability_sids(capability_sids);
+        unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        return Err("sandbox_attribute_failed");
+    }
+
+    let mut startup_ex = StartupInfoEx {
+        startup: unsafe { std::ptr::read(startup) },
+        attribute_list,
+    };
+    startup_ex.startup.cb = std::mem::size_of::<StartupInfoEx>() as u32;
+    let created = unsafe {
+        CreateProcessW(
+            executable,
+            fallback_command_line.as_mut_ptr(),
+            null_mut(),
+            null_mut(),
+            1,
+            CREATE_SUSPENDED
+                | CREATE_UNICODE_ENVIRONMENT
+                | CREATE_NO_WINDOW
+                | EXTENDED_STARTUPINFO_PRESENT,
+            fallback_environment.as_mut_ptr().cast(),
+            cwd,
+            &mut startup_ex.startup,
+            information,
+        )
+    } != 0;
+    let error = if created {
+        0
+    } else {
+        unsafe { GetLastError() }
+    };
+    unsafe {
+        DeleteProcThreadAttributeList(attribute_list);
+        FreeSid(package_sid);
+    }
+    free_capability_sids(capability_sids);
+    if !created {
+        revoke_standard_appcontainer_access(Some(&access));
+        unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        return Err(match error {
             5 => "sandbox_access_denied",
-            13 | 87 | 13_005 => "sandbox_invalid_spec",
-            1168 => "sandbox_capability_unavailable",
-            0 | 120 => "sandbox_unavailable",
+            87 => "sandbox_invalid_spec",
             _ => "sandbox_launch_failed",
-        })
+        });
+    }
+    Ok(Some(WindowsAppContainerProfile {
+        identity,
+        access: Some(access),
+    }))
+}
+
+#[cfg(windows)]
+fn appcontainer_capabilities(
+    network: bool,
+) -> Result<(Vec<SidAndAttributes>, Option<CapabilitySidAllocation>), &'static str> {
+    if !network {
+        return Ok((Vec::new(), None));
+    }
+    let capability_name = wide_null("internetClient");
+    let mut group_sids = null_mut();
+    let mut group_count = 0_u32;
+    let mut capability_sids = null_mut();
+    let mut capability_count = 0_u32;
+    let module = unsafe {
+        LoadLibraryExW(
+            wide_null("kernelbase.dll").as_ptr(),
+            null_mut(),
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
+    if module.is_null() {
+        return Err("sandbox_capability_unavailable");
+    }
+    type DeriveCapabilitySids = unsafe extern "system" fn(
+        *const u16,
+        *mut *mut *mut c_void,
+        *mut u32,
+        *mut *mut *mut c_void,
+        *mut u32,
+    ) -> i32;
+    let function = unsafe { GetProcAddress(module, b"DeriveCapabilitySidsFromName\0".as_ptr()) };
+    let derived = if function.is_null() {
+        false
+    } else {
+        unsafe {
+            (std::mem::transmute::<*mut c_void, DeriveCapabilitySids>(function))(
+                capability_name.as_ptr(),
+                &mut group_sids,
+                &mut group_count,
+                &mut capability_sids,
+                &mut capability_count,
+            ) != 0
+        }
+    };
+    unsafe { FreeLibrary(module) };
+    free_sid_array(group_sids, group_count);
+    if !derived || capability_sids.is_null() || capability_count == 0 {
+        free_sid_array(capability_sids, capability_count);
+        return Err("sandbox_capability_unavailable");
+    }
+    let capability_sid = unsafe { *capability_sids };
+    let capabilities = vec![SidAndAttributes {
+        sid: capability_sid,
+        attributes: SE_GROUP_ENABLED,
+    }];
+    Ok((
+        capabilities,
+        Some(CapabilitySidAllocation {
+            pointer: capability_sids,
+            count: capability_count,
+        }),
+    ))
+}
+
+#[cfg(windows)]
+fn free_capability_sids(capability_sids: Option<CapabilitySidAllocation>) {
+    if let Some(capability_sids) = capability_sids {
+        free_sid_array(capability_sids.pointer, capability_sids.count);
+    }
+}
+
+#[cfg(windows)]
+fn free_sid_array(sids: *mut *mut c_void, count: u32) {
+    if sids.is_null() {
+        return;
+    }
+    for index in 0..count as usize {
+        let sid = unsafe { *sids.add(index) };
+        if !sid.is_null() {
+            unsafe { LocalFree(sid) };
+        }
+    }
+    unsafe { LocalFree(sids.cast()) };
+}
+
+#[cfg(windows)]
+fn delete_windows_appcontainer_profile(profile: Option<WindowsAppContainerProfile>) {
+    if let Some(profile) = profile {
+        revoke_standard_appcontainer_access(profile.access.as_ref());
+        unsafe { DeleteAppContainerProfile(profile.identity.as_ptr()) };
+    }
+}
+
+#[cfg(windows)]
+fn grant_standard_appcontainer_access(
+    package_sid: *mut c_void,
+    request: &RunRequest,
+    paths: &CanonicalLaunchPaths,
+) -> Result<WindowsAppContainerAccess, &'static str> {
+    let sid_length = unsafe { GetLengthSid(package_sid) } as usize;
+    if sid_length == 0 {
+        return Err("sandbox_acl_failed");
+    }
+    let sid = unsafe { std::slice::from_raw_parts(package_sid.cast::<u8>(), sid_length) }.to_vec();
+    let mut applied = Vec::<std::path::PathBuf>::new();
+    let mut resource_roots = vec![paths.workspace.clone()];
+
+    let mut workspace_targets = Vec::new();
+    collect_acl_targets(&paths.workspace, &mut workspace_targets)?;
+    if let Err(code) = update_path_acl(&paths.workspace, &sid, GRANT_ACCESS, workspace_access()) {
+        revoke_acl_targets(&applied, &sid);
+        return Err(code);
+    }
+    applied.push(paths.workspace.clone());
+
+    let mut read_only_roots = match request
+        .process_exec_paths
+        .iter()
+        .chain(request.read_only_paths.iter())
+        .map(|value| canonical_sandbox_path(value))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(roots) => roots,
+        Err(code) => {
+            revoke_acl_targets(&applied, &sid);
+            return Err(code);
+        }
+    };
+    let executable_parent = match paths.executable.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => {
+            revoke_acl_targets(&applied, &sid);
+            return Err("invalid_path");
+        }
+    };
+    read_only_roots.push(executable_parent);
+    read_only_roots.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+    read_only_roots.dedup_by(|left, right| same_windows_path(left, right));
+
+    for root in read_only_roots {
+        let mut targets = Vec::new();
+        if let Err(code) = collect_acl_targets(&root, &mut targets) {
+            revoke_acl_targets(&applied, &sid);
+            return Err(code);
+        }
+        let access_mode = if resource_roots
+            .iter()
+            .any(|path| same_windows_path(path, &root) || windows_path_is_within(&root, path))
+        {
+            DENY_ACCESS
+        } else {
+            GRANT_ACCESS
+        };
+        let access_permissions = if access_mode == DENY_ACCESS {
+            readonly_denied_access()
+        } else {
+            FILE_GENERIC_READ | FILE_GENERIC_EXECUTE
+        };
+        if let Err(code) = update_path_acl(&root, &sid, access_mode, access_permissions) {
+            revoke_acl_targets(&applied, &sid);
+            return Err(code);
+        }
+        if access_mode == GRANT_ACCESS {
+            resource_roots.push(root.clone());
+            applied.push(root);
+        }
+    }
+
+    Ok(WindowsAppContainerAccess {
+        paths: applied,
+        sid,
+    })
+}
+
+#[cfg(windows)]
+fn collect_acl_targets(
+    path: &std::path::Path,
+    targets: &mut Vec<std::path::PathBuf>,
+) -> Result<(), &'static str> {
+    if has_reparse_component(path) {
+        return Err("reparse_forbidden");
+    }
+    targets.push(path.to_path_buf());
+    let metadata = fs::symlink_metadata(path).map_err(|_| "invalid_path")?;
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).map_err(|_| "sandbox_acl_failed")? {
+        let entry = entry.map_err(|_| "sandbox_acl_failed")?;
+        collect_acl_targets(&entry.path(), targets)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn workspace_access() -> u32 {
+    FILE_GENERIC_READ
+        | FILE_GENERIC_WRITE
+        | FILE_GENERIC_EXECUTE
+        | DELETE_ACCESS
+        | FILE_DELETE_CHILD
+}
+
+#[cfg(windows)]
+fn readonly_denied_access() -> u32 {
+    FILE_GENERIC_WRITE | DELETE_ACCESS | FILE_DELETE_CHILD
+}
+
+#[cfg(windows)]
+fn update_path_acl(
+    path: &std::path::Path,
+    sid: &[u8],
+    access_mode: u32,
+    access_permissions: u32,
+) -> Result<(), &'static str> {
+    update_path_acl_with_inheritance(
+        path,
+        sid,
+        access_mode,
+        access_permissions,
+        SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    )
+}
+
+#[cfg(windows)]
+fn update_path_acl_with_inheritance(
+    path: &std::path::Path,
+    sid: &[u8],
+    access_mode: u32,
+    access_permissions: u32,
+    inheritance: u32,
+) -> Result<(), &'static str> {
+    let mut path = wide_null(&path.to_string_lossy());
+    let mut owner = null_mut();
+    let mut group = null_mut();
+    let mut old_dacl = null_mut();
+    let mut sacl = null_mut();
+    let mut descriptor = null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            path.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            &mut owner,
+            &mut group,
+            &mut old_dacl,
+            &mut sacl,
+            &mut descriptor,
+        )
+    };
+    if status != 0 {
+        return Err("sandbox_acl_failed");
+    }
+    let mut entry = ExplicitAccess {
+        access_permissions,
+        access_mode,
+        inheritance,
+        trustee: Trustee {
+            multiple_trustee: null_mut(),
+            multiple_trustee_operation: 0,
+            trustee_form: 0,
+            trustee_type: 0,
+            name: sid.as_ptr() as *mut u16,
+        },
+    };
+    let mut new_dacl = null_mut();
+    let status = unsafe { SetEntriesInAclW(1, &mut entry, old_dacl, &mut new_dacl) };
+    if status != 0 {
+        unsafe { LocalFree(descriptor) };
+        return Err("sandbox_acl_failed");
+    }
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            path.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            new_dacl,
+            null_mut(),
+        )
+    };
+    unsafe {
+        LocalFree(new_dacl);
+        LocalFree(descriptor);
+    }
+    if status != 0 {
+        return Err("sandbox_acl_failed");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn revoke_acl_targets(paths: &[std::path::PathBuf], sid: &[u8]) {
+    for path in paths {
+        let _ = update_path_acl(path, sid, REVOKE_ACCESS, 0);
+    }
+}
+
+#[cfg(windows)]
+fn revoke_standard_appcontainer_access(access: Option<&WindowsAppContainerAccess>) {
+    if let Some(access) = access {
+        revoke_acl_targets(&access.paths, &access.sid);
     }
 }
 
 #[cfg(windows)]
 fn sandbox_identity(request_id: &str) -> String {
-    let suffix = request_id
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
-        .collect::<String>();
-    format!(
-        "CandyTaskSandbox_{}",
-        if suffix.is_empty() { "run" } else { &suffix }
-    )
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in request_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("CandyTask_{hash:016x}")
 }
 
 #[cfg(windows)]
@@ -1266,27 +1960,62 @@ fn create_windows_process(
         CloseHandle(stdout_write);
         CloseHandle(stderr_write);
     }
-    if let Err(code) = created {
-        close_many([stdout_read, stderr_read]);
-        return Err(code);
-    }
+    let mut profile = match created {
+        Ok(profile) => profile,
+        Err(code) => {
+            close_many([stdout_read, stderr_read]);
+            return Err(code);
+        }
+    };
     if unsafe { AssignProcessToJobObject(job, information.process) } == 0 {
         unsafe {
             TerminateJobObject(job, 1);
             CloseHandle(information.thread);
             CloseHandle(information.process);
         }
+        delete_windows_appcontainer_profile(profile.take());
         close_many([stdout_read, stderr_read]);
         return Err("job_assignment_failed");
     }
+    let parent_handle = if request.parent_pid == 0 {
+        None
+    } else {
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, request.parent_pid) };
+        if handle.is_null() {
+            unsafe {
+                TerminateJobObject(job, 1);
+                CloseHandle(information.thread);
+                CloseHandle(information.process);
+            }
+            delete_windows_appcontainer_profile(profile.take());
+            close_many([stdout_read, stderr_read]);
+            return Err("parent_unavailable");
+        }
+        Some(handle)
+    };
     if let Some(code) = validate_launch_paths(request, paths) {
         unsafe {
             TerminateJobObject(job, 1);
             CloseHandle(information.thread);
             CloseHandle(information.process);
         }
+        close_optional_handle(parent_handle);
+        delete_windows_appcontainer_profile(profile.take());
         close_many([stdout_read, stderr_read]);
         return Err(code);
+    }
+    if parent_handle
+        .is_some_and(|parent| unsafe { WaitForSingleObject(parent, 0) } == WAIT_OBJECT_0)
+    {
+        unsafe {
+            TerminateJobObject(job, 1);
+            CloseHandle(information.thread);
+            CloseHandle(information.process);
+        }
+        close_optional_handle(parent_handle);
+        delete_windows_appcontainer_profile(profile.take());
+        close_many([stdout_read, stderr_read]);
+        return Err("parent_lost");
     }
     if unsafe { ResumeThread(information.thread) } == u32::MAX {
         unsafe {
@@ -1294,6 +2023,8 @@ fn create_windows_process(
             CloseHandle(information.thread);
             CloseHandle(information.process);
         }
+        close_optional_handle(parent_handle);
+        delete_windows_appcontainer_profile(profile.take());
         close_many([stdout_read, stderr_read]);
         return Err("launch_failed");
     }
@@ -1302,7 +2033,34 @@ fn create_windows_process(
     let stderr = unsafe { File::from_raw_handle(stderr_read as RawHandle) };
     let stdout_thread = thread::spawn(|| read_bounded(stdout));
     let stderr_thread = thread::spawn(|| read_bounded(stderr));
+    let parent_lost = Arc::new(AtomicBool::new(false));
+    let monitor_stop = Arc::new(AtomicBool::new(false));
+    let parent_monitor = parent_handle.map(|parent| {
+        let parent = parent as usize;
+        let job = job as usize;
+        let parent_lost = Arc::clone(&parent_lost);
+        let monitor_stop = Arc::clone(&monitor_stop);
+        thread::spawn(move || loop {
+            if monitor_stop.load(Ordering::Relaxed) {
+                break;
+            }
+            match unsafe { WaitForSingleObject(parent as Handle, 100) } {
+                WAIT_OBJECT_0 => {
+                    parent_lost.store(true, Ordering::Relaxed);
+                    unsafe { TerminateJobObject(job as Handle, 1) };
+                    break;
+                }
+                WAIT_TIMEOUT => continue,
+                _ => break,
+            }
+        })
+    });
     let waited = unsafe { WaitForSingleObject(information.process, INFINITE) } == WAIT_OBJECT_0;
+    monitor_stop.store(true, Ordering::Relaxed);
+    if let Some(monitor) = parent_monitor {
+        let _ = monitor.join();
+    }
+    close_optional_handle(parent_handle);
     let mut exit_code = 1;
     let exited = waited && unsafe { GetExitCodeProcess(information.process, &mut exit_code) } != 0;
     unsafe {
@@ -1312,8 +2070,12 @@ fn create_windows_process(
         CloseHandle(information.thread);
         CloseHandle(information.process);
     }
+    delete_windows_appcontainer_profile(profile.take());
     let stdout = stdout_thread.join().unwrap_or_default();
     let stderr = stderr_thread.join().unwrap_or_default();
+    if parent_lost.load(Ordering::Relaxed) && request.parent_pid != 0 {
+        return Err("parent_lost");
+    }
     if !waited || !exited {
         return Err("process_wait_failed");
     }
@@ -1353,6 +2115,13 @@ fn close_many<const N: usize>(handles: [Handle; N]) {
     }
 }
 
+#[cfg(windows)]
+fn close_optional_handle(handle: Option<Handle>) {
+    if let Some(handle) = handle {
+        unsafe { CloseHandle(handle) };
+    }
+}
+
 #[cfg(any(target_os = "macos", windows))]
 fn read_bounded<R: Read>(mut file: R) -> String {
     let mut bytes = Vec::new();
@@ -1379,8 +2148,22 @@ fn wide_null(value: &str) -> Vec<u16> {
 
 #[cfg(windows)]
 fn wide_environment(environment: &BTreeMap<String, String>) -> Result<Vec<u16>, &'static str> {
+    let mut entries = environment.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left, _), (right, _)| {
+        left.to_ascii_lowercase()
+            .cmp(&right.to_ascii_lowercase())
+            .then_with(|| left.cmp(right))
+    });
     let mut value = String::new();
-    for (key, entry) in environment {
+    let mut previous_key = None;
+    for (key, entry) in entries {
+        if previous_key
+            .as_deref()
+            .is_some_and(|previous: &str| previous.eq_ignore_ascii_case(key))
+        {
+            continue;
+        }
+        previous_key = Some(key.clone());
         if entry.contains('\0') {
             return Err("invalid_message");
         }

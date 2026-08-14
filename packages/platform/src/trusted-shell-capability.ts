@@ -9,7 +9,7 @@ const WINDOWS_TRUSTED_SHELL_AUTO_ATTESTATION = Object.freeze({
   approved: false,
   platform: "win32",
   architecture: "x64",
-  nativeBackend: "appcontainer-bfs-job-v1",
+  nativeBackend: "appcontainer-bfs-or-standard-acl-job-v1",
 } as const);
 
 export interface WindowsTrustedShellCapabilityOptions {

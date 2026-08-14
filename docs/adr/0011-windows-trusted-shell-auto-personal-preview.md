@@ -16,14 +16,16 @@ runner protocol, and operating-system enforcement of all of the following:
 - the reviewed Git for Windows Bash executable and approved toolchain surface.
 
 The immutable source attestation currently records the native backend as
-`appcontainer-bfs-job-v1` and remains `approved: false`. The runner now calls
-the Windows 11 `Experimental_CreateProcessInSandbox` entry point from the
-system `processmodel.dll`, encodes the `SBOX` AppContainer/BFS specification,
-and refuses to fall back to `CreateProcessW`. The current Windows host exposes
-the entry point but returns `ERROR_CALL_NOT_IMPLEMENTED` (120), so this
-checkpoint proves fail-closed behavior and not containment. Job Objects and
-TypeScript path checks alone still do not provide the required workspace or
-network containment.
+`appcontainer-bfs-or-standard-acl-job-v1` and remains `approved: false`. The
+runner calls the Windows 11 `Experimental_CreateProcessInSandbox` entry point
+from System32 and encodes the `SBOX` AppContainer/BFS specification. If that
+experimental entry point returns `ERROR_CALL_NOT_IMPLEMENTED` (120), it uses
+the standard AppContainer `SECURITY_CAPABILITIES` path with temporary
+package-SID ACLs for the canonical workspace and explicitly approved
+read-only roots. ACL failure still fails closed; no unsandboxed process path
+is used. The current host passes validator/workspace containment but cannot
+grant the ordinary-user Git installation the required toolchain ACL, so this
+checkpoint does not enable Trusted Shell Auto.
 
 ## Consequences
 

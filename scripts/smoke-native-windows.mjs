@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import os from "node:os";
 import path from "node:path";
@@ -95,26 +96,15 @@ async function removeFixtureTree() {
 async function runCancellationFixture() {
   const started = path.join(root, "started.txt");
   const descendant = path.join(root, "descendant-survived.txt");
-  const descendantScript = path.join(root, "descendant.mjs");
-  const parentScript = path.join(root, "parent.mjs");
-  writeFileSync(
-    descendantScript,
-    [
-      "import { writeFileSync } from 'node:fs';",
-      "setTimeout(() => writeFileSync(process.argv[2], 'descendant-survived'), 2500);",
-      "setTimeout(() => {}, 10000);",
-    ].join("\n"),
-  );
-  writeFileSync(
-    parentScript,
-    [
-      "import { writeFileSync } from 'node:fs';",
-      "import { spawn } from 'node:child_process';",
-      "writeFileSync(process.argv[3], 'started');",
-      "spawn(process.execPath, [process.argv[2], process.argv[4]], { stdio: 'ignore' });",
-      "setTimeout(() => {}, 10000);",
-    ].join("\n"),
-  );
+  const descendantCode =
+    "const fs=require('node:fs'); setTimeout(() => fs.writeFileSync(process.argv[1], 'descendant-survived'), 2500); setTimeout(() => {}, 10000);";
+  const parentCode = [
+    "const fs=require('node:fs');",
+    "const {spawn}=require('node:child_process');",
+    "fs.writeFileSync(process.argv[1], 'started');",
+    `spawn(process.execPath, ['-e', ${JSON.stringify(descendantCode)}, process.argv[2]], {stdio:'ignore'});`,
+    "setTimeout(() => {}, 10000);",
+  ].join(" ");
   const child = spawn(runner, [], {
     cwd: root,
     shell: false,
@@ -125,7 +115,7 @@ async function runCancellationFixture() {
   child.stdin.end(
     `${JSON.stringify({
       ...requestFor(root),
-      args: [parentScript, descendantScript, started, descendant],
+      args: ["-e", parentCode, started, descendant],
     })}\n`,
   );
   try {
@@ -141,10 +131,46 @@ async function runCancellationFixture() {
   assert.equal(existsSync(descendant), false, "Job Object left a descendant running");
 }
 
+async function runParentLossFixture(workspace) {
+  const marker = path.join(workspace, "parent-loss-survived.txt");
+  const controller = [
+    "const {spawn}=require('node:child_process');",
+    "const request=JSON.parse(process.argv[2]);",
+    "request.parentPid=process.pid;",
+    "const child=spawn(process.argv[1], [], {stdio:['pipe','ignore','ignore']});",
+    "child.stdin.end(JSON.stringify(request)+'\\n');",
+    "child.unref();",
+  ].join(" ");
+  const target = `const fs=require('node:fs'); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, 'survived'), 2500); setTimeout(() => {}, 10000);`;
+  const request = requestFor(workspace, {
+    requestId: "windows-parent-loss",
+    args: ["-e", target],
+    parentPid: 0,
+  });
+  const controllerProcess = spawn(
+    process.execPath,
+    ["-e", controller, runner, JSON.stringify(request)],
+    {
+      cwd: root,
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    },
+  );
+  await new Promise((resolve, reject) => {
+    controllerProcess.once("error", reject);
+    controllerProcess.once("close", resolve);
+  });
+  await delay(3_500);
+  assert.equal(existsSync(marker), false, "parent loss left a sandbox process running");
+}
+
 let junctionPath;
 try {
   mkdirSync(path.join(root, "workspace"));
   const workspace = path.join(root, "workspace");
+  const existingWorkspaceFile = path.join(workspace, "existing.txt");
+  writeFileSync(existingWorkspaceFile, "before");
   const normal = await runNative(requestFor(workspace));
   if (normal.response?.code === "sandbox_unavailable") {
     console.log(
@@ -171,8 +197,65 @@ try {
   const network = await runNative(requestFor(workspace, { network: true }));
   assert.equal(network.response?.kind, "completed");
 
+  const networkServer = createServer(() => undefined);
+  await new Promise((resolve, reject) => {
+    networkServer.once("error", reject);
+    networkServer.listen(0, "127.0.0.1", resolve);
+  });
+  const networkPort = networkServer.address().port;
+  const networkProbe = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `fetch('http://127.0.0.1:${networkPort}').then(() => process.stdout.write('connected')).catch(() => process.stdout.write('blocked'))`,
+      ],
+    }),
+  );
+  networkServer.close();
+  assert.equal(networkProbe.response?.stdout, "blocked", "offline AppContainer reached loopback");
+
+  const writeProbe = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `try { require('node:fs').writeFileSync(${JSON.stringify(path.join(workspace, "write-probe.txt"))}, 'ok'); process.stdout.write('write-ok') } catch (error) { process.stdout.write(String(error.code ?? error.message)) }`,
+      ],
+    }),
+  );
+  assert.equal(writeProbe.response?.stdout, "write-ok");
+  assert.equal(existsSync(path.join(workspace, "write-probe.txt")), true);
+  const existingWrite = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `try { require('node:fs').writeFileSync(${JSON.stringify(existingWorkspaceFile)}, 'after'); process.stdout.write('write-ok') } catch (error) { process.stdout.write(String(error.code ?? error.message)) }`,
+      ],
+    }),
+  );
+  assert.equal(existingWrite.response?.stdout, "write-ok");
+
   const outside = path.join(root, "outside");
   mkdirSync(outside);
+  const outsideFile = path.join(outside, "outside.txt");
+  writeFileSync(outsideFile, "outside-secret");
+  const outsideRead = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `try { require('node:fs').readFileSync(${JSON.stringify(outsideFile)}); process.stdout.write('readable') } catch { process.stdout.write('blocked') }`,
+      ],
+    }),
+  );
+  assert.equal(outsideRead.response?.stdout, "blocked", "sandbox read outside workspace");
+  const outsideWrite = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `try { require('node:fs').writeFileSync(${JSON.stringify(outsideFile)}, 'outside'); process.stdout.write('writable') } catch { process.stdout.write('blocked') }`,
+      ],
+    }),
+  );
+  assert.equal(outsideWrite.response?.stdout, "blocked", "sandbox wrote outside workspace");
   const escape = await runNative(requestFor(outside, { workspace }));
   assert.deepEqual(escape.response, { v: 1, kind: "error", code: "workspace_escape" });
 
@@ -213,8 +296,9 @@ try {
   );
 
   await runCancellationFixture();
+  await runParentLossFixture(workspace);
   console.log(
-    "native Windows Job Object smoke passed: completion, network rejection, workspace/reparse rejection, missing-executable rejection, bounded output, descendant cancellation",
+    "native Windows AppContainer/Job Object smoke passed: completion, network denial/elevation, workspace/reparse rejection, missing-executable rejection, bounded output, descendant cancellation, parent-loss cleanup",
   );
 } finally {
   await removeFixtureTree();

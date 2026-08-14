@@ -21,20 +21,25 @@ descendants after normal command completion. A zero or omitted parent PID is
 retained only for direct protocol fixtures and is not emitted by the
 TypeScript caller.
 
-On Windows, the same protocol launches through the Windows 11
+On Windows, the same protocol first launches through the Windows 11
 `Experimental_CreateProcessInSandbox` AppContainer/BFS API with a default
 denied network and explicit workspace/toolchain grants, then assigns the
-suspended process to a Job Object before resume. The runner rejects the
-request when the API is missing or returns an unsupported-host result; it
-never falls back to the older unsandboxed `CreateProcessW` path. Output is
-bounded, workspace/cwd reparse paths are rejected, and the owned process tree
-is cleaned up. `network: true` adds only the explicit `internetClient`
-capability for that one process.
+suspended process to a Job Object before resume. When that experimental entry
+point returns `ERROR_CALL_NOT_IMPLEMENTED`, the runner uses the standard
+AppContainer `SECURITY_CAPABILITIES` launch path and temporary package-SID
+ACLs for the canonical workspace and explicitly approved read-only roots. ACL
+failure is fail-closed, and the fallback rejects requests requiring the
+experimental process-exec allowlist; there is no unsandboxed `CreateProcessW`
+fallback.
+Output is bounded, workspace/cwd reparse paths are rejected, and the owned
+process tree is cleaned up. `network: true` adds only the explicit
+`internetClient` capability for that one process.
 
-The API is experimental and host-gated. On a Windows 11 host where
-`processmodel.dll` returns `ERROR_CALL_NOT_IMPLEMENTED`, the runner reports
-`sandbox_unavailable` and the TUI capability remains disabled. That result is
-an intentional blocked state, not evidence of OS-level containment.
+The experimental API remains host-gated. The current Windows host exercises
+the standard AppContainer path for validator/workspace containment, but its
+ordinary-user Git installation cannot accept the temporary toolchain ACL, so
+Trusted Shell Auto remains disabled. That is an intentional blocked state,
+not a claim of complete Windows Trusted Shell acceptance.
 
 The macOS strict-containment smoke proves supported validator execution,
 outside-workspace read/write denial, symlink and symlink-swap denial, loopback
