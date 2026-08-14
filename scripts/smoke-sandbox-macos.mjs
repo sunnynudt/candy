@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -146,6 +146,7 @@ execFileSync(
   ["worktree", "add", "-q", "--detach", "--lock", "--reason", "candy:smoke", workspace, "main"],
   { cwd: repository },
 );
+const canonicalWorkspace = await realpath(workspace);
 await writeFile(outsideRead, "outside-read-fixture", "utf8");
 await mkdir(swapDestination, { recursive: true });
 await writeFile(path.join(workspace, "inside.txt"), "inside-fixture", "utf8");
@@ -184,7 +185,7 @@ try {
   matrix.native.gitWorktreeSucceeded =
     gitStatus.code === 0 &&
     gitStatus.stdout.includes("git-worktree-ok") &&
-    gitStatus.stdout.includes(workspace);
+    gitStatus.stdout.includes(canonicalWorkspace);
   if (!matrix.native.gitWorktreeSucceeded)
     throw new Error("The macOS native runner rejected a real Git Task Worktree.");
 

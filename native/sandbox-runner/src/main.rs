@@ -422,7 +422,7 @@ fn sandbox_profile(
              (literal \"/private/var\")\n\
              (literal \"/private/var/db\")\n\
              (literal \"/private/var/db/xcode_select_link\")\n\
-             (literal \"/private/tmp\")\n\
+             (subpath \"/private/tmp\")\n\
              (subpath \"/private/var/folders\"))\n\
          (allow file-read* file-map-executable\n\
              (subpath \"/Library/Developer/CommandLineTools\"))\n\
@@ -1110,7 +1110,7 @@ mod tests {
         assert!(!profile.contains("(allow default)"));
         assert!(profile.contains("(deny network*)"));
         assert!(profile.contains("(allow process-exec (literal \"/Users/fixture/node/bin/node\"))"));
-        assert!(profile.contains("(literal \"/private/tmp\")"));
+        assert!(profile.contains("(subpath \"/private/tmp\")"));
         assert!(profile.contains("(subpath \"/private/var/folders/fixture/workspace\")"));
         assert!(profile.contains("(allow file-write*"));
     }
