@@ -21,7 +21,12 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_TERMINAL_MATRIX_LAUNCH_DIR)
 spawn -noecho $env(CANDY_TERMINAL_MATRIX_NODE) $env(CANDY_TERMINAL_MATRIX_CHILD)
-wait_for {Candy TUI} "TUI startup"
+
+if {$env(CANDY_TERMINAL_MATRIX_MODE) == "startup-failure"} {
+  expect eof
+} else {
+  wait_for {Candy TUI} "TUI startup"
+}
 
 if {$env(CANDY_TERMINAL_MATRIX_MODE) == "normal"} {
   send_command "中文输入测试"
@@ -44,6 +49,8 @@ if {$env(CANDY_TERMINAL_MATRIX_MODE) == "normal"} {
   wait_for {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} "cancel task creation"
   send -- "\003"
   expect eof
+} elseif {$env(CANDY_TERMINAL_MATRIX_MODE) == "startup-failure"} {
+  # The process already exited above after Candy's startup safety check.
 } else {
   fail "unknown terminal matrix mode"
 }

@@ -121,13 +121,13 @@ try {
   store.close();
 
   const ptyOutput = await readFile(ptyLog);
-  const appDataFiles = await collectFiles(appDataRoot);
+  const journeyFiles = await collectFiles(journeyRoot);
   const activeSecret = resolveCredential("deepseek");
   if (activeSecret === undefined)
     throw new Error("Candy DeepSeek credential was unavailable after the live run.");
   try {
     assertNoSensitiveData(
-      Buffer.concat([ptyOutput, ...(await readAll(appDataFiles))]),
+      Buffer.concat([ptyOutput, ...(await readAll(journeyFiles))]),
       activeSecret.value,
     );
   } finally {

@@ -17,7 +17,7 @@ const expectScript = path.join(root, "scripts", "smoke-tui-terminal-matrix-macos
 const results = {};
 
 try {
-  for (const mode of ["normal", "runtime-failure", "cancel"]) {
+  for (const mode of ["normal", "runtime-failure", "cancel", "startup-failure"]) {
     const appDataRoot = path.join(matrixRoot, mode, "app-data");
     const workspace = path.join(matrixRoot, mode, "workspace");
     const ptyLog = path.join(matrixRoot, `${mode}.pty.log`);
@@ -34,6 +34,7 @@ try {
       HOME: process.env.HOME ?? os.homedir(),
       TMPDIR: path.join(matrixRoot, mode, "tmp"),
       TERM: "xterm-256color",
+      ...(mode === "startup-failure" ? { PI_TUI_DEBUG: "1" } : {}),
     };
     await mkdir(environment.TMPDIR, { recursive: true });
     try {
@@ -58,6 +59,10 @@ try {
       if (!log.includes("terminal-matrix-first-ok") || !log.includes("terminal-matrix-paste-ok"))
         throw new Error("Normal terminal matrix output was missing.");
       results.normalInputPasteResize = true;
+    } else if (mode === "startup-failure") {
+      if (tasks.length !== 0)
+        throw new Error("Startup-failure matrix unexpectedly created a task.");
+      results.startupFailure = true;
     } else {
       if (tasks.length !== 1 || tasks[0]?.state !== "interrupted")
         throw new Error(`${mode} terminal matrix task was not interrupted safely.`);
