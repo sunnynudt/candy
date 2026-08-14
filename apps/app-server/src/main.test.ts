@@ -183,6 +183,7 @@ test("app-server exposes Personal Preview Shell only in a Task Worktree and wait
   const calls: unknown[] = [];
   const background: ProtocolMessage[] = [];
   const controller = new AppServerController({
+    platform: "darwin",
     worktreeRoot,
     bashRunner: {
       run: async (request) => {
@@ -255,6 +256,7 @@ test("app-server rejects Personal Preview Shell before creating a Worktree for n
   mkdirSync(workspace);
   const worktreeRoot = path.join(root, "worktrees");
   const controller = new AppServerController({
+    platform: "darwin",
     worktreeRoot,
     bashRunner: {
       run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
@@ -315,6 +317,7 @@ test("app-server cancels a pending Personal Preview Shell approval without repla
   const { repository } = createGitFixture(root);
   const background: ProtocolMessage[] = [];
   const controller = new AppServerController({
+    platform: "darwin",
     worktreeRoot: path.join(root, "worktrees"),
     engine: {
       async *runTurn(input: AgentTurnInput, signal) {
@@ -1712,6 +1715,7 @@ test("app-server rejects a second owner approval response without resolving the 
   const worktreeRoot = path.join(root, "worktrees");
   const background: ProtocolMessage[] = [];
   const first = new AppServerController({
+    platform: "darwin",
     databasePath,
     ownerId: "owner-1",
     worktreeRoot,

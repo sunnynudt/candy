@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { Entry } from "@napi-rs/keyring";
 
+export * from "./git-bash.js";
+export * from "./trusted-shell-capability.js";
+
 export {
   NativeProcessRunner,
   NativeProcessRunnerUnavailableError,

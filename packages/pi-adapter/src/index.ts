@@ -772,6 +772,13 @@ function createCandyShellEnvironment(
       .filter((value): value is string => value !== undefined && value.length > 0)
       .join(":");
     environment.GIT_CONFIG_NOSYSTEM = "1";
+  } else if (process.platform === "win32") {
+    // Git Bash must not inherit the user's profile or Git configuration. The
+    // native Windows gate remains closed until it can enforce the rest of the
+    // containment contract at the OS boundary.
+    environment.HOME = workspaceRoot;
+    environment.USERPROFILE = workspaceRoot;
+    environment.GIT_CONFIG_NOSYSTEM = "1";
   }
   return environment;
 }
@@ -1198,6 +1205,7 @@ export function createCandyWorkspaceTools(
   approvalProfile: "read-only" | "auto",
   shell?: {
     readonly runner: CandyBashOperationsOptions["runner"];
+    readonly bashPath?: string;
     readonly activeSecrets?: readonly string[];
     readonly onApproval?: CandyBashOperationsOptions["onApproval"];
     readonly networkApproval?: CandyNetworkOperationsOptions["onApproval"];
@@ -1320,6 +1328,7 @@ export function createCandyWorkspaceTools(
       const bash = piSdk.createBashToolDefinition(workspaceRoot, {
         operations: createCandyBashOperations(workspaceRoot, {
           runner: shell.runner,
+          ...(shell.bashPath === undefined ? {} : { bashPath: shell.bashPath }),
           ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
           ...(shell.onApproval === undefined ? {} : { onApproval: shell.onApproval }),
         }),
@@ -1335,6 +1344,7 @@ export function createCandyWorkspaceTools(
         tools.push(
           createCandyNetworkToolDefinition(workspaceRoot, {
             runner: shell.runner,
+            ...(shell.bashPath === undefined ? {} : { bashPath: shell.bashPath }),
             ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
             onApproval: shell.networkApproval,
           }),
@@ -1513,6 +1523,8 @@ export interface PiAgentEngineInput {
   readonly activeSecrets?: readonly string[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
+  /** Validated Git for Windows Bash path supplied by the platform adapter. */
+  readonly bashPath?: string;
   /** All Candy-owned provider secrets currently active for Shell redaction. */
   readonly shellActiveSecrets?: readonly string[];
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
@@ -1663,6 +1675,7 @@ export class PiAgentEngine {
         input.trustedShell && this.bashRunner !== undefined
           ? {
               runner: this.bashRunner,
+              ...(input.bashPath === undefined ? {} : { bashPath: input.bashPath }),
               activeSecrets,
               ...(input.shellApproval === undefined ? {} : { onApproval: input.shellApproval }),
               ...(input.shellNetworkApproval === undefined

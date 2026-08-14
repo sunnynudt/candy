@@ -46,7 +46,12 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
     await writeFile(path.join(root, "obsolete.ts"), "obsolete\n");
     await writeFile(path.join(root, "denied.ts"), "keep\n");
     await writeFile(path.join(outside, "outside.ts"), "outside\n");
-    await symlink(path.join(outside, "outside.ts"), path.join(root, "linked.ts"));
+    const linkedPath = process.platform === "win32" ? "linked" : "linked.ts";
+    await symlink(
+      process.platform === "win32" ? outside : path.join(outside, "outside.ts"),
+      path.join(root, linkedPath),
+      ...(process.platform === "win32" ? (["junction"] as const) : []),
+    );
 
     const readOnly = createCandyWorkspaceTools(root, "read-only");
     assert.deepEqual(
@@ -80,7 +85,7 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
     );
     assert.equal(await readFile(path.join(root, "denied.ts"), "utf8"), "keep\n");
     await assert.rejects(
-      deleteTool.execute("delete-symlink", { path: "linked.ts" }, signal, undefined, {} as never),
+      deleteTool.execute("delete-symlink", { path: linkedPath }, signal, undefined, {} as never),
       /Symbolic links/u,
     );
     await assert.rejects(
@@ -187,7 +192,11 @@ test("Candy workspace browse tools stay bounded and inside the selected workspac
     await writeFile(path.join(root, "app-data", "ignored.txt"), "needle in app data\n");
     await writeFile(path.join(root, "binary.dat"), Buffer.from([0, 1, 2, 3, 4]));
     await writeFile(path.join(outside, "secret.txt"), "needle outside\n");
-    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
+    await symlink(
+      process.platform === "win32" ? outside : path.join(outside, "secret.txt"),
+      path.join(root, process.platform === "win32" ? "linked" : "linked.txt"),
+      ...(process.platform === "win32" ? (["junction"] as const) : []),
+    );
 
     const tools = createCandyWorkspaceTools(root, "read-only");
     assert.deepEqual(
@@ -835,6 +844,7 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
     cwd: string;
     workspace: string;
     activeSecrets?: readonly string[];
+    environment?: Readonly<Record<string, string>>;
   };
   assert.equal(calls.length, 1);
   assert.deepEqual(
@@ -859,6 +869,12 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
     },
   );
   assert.equal(Buffer.concat(chunks).toString(), "[REDACTED] output");
+  if (process.platform === "darwin" || process.platform === "win32") {
+    assert.equal(request.environment?.HOME, "C:\\task-worktree");
+    assert.equal(request.environment?.GIT_CONFIG_NOSYSTEM, "1");
+  }
+  if (process.platform === "win32")
+    assert.equal(request.environment?.USERPROFILE, "C:\\task-worktree");
 });
 
 test("Candy Trusted Shell runs ordinary commands offline without per-command approval", async () => {

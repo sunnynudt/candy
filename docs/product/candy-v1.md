@@ -318,6 +318,7 @@ Until then, keep TUI execution in-process and Desktop execution in its app-manag
 - [DeepSeek-first model portfolio with MiniMax M3](../adr/0003-deepseek-first-multimodal-model-portfolio.md)
 - [Codex-style local control baseline](../adr/0004-codex-style-local-control-baseline.md)
 - [Narrow native Sandbox Runner](../adr/0005-allow-narrow-native-sandbox-runner.md)
+- [Windows Trusted Shell Auto Personal Preview gate](../adr/0011-windows-trusted-shell-auto-personal-preview.md)
 - [Explicit Browser takeover fallback](../adr/0006-use-explicit-browser-takeover-fallback.md)
 - [Current macOS Tahoe primary host and `26.5.2` regression baseline](../adr/0009-current-macos-primary-with-regression-baseline.md)
 - [V1 product acceptance standard](./acceptance-v1.md)

@@ -26,6 +26,9 @@ import {
   SQLiteTaskStore,
   SystemClock,
   type TaskMetadata,
+  discoverGitBashExecutable,
+  getWindowsTrustedShellCapabilityStatus,
+  isTrustedShellAutoAvailable as isPlatformTrustedShellAutoAvailable,
 } from "@candy/platform";
 import {
   ApplyChangesBlockedError,
@@ -161,11 +164,12 @@ export function createDefaultInteractiveTui(
 ): InteractiveTui {
   return new InteractiveTui({
     ...options,
-    trustedShellAutoAvailable: isMacosTrustedShellAutoAvailable(),
+    trustedShellAutoAvailable: isPlatformTrustedShellAutoAvailable(),
   });
 }
 
 export interface TuiShellRunner {
+  readonly bashPath?: string;
   run(request: NativeProcessRequest): Promise<NativeProcessResult>;
 }
 
@@ -1268,9 +1272,13 @@ export class InteractiveTui {
       if (taskSnapshot === undefined) throw new Error("Task metadata is unavailable after start.");
       if (
         taskSnapshot.trustedShell &&
-        (!this.#trustedShellAutoAvailable || !isMacosTrustedShellAutoAvailable())
+        (!this.#trustedShellAutoAvailable || !isPlatformTrustedShellAutoAvailable())
       )
-        throw new Error("Trusted Shell Auto is disabled pending the macOS G2 gate.");
+        throw new Error(
+          process.platform === "win32"
+            ? getWindowsTrustedShellCapabilityStatus().reason
+            : "Trusted Shell Auto is disabled pending the macOS G2 gate.",
+        );
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
       const prompt =
         explicitPrompt ??
@@ -1310,6 +1318,9 @@ export class InteractiveTui {
             ...(taskSnapshot.trustedShell
               ? {
                   trustedShell: true,
+                  ...(this.#shellRunner?.bashPath === undefined
+                    ? {}
+                    : { bashPath: this.#shellRunner.bashPath }),
                   shellActiveSecrets: activeSecrets,
                   shellNetworkApproval: (
                     request: CandyNetworkApprovalRequest,
@@ -1527,10 +1538,8 @@ export class InteractiveTui {
       this.write("Trusted Shell Auto disabled for new tasks\n");
       return;
     }
-    if (process.platform !== "darwin") {
-      this.write(
-        "Trusted Shell Auto rejected: macOS Personal Preview is unavailable on this platform\n",
-      );
+    if (process.platform !== "darwin" && process.platform !== "win32") {
+      this.write("Trusted Shell Auto rejected: Personal Preview is unavailable on this platform\n");
       return;
     }
     if (this.#approvalProfile !== "auto") {
@@ -1543,8 +1552,14 @@ export class InteractiveTui {
       );
       return;
     }
-    if (!this.#trustedShellAutoAvailable) {
-      this.write("Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build\n");
+    if (!this.#trustedShellAutoAvailable || !isPlatformTrustedShellAutoAvailable()) {
+      if (process.platform === "win32") {
+        this.write(
+          `Trusted Shell Auto rejected: ${getWindowsTrustedShellCapabilityStatus().reason}\n`,
+        );
+      } else {
+        this.write("Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build\n");
+      }
       return;
     }
     this.#trustedShellEnabled = true;
@@ -1725,9 +1740,20 @@ function createNativeTuiValidator(): TuiValidator | undefined {
 }
 
 function createNativeTuiShellRunner(): TuiShellRunner | undefined {
-  if (process.platform !== "darwin") return undefined;
+  if (process.platform !== "darwin" && process.platform !== "win32") return undefined;
   const runnerPath = resolveNativeProcessRunnerPath(import.meta.url);
-  return runnerPath === undefined ? undefined : new NativeProcessRunner(runnerPath);
+  if (runnerPath === undefined) return undefined;
+  if (process.platform === "win32") {
+    try {
+      return {
+        bashPath: discoverGitBashExecutable(),
+        run: (request) => new NativeProcessRunner(runnerPath).run(request),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+  return new NativeProcessRunner(runnerPath);
 }
 
 class TuiModelRouter implements TuiAgentEngine {

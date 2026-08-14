@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
+#[cfg(target_os = "macos")]
+use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(any(target_os = "macos", windows))]
@@ -23,8 +25,6 @@ use std::time::Duration;
 use std::ffi::c_void;
 #[cfg(windows)]
 use std::fs::{self, File};
-#[cfg(windows)]
-use std::io::Read;
 #[cfg(windows)]
 use std::iter::once;
 #[cfg(windows)]
