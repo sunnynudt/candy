@@ -227,6 +227,44 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
   }
 });
 
+test("interactive TUI keeps Trusted Shell Auto disabled in the default composition root", async () => {
+  if (process.platform !== "darwin") return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-off-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build/u,
+    );
+    assert.match(output, /G2 gate has not enabled this build/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
   if (process.platform !== "darwin") return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-"));
