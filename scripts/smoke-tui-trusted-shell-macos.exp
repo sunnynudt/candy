@@ -35,12 +35,13 @@ wait_for {model selected: deepseek-v4-flash} "DeepSeek Flash selection"
 send_command ":validator $env(CANDY_JOURNEY_NODE) --test test/value.test.mjs"
 wait_for {validator configured for new tasks:} "validator configuration"
 
-send_command "Fix the failing fixture completely. First use candy_read on README.md, src/value.mjs, and test/value.test.mjs. Change src/value.mjs so the test expects the correct value. Use candy_bash automatically, without asking for approval, to run node --test test/value.test.mjs and git status --short. Then use candy_bash_network exactly once for the complete command git ls-remote https://github.com/sunnynudt/candy.git HEAD; explain that the read-only remote revision lookup genuinely needs outbound network access. Do not commit, stage, push, or modify anything outside the Task Worktree. Report the test result and final change."
+send_command "Fix the failing fixture completely. First use candy_search with the literal query value = 1, then use candy_read on README.md, src/value.mjs, and test/value.test.mjs. Use candy_bash automatically, without asking for approval, to run node --test test/value.test.mjs before editing, inspect and diagnose the failure, and run git status --short. Then use candy_edit to change only src/value.mjs so the test expects the correct value. Use candy_bash automatically a second time to rerun node --test test/value.test.mjs and git status --short. Then use candy_bash_network exactly once for the complete command git ls-remote https://github.com/sunnynudt/candy.git HEAD; explain that the read-only remote revision lookup genuinely needs outbound network access. Do not commit, stage, push, or modify anything outside the Task Worktree. Report the diagnosis, test results, and final change."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set coding_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for coding task creation" }
   eof { fail "TUI exited while waiting for coding task creation" }
 }
+wait_for {\[tool candy_search\]} "real Pi search tool"
 wait_for {\[tool candy_read\]} "real Pi read tool"
 wait_for {\[tool candy_edit\]} "real Pi edit tool"
 wait_for {\[tool candy_bash\]} "ordinary offline Bash tool"

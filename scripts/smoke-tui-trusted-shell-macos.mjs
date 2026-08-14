@@ -113,11 +113,18 @@ try {
     throw new Error("The cancelled task did not recover safely.");
   if (coding.ownerId !== undefined || cancelled.ownerId !== undefined)
     throw new Error("Restarted task state retained an execution owner.");
-  if (!transcript?.some((entry) => entry.text.includes("candy_bash:ok")))
-    throw new Error("Offline Bash evidence was not persisted.");
-  const networkSuccesses =
-    transcript?.filter((entry) => entry.text.includes("candy_bash_network:ok")).length ?? 0;
-  if (networkSuccesses !== 1) throw new Error("Network Bash was not exactly one approved command.");
+  const toolTexts =
+    transcript?.filter((entry) => entry.role === "tool").map((entry) => entry.text) ?? [];
+  const offlineBashRuns = toolTexts.filter((text) => text.includes("candy_bash:ok")).length;
+  if (offlineBashRuns < 2)
+    throw new Error(
+      "The real coding journey did not run offline Bash for diagnosis and verification.",
+    );
+  if (!toolTexts.some((text) => text.includes("candy_search:ok")))
+    throw new Error("The real coding journey did not use the Candy search tool.");
+  const networkRuns = toolTexts.filter((text) => text.includes("candy_bash_network:")).length;
+  if (networkRuns !== 1 || !toolTexts.some((text) => text.includes("candy_bash_network:ok")))
+    throw new Error("Network Bash was not exactly one approved command.");
   store.close();
 
   const ptyOutput = await readFile(ptyLog);
@@ -149,7 +156,7 @@ try {
     trustedShellAuto: true,
     trustedShellGate: "acceptance-only",
     offlineShellAuto: true,
-    oneCommandNetworkApproval: true,
+    oneCommandNetworkApproval: networkRuns === 1,
     cancellationAndRestart: coding.ownerId === undefined && cancelled.ownerId === undefined,
     gitHeadUnchanged: afterHead === beforeHead,
     gitIndexUnchanged: afterTree === beforeTree,
