@@ -873,8 +873,12 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
     assert.equal(request.environment?.HOME, "C:\\task-worktree");
     assert.equal(request.environment?.GIT_CONFIG_NOSYSTEM, "1");
   }
-  if (process.platform === "win32")
+  if (process.platform === "win32") {
     assert.equal(request.environment?.USERPROFILE, "C:\\task-worktree");
+    assert.equal(request.environment?.GIT_CONFIG_GLOBAL, "NUL");
+    assert.equal(request.environment?.Path, undefined);
+    assert.ok(request.environment?.PATH?.includes("C:\\Program Files\\Git\\cmd"));
+  }
 });
 
 test("Candy Trusted Shell runs ordinary commands offline without per-command approval", async () => {

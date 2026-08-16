@@ -22,24 +22,30 @@ retained only for direct protocol fixtures and is not emitted by the
 TypeScript caller.
 
 On Windows, the same protocol first launches through the Windows 11
-`Experimental_CreateProcessInSandbox` AppContainer/BFS API with a default
-denied network and explicit workspace/toolchain grants, then assigns the
-suspended process to a Job Object before resume. When that experimental entry
+`Experimental_CreateProcessInSandbox` AppContainer API with a default-denied
+network and explicit workspace/toolchain grants, then assigns the suspended
+process to a Job Object before resume. This is the only native path that may
+provide the Trusted Shell process-exec capability. When that experimental entry
 point returns `ERROR_CALL_NOT_IMPLEMENTED`, the runner uses the standard
-AppContainer `SECURITY_CAPABILITIES` launch path and temporary package-SID
-ACLs for the canonical workspace and explicitly approved read-only roots. ACL
-failure is fail-closed, and the fallback rejects requests requiring the
-experimental process-exec allowlist; there is no unsandboxed `CreateProcessW`
-fallback.
+AppContainer `SECURITY_CAPABILITIES` launch path only for validator/workspace
+containment. Requests requiring process execution fail closed with
+`sandbox_capability_unavailable`. There is no undocumented policy-broker
+fallback and no unsandboxed `CreateProcessW` fallback.
 Output is bounded, workspace/cwd reparse paths are rejected, and the owned
 process tree is cleaned up. `network: true` adds only the explicit
 `internetClient` capability for that one process.
 
-The experimental API remains host-gated. The current Windows host exercises
-the standard AppContainer path for validator/workspace containment, but its
-ordinary-user Git installation cannot accept the temporary toolchain ACL, so
-Trusted Shell Auto remains disabled. That is an intentional blocked state,
-not a claim of complete Windows Trusted Shell acceptance.
+The experimental API remains host-gated. The accepted prior checkpoint proved
+the standard validator/workspace path, but the current Windows session denies
+`CreateAppContainerProfile` with `E_ACCESSDENIED`, so it cannot produce fresh
+Trusted Shell evidence. Trusted Shell Auto remains disabled. That is an
+intentional blocked state, not a claim of complete Windows Trusted Shell
+acceptance.
+
+The Windows smoke reports an unavailable host as `BLOCKED` for ordinary local
+development. Acceptance runners must pass `--require-native` (or set
+`CANDY_REQUIRE_WINDOWS_NATIVE=1`) so an unavailable containment capability
+fails the run instead of being treated as a successful matrix.
 
 The macOS strict-containment smoke proves supported validator execution,
 outside-workspace read/write denial, symlink and symlink-swap denial, loopback

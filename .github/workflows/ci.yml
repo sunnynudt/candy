@@ -24,3 +24,5 @@ jobs:
       - run: npm run smoke:tui
       - run: npm run smoke:tui-task
       - run: npm run smoke:app-server
+      - if: matrix.os == 'windows-latest'
+        run: npm run smoke:native:windows

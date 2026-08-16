@@ -16,16 +16,18 @@ runner protocol, and operating-system enforcement of all of the following:
 - the reviewed Git for Windows Bash executable and approved toolchain surface.
 
 The immutable source attestation currently records the native backend as
-`appcontainer-bfs-or-standard-acl-job-v1` and remains `approved: false`. The
-runner calls the Windows 11 `Experimental_CreateProcessInSandbox` entry point
-from System32 and encodes the `SBOX` AppContainer/BFS specification. If that
-experimental entry point returns `ERROR_CALL_NOT_IMPLEMENTED` (120), it uses
-the standard AppContainer `SECURITY_CAPABILITIES` path with temporary
-package-SID ACLs for the canonical workspace and explicitly approved
-read-only roots. ACL failure still fails closed; no unsandboxed process path
-is used. The current host passes validator/workspace containment but cannot
-grant the ordinary-user Git installation the required toolchain ACL, so this
-checkpoint does not enable Trusted Shell Auto.
+`windows-appcontainer-job-v1` and remains `approved: false`. The runner calls
+the Windows 11 `Experimental_CreateProcessInSandbox` entry point from System32
+and encodes the `SBOX` AppContainer specification. This is the only native
+path that may satisfy the Trusted Shell process-exec capability. If the
+experimental entry point returns `ERROR_CALL_NOT_IMPLEMENTED` (120), the
+standard AppContainer `SECURITY_CAPABILITIES` path is retained only for
+validator/workspace containment; requests requiring process execution return
+`sandbox_capability_unavailable`. No undocumented policy-broker or ACL
+fallback is treated as Trusted Shell containment, and no unsandboxed process
+path is used. The current host cannot create the AppContainer profile under
+its ordinary-user policy, so this checkpoint does not enable Trusted Shell
+Auto.
 
 ## Consequences
 

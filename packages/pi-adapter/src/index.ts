@@ -445,6 +445,8 @@ export interface CandyWorkspaceToolOperations {
 export interface CandyBashPathSeam {
   readonly resolve: (...paths: string[]) => string;
   readonly isAbsolute: (value: string) => boolean;
+  readonly dirname: (path: string) => string;
+  readonly join: (...paths: string[]) => string;
 }
 
 export interface CandyBashOperationsOptions {
@@ -546,6 +548,12 @@ export function createCandyBashOperations(
       else execution.signal?.addEventListener("abort", abort, { once: true });
       try {
         const processExecPath = resolveCandyShellProcessExecPath();
+        const processExecPaths = resolveCandyShellProcessExecPaths(
+          bashPath,
+          processExecPath,
+          pathImpl,
+          options.exists ?? existsSync,
+        );
         if (controller.signal.aborted) {
           if (
             controller.signal.reason instanceof Error &&
@@ -561,9 +569,9 @@ export function createCandyBashOperations(
           workspace: root,
           network: false,
           allowProcessExec: true,
-          processExecPaths: [processExecPath],
+          processExecPaths,
           readOnlyPaths: resolveCandyShellReadOnlyPaths(root),
-          environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
+          environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
         });
@@ -705,6 +713,12 @@ export function createCandyNetworkToolDefinition(
       else executionSignal.addEventListener("abort", abort, { once: true });
       try {
         const processExecPath = resolveCandyShellProcessExecPath();
+        const processExecPaths = resolveCandyShellProcessExecPaths(
+          bashPath,
+          processExecPath,
+          pathImpl,
+          options.exists ?? existsSync,
+        );
         if (controller.signal.aborted) throw new Error("Operation aborted");
         const result = await options.runner.run({
           executable: bashPath,
@@ -713,9 +727,9 @@ export function createCandyNetworkToolDefinition(
           workspace: root,
           network: true,
           allowProcessExec: true,
-          processExecPaths: [processExecPath],
+          processExecPaths,
           readOnlyPaths: resolveCandyShellReadOnlyPaths(root),
-          environment: createCandyShellEnvironment(root, options.activeSecrets ?? []),
+          environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
         });
@@ -765,6 +779,7 @@ function wrapCandyShellCommand(command: string): string {
 function createCandyShellEnvironment(
   workspaceRoot: string,
   activeSecrets: readonly string[],
+  bashPath?: string,
 ): Record<string, string> {
   const environment = Object.fromEntries(
     Object.entries(cleanChildEnvironment(process.env, activeSecrets)).filter(
@@ -784,12 +799,26 @@ function createCandyShellEnvironment(
       .join(":");
     environment.GIT_CONFIG_NOSYSTEM = "1";
   } else if (process.platform === "win32") {
-    // Git Bash must not inherit the user's profile or Git configuration. The
-    // native Windows gate remains closed until it can enforce the rest of the
-    // containment contract at the OS boundary.
+    // Git Bash must not inherit the user's profile, Git configuration, or
+    // arbitrary PATH entries. The native runner receives the same directories
+    // as process-execution policy roots.
     environment.HOME = workspaceRoot;
     environment.USERPROFILE = workspaceRoot;
     environment.GIT_CONFIG_NOSYSTEM = "1";
+    environment.GIT_CONFIG_GLOBAL = "NUL";
+    delete environment.Path;
+    const runtimeDirectory = path.dirname(realpathSync.native(process.execPath));
+    const gitBin = bashPath === undefined ? undefined : path.dirname(bashPath);
+    const gitRoot = gitBin === undefined ? undefined : path.dirname(gitBin);
+    environment.PATH = [
+      runtimeDirectory,
+      gitRoot === undefined ? undefined : path.join(gitRoot, "cmd"),
+      gitBin,
+      gitRoot === undefined ? undefined : path.join(gitRoot, "usr", "bin"),
+      gitRoot === undefined ? undefined : path.join(gitRoot, "mingw64", "bin"),
+    ]
+      .filter((value): value is string => value !== undefined && value.length > 0)
+      .join(";");
   }
   return environment;
 }
@@ -835,6 +864,25 @@ function resolveCandyShellProcessExecPath(): string {
   if (executable === undefined)
     throw new Error("Candy Trusted Shell could not canonicalize the runtime executable.");
   return path.dirname(executable);
+}
+
+function resolveCandyShellProcessExecPaths(
+  bashPath: string,
+  runtimeDirectory: string,
+  pathImpl: CandyBashPathSeam,
+  exists: (candidate: string) => boolean,
+): readonly string[] {
+  const gitBin = pathImpl.dirname(bashPath);
+  const gitRoot = pathImpl.dirname(gitBin);
+  const candidates = [
+    runtimeDirectory,
+    gitBin,
+    pathImpl.join(gitRoot, "usr", "bin"),
+    pathImpl.join(gitRoot, "mingw64", "bin"),
+    pathImpl.join(gitRoot, "cmd"),
+    pathImpl.join(gitRoot, "libexec", "git-core"),
+  ];
+  return [...new Set(candidates.filter((candidate) => exists(candidate)))];
 }
 
 function trySync<T>(operation: () => T): T | undefined {

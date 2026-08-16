@@ -26,6 +26,7 @@
     "smoke:credential-manager:windows": "npm run build && node scripts/smoke-credential-manager-windows.mjs",
     "smoke:credential-manager:packaged:windows": "node scripts/smoke-credential-manager-packaged-windows.mjs",
     "smoke:native:windows": "npm run build && node scripts/smoke-native-windows.mjs",
+    "smoke:native:windows:strict": "npm run build && node scripts/smoke-native-windows.mjs --require-native",
     "smoke:recovery:windows": "npm run build && node scripts/smoke-recovery-windows.mjs",
     "smoke:long-running:windows": "npm run build && node scripts/smoke-long-running-windows.mjs",
     "smoke:long-running:macos": "npm run build && node scripts/smoke-long-running-macos.mjs",

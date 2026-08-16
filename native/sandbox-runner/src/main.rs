@@ -822,6 +822,8 @@ const FILE_GENERIC_READ: u32 = 0x0012_0089;
 const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
 #[cfg(windows)]
 const FILE_GENERIC_EXECUTE: u32 = 0x0012_00a0;
+#[cfg(all(windows, test))]
+const FILE_EXECUTE: u32 = 0x0000_0020;
 #[cfg(windows)]
 const FILE_DELETE_CHILD: u32 = 0x0000_0040;
 #[cfg(windows)]
@@ -1255,9 +1257,9 @@ fn create_process_in_standard_appcontainer(
     information: *mut ProcessInformation,
     paths: &CanonicalLaunchPaths,
 ) -> Result<Option<WindowsAppContainerProfile>, &'static str> {
-    // The standard AppContainer API provides the package boundary but no
-    // equivalent to the experimental process-exec allowlist. Keep Trusted
-    // Shell fail-closed on hosts that cannot provide the full capability.
+    // The standard AppContainer path is retained for validator/workspace
+    // containment only. Trusted Shell requires the experimental native
+    // process-exec boundary and must fail closed when that path is absent.
     if request.allow_process_exec {
         return Err("sandbox_capability_unavailable");
     }
@@ -1269,8 +1271,8 @@ fn create_process_in_standard_appcontainer(
     fallback_environment_values.extend(request.environment.clone());
     let mut fallback_environment = wide_environment(&fallback_environment_values)?;
     let identity = wide_null(&sandbox_identity(&request.request_id));
-    let display_name = wide_null("Candy Trusted Shell");
-    let description = wide_null("Candy task command sandbox");
+    let display_name = wide_null("Candy Validator Sandbox");
+    let description = wide_null("Candy validator workspace sandbox");
     let mut package_sid = null_mut();
     let (mut capabilities, capability_sids) = appcontainer_capabilities(request.network)?;
     let created_profile = unsafe {
@@ -1299,7 +1301,7 @@ fn create_process_in_standard_appcontainer(
         return Err("sandbox_profile_failed");
     }
 
-    let access = match grant_standard_appcontainer_access(package_sid, request, paths) {
+    let access = match grant_standard_appcontainer_access(package_sid, paths) {
         Ok(access) => access,
         Err(code) => {
             unsafe { FreeSid(package_sid) };
@@ -1535,7 +1537,6 @@ fn delete_windows_appcontainer_profile(profile: Option<WindowsAppContainerProfil
 #[cfg(windows)]
 fn grant_standard_appcontainer_access(
     package_sid: *mut c_void,
-    request: &RunRequest,
     paths: &CanonicalLaunchPaths,
 ) -> Result<WindowsAppContainerAccess, &'static str> {
     let sid_length = unsafe { GetLengthSid(package_sid) } as usize;
@@ -1546,47 +1547,23 @@ fn grant_standard_appcontainer_access(
     let mut applied = Vec::<std::path::PathBuf>::new();
     let mut resource_roots = vec![paths.workspace.clone()];
 
-    let mut workspace_targets = Vec::new();
-    collect_acl_targets(&paths.workspace, &mut workspace_targets)?;
+    let mut _workspace_targets = Vec::new();
+    collect_acl_targets(&paths.workspace, &mut _workspace_targets)?;
     if let Err(code) = update_path_acl(&paths.workspace, &sid, GRANT_ACCESS, workspace_access()) {
         revoke_acl_targets(&applied, &sid);
         return Err(code);
     }
     applied.push(paths.workspace.clone());
 
-    let mut read_only_roots = match request
-        .process_exec_paths
-        .iter()
-        .chain(request.read_only_paths.iter())
-        .map(|value| canonical_sandbox_path(value))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(roots) => roots,
-        Err(code) => {
-            revoke_acl_targets(&applied, &sid);
-            return Err(code);
-        }
-    };
-    let executable_parent = match paths.executable.parent() {
-        Some(parent) => parent.to_path_buf(),
-        None => {
-            revoke_acl_targets(&applied, &sid);
-            return Err("invalid_path");
-        }
-    };
-    read_only_roots.push(executable_parent);
-    read_only_roots.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
-    read_only_roots.dedup_by(|left, right| same_windows_path(left, right));
-
-    for root in read_only_roots {
+    for root in &paths.read_only_roots {
         let mut targets = Vec::new();
-        if let Err(code) = collect_acl_targets(&root, &mut targets) {
+        if let Err(code) = collect_acl_targets(root, &mut targets) {
             revoke_acl_targets(&applied, &sid);
             return Err(code);
         }
         let access_mode = if resource_roots
             .iter()
-            .any(|path| same_windows_path(path, &root) || windows_path_is_within(&root, path))
+            .any(|path| same_windows_path(path, root) || windows_path_is_within(root, path))
         {
             DENY_ACCESS
         } else {
@@ -1597,13 +1574,13 @@ fn grant_standard_appcontainer_access(
         } else {
             FILE_GENERIC_READ | FILE_GENERIC_EXECUTE
         };
-        if let Err(code) = update_path_acl(&root, &sid, access_mode, access_permissions) {
+        if let Err(code) = update_path_acl(root, &sid, access_mode, access_permissions) {
             revoke_acl_targets(&applied, &sid);
             return Err(code);
         }
         if access_mode == GRANT_ACCESS {
             resource_roots.push(root.clone());
-            applied.push(root);
+            applied.push(root.clone());
         }
     }
 
@@ -1635,11 +1612,11 @@ fn collect_acl_targets(
 
 #[cfg(windows)]
 fn workspace_access() -> u32 {
-    FILE_GENERIC_READ
-        | FILE_GENERIC_WRITE
-        | FILE_GENERIC_EXECUTE
-        | DELETE_ACCESS
-        | FILE_DELETE_CHILD
+    // The worktree is writable data, not an executable search path. The
+    // Explicit toolchain roots below carry FILE_GENERIC_EXECUTE for the
+    // reviewed runtime/toolchain; granting generic execute here would let a
+    // command run an arbitrary PE dropped into the worktree.
+    FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE_ACCESS | FILE_DELETE_CHILD
 }
 
 #[cfg(windows)]
@@ -2214,6 +2191,7 @@ struct CanonicalLaunchPaths {
     workspace: std::path::PathBuf,
     cwd: std::path::PathBuf,
     executable: std::path::PathBuf,
+    read_only_roots: Vec<std::path::PathBuf>,
 }
 
 #[cfg(windows)]
@@ -2239,11 +2217,30 @@ fn canonical_launch_paths(request: &RunRequest) -> Result<CanonicalLaunchPaths, 
     if executable.file_name().is_none() {
         return Err("invalid_path");
     }
+    let read_only_roots = canonical_read_only_roots(request, &executable)?;
     Ok(CanonicalLaunchPaths {
         workspace,
         cwd,
         executable,
+        read_only_roots,
     })
+}
+
+#[cfg(windows)]
+fn canonical_read_only_roots(
+    request: &RunRequest,
+    executable: &Path,
+) -> Result<Vec<std::path::PathBuf>, &'static str> {
+    let mut roots = request
+        .process_exec_paths
+        .iter()
+        .chain(request.read_only_paths.iter())
+        .map(|value| canonical_sandbox_path(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    roots.push(executable.parent().ok_or("invalid_path")?.to_path_buf());
+    roots.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+    roots.dedup_by(|left, right| same_windows_path(left, right));
+    Ok(roots)
 }
 
 #[cfg(windows)]
@@ -2293,6 +2290,7 @@ fn validate_launch_paths(
     };
     if has_reparse_component(&workspace)
         || has_reparse_component(&cwd)
+        || contains_reparse_tree(&workspace)
         || !windows_path_is_within(&cwd, &workspace)
     {
         return Some("reparse_forbidden");
@@ -2301,6 +2299,17 @@ fn validate_launch_paths(
         || !same_windows_path(&cwd, &expected.cwd)
         || !same_windows_path(&executable, &expected.executable)
         || executable_is_reparse(&executable)
+    {
+        return Some("reparse_forbidden");
+    }
+    let Ok(read_only_roots) = canonical_read_only_roots(request, &executable) else {
+        return Some("invalid_path");
+    };
+    if read_only_roots.len() != expected.read_only_roots.len()
+        || read_only_roots
+            .iter()
+            .zip(&expected.read_only_roots)
+            .any(|(current, expected)| !same_windows_path(current, expected))
     {
         return Some("reparse_forbidden");
     }
@@ -2462,6 +2471,12 @@ mod tests {
         let network =
             super::build_flatbuffer_sandbox_spec(r"C:\workspace", true, &[]).expect("network spec");
         assert!(String::from_utf8_lossy(&network).contains("internetClient"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_worktree_access_does_not_grant_file_execution() {
+        assert_eq!(super::workspace_access() & super::FILE_EXECUTE, 0);
     }
 
     #[test]

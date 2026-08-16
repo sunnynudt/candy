@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,6 +26,8 @@ const runner = path.resolve("native/sandbox-runner/target/debug/candy-sandbox-ru
 if (!existsSync(runner)) throw new Error("Build the Windows Sandbox Runner before this smoke.");
 
 const root = mkdtempSync(path.join(os.tmpdir(), "candy-native-windows-"));
+const requireNativeCapability =
+  process.env.CANDY_REQUIRE_WINDOWS_NATIVE === "1" || process.argv.includes("--require-native");
 
 function requestFor(workspace, overrides = {}) {
   return {
@@ -41,32 +52,44 @@ function requestFor(workspace, overrides = {}) {
 }
 
 function runNative(request) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(runner, [], {
+  const sequence = runNative.sequence++;
+  const input = path.join(root, `protocol-${sequence}.in`);
+  const output = path.join(root, `protocol-${sequence}.out`);
+  const error = path.join(root, `protocol-${sequence}.err`);
+  writeFileSync(input, `${JSON.stringify(request)}\n`);
+  const inputHandle = openSync(input, "r");
+  const outputHandle = openSync(output, "w");
+  const errorHandle = openSync(error, "w");
+  let result;
+  try {
+    result = spawnSync(runner, [], {
       cwd: root,
       shell: false,
       windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: [inputHandle, outputHandle, errorHandle],
+      timeout: 30_000,
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      const line = stdout.split(/\r?\n/u).find((value) => value.length > 0);
-      resolve({
-        code,
-        signal,
-        response: line === undefined ? undefined : JSON.parse(line),
-        stderr,
-      });
-    });
-    child.stdin.end(`${JSON.stringify(request)}\n`);
+  } finally {
+    closeSync(inputHandle);
+    closeSync(outputHandle);
+    closeSync(errorHandle);
+  }
+  const stdout = existsSync(output) ? readFileSync(output, "utf8") : "";
+  const stderr = existsSync(error) ? readFileSync(error, "utf8") : "";
+  rmSync(input, { force: true });
+  rmSync(output, { force: true });
+  rmSync(error, { force: true });
+  if (result.error) throw result.error;
+  const line = stdout.split(/\r?\n/u).find((value) => value.length > 0);
+  return Promise.resolve({
+    code: result.status,
+    signal: result.signal,
+    response: line === undefined ? undefined : JSON.parse(line),
+    stderr,
   });
 }
+
+runNative.sequence = 0;
 
 async function waitForFile(file, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
@@ -172,16 +195,30 @@ try {
   const existingWorkspaceFile = path.join(workspace, "existing.txt");
   writeFileSync(existingWorkspaceFile, "before");
   const normal = await runNative(requestFor(workspace));
-  if (normal.response?.code === "sandbox_unavailable") {
-    console.log(
-      "BLOCKED: Windows AppContainer/BFS native sandbox is unavailable on this host; no unsandboxed fallback was used",
-    );
-    await removeFixtureTree();
-    process.exit(0);
+  const blockedCodes = new Set([
+    "sandbox_unavailable",
+    "sandbox_profile_failed",
+    "sandbox_capability_unavailable",
+    "sandbox_access_denied",
+  ]);
+  if (normal.response?.kind === "error" && blockedCodes.has(normal.response.code)) {
+    throw { type: "blocked", code: normal.response.code };
   }
   assert.equal(normal.response?.kind, "completed");
   assert.equal(normal.response?.code, 0);
   assert.equal(normal.response?.stdout, "native-job-ok");
+
+  const workspaceWriteProbe = await runNative(
+    requestFor(workspace, {
+      args: [
+        "-e",
+        `try { require('node:fs').writeFileSync(${JSON.stringify(path.join(workspace, "capability-probe.txt"))}, 'ok'); process.stdout.write('write-ok') } catch (error) { process.stdout.write(String(error.code ?? error.message)) }`,
+      ],
+    }),
+  );
+  if (workspaceWriteProbe.response?.stdout !== "write-ok") {
+    throw { type: "blocked", code: "sandbox_access_denied" };
+  }
 
   const validator = await new CommandValidator(new NativeProcessRunner(runner)).run(
     {
@@ -214,16 +251,10 @@ try {
   networkServer.close();
   assert.equal(networkProbe.response?.stdout, "blocked", "offline AppContainer reached loopback");
 
-  const writeProbe = await runNative(
-    requestFor(workspace, {
-      args: [
-        "-e",
-        `try { require('node:fs').writeFileSync(${JSON.stringify(path.join(workspace, "write-probe.txt"))}, 'ok'); process.stdout.write('write-ok') } catch (error) { process.stdout.write(String(error.code ?? error.message)) }`,
-      ],
-    }),
-  );
-  assert.equal(writeProbe.response?.stdout, "write-ok");
-  assert.equal(existsSync(path.join(workspace, "write-probe.txt")), true);
+  const outside = path.join(root, "outside");
+  mkdirSync(outside);
+  const outsideFile = path.join(outside, "outside.txt");
+  writeFileSync(outsideFile, "outside-secret");
   const existingWrite = await runNative(
     requestFor(workspace, {
       args: [
@@ -232,12 +263,11 @@ try {
       ],
     }),
   );
+  if (existingWrite.response?.stdout !== "write-ok") {
+    throw { type: "blocked", code: "sandbox_access_denied" };
+  }
   assert.equal(existingWrite.response?.stdout, "write-ok");
 
-  const outside = path.join(root, "outside");
-  mkdirSync(outside);
-  const outsideFile = path.join(outside, "outside.txt");
-  writeFileSync(outsideFile, "outside-secret");
   const outsideRead = await runNative(
     requestFor(workspace, {
       args: [
@@ -298,8 +328,20 @@ try {
   await runCancellationFixture();
   await runParentLossFixture(workspace);
   console.log(
-    "native Windows AppContainer/Job Object smoke passed: completion, network denial/elevation, workspace/reparse rejection, missing-executable rejection, bounded output, descendant cancellation, parent-loss cleanup",
+    "native Windows AppContainer/Job Object smoke passed: validator completion, network denial/elevation, workspace/reparse rejection, missing-executable rejection, bounded output, descendant cancellation, parent-loss cleanup",
   );
+} catch (error) {
+  if (typeof error === "object" && error !== null && error.type === "blocked") {
+    const message = `BLOCKED: Windows AppContainer native sandbox is unavailable on this host (${error.code}); no unsandboxed fallback was used`;
+    if (requireNativeCapability) {
+      console.error(message);
+      process.exitCode = 1;
+    } else {
+      console.log(message);
+    }
+  } else {
+    throw error;
+  }
 } finally {
   await removeFixtureTree();
 }

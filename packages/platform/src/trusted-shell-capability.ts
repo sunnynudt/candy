@@ -1,15 +1,15 @@
 import { discoverGitBashExecutable, GitBashDiscoveryError } from "./git-bash.js";
 
 /**
- * Windows Trusted Shell is intentionally source-gated. The native runner now
- * attempts the Windows AppContainer/BFS boundary, but the capability remains
- * disabled until an accepted host proves that backend and its negative matrix.
+ * Windows Trusted Shell is intentionally source-gated. The native runner has
+ * one process-exec containment path, but the capability remains disabled until
+ * an accepted host proves that backend and its negative matrix.
  */
 const WINDOWS_TRUSTED_SHELL_AUTO_ATTESTATION = Object.freeze({
   approved: false,
   platform: "win32",
   architecture: "x64",
-  nativeBackend: "appcontainer-bfs-or-standard-acl-job-v1",
+  nativeBackend: "windows-appcontainer-job-v1",
 } as const);
 
 export interface WindowsTrustedShellCapabilityOptions {
