@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ProviderContractError } from "@candy/pi-adapter";
-import { resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
+import { InMemoryCredentialStore, resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
 import type {
   CommandValidatorCommand,
   ValidatorResult,
@@ -108,6 +108,51 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
     assert.equal(terminal.stopped, true);
     assert.equal(terminal.drainCalls, 1);
     assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI manages OS credential presence without reading back secrets", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credentials-"));
+  const terminal = new FakeTerminal();
+  const credentials = new InMemoryCredentialStore();
+  const environment = { [["CANDY", "DEEPSEEK", "API", "KEY"].join("_")]: "test-secret" };
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      credentialStore: credentials,
+      credentialEnvironment: environment,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":credentials");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek: absent/u);
+    terminal.emitInput(":credential set deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential set \(present\)/u);
+    terminal.emitInput(":credential replace deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential replace \(present\)/u);
+    terminal.emitInput(":credential delete deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential deleted/u);
+    terminal.emitInput(":credential set deepseek test-secret");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /credential rejected/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(credentials.has("deepseek"), "absent");
+    assert.doesNotMatch(output, /test-secret/u);
+    assert.doesNotMatch(terminal.writes.join(""), /test-secret/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -15,7 +15,11 @@ import {
 } from "@candy/pi-adapter";
 import {
   type CandyModelId,
+  type CredentialName,
+  type CredentialStore,
+  CANDY_CREDENTIAL_ENV_KEYS,
   DEFAULT_CANDY_MODEL,
+  KeyringCredentialStore,
   NativeProcessRunner,
   type NativeProcessRequest,
   type NativeProcessResult,
@@ -126,6 +130,8 @@ export interface InteractiveTuiOptions {
   readonly validatorCommand?: CommandValidatorCommand;
   readonly validatorTimeoutMs?: number;
   readonly activeSecrets?: () => readonly string[];
+  readonly credentialStore?: CredentialStore;
+  readonly credentialEnvironment?: NodeJS.ProcessEnv;
   readonly shellRunner?: TuiShellRunner;
   /** Set only by a composition root after the platform-specific G2 gate passes. */
   readonly trustedShellAutoAvailable?: boolean;
@@ -231,6 +237,8 @@ export class InteractiveTui {
   readonly #validator: TuiValidator | undefined;
   readonly #validatorTimeoutMs: number;
   readonly #activeSecretsProvider: (() => readonly string[]) | undefined;
+  readonly #credentialStore: CredentialStore;
+  readonly #credentialEnvironment: NodeJS.ProcessEnv;
   readonly #shellRunner: TuiShellRunner | undefined;
   readonly #trustedShellAutoAvailable: boolean;
   readonly #controllers = new Map<string, TaskController>();
@@ -272,6 +280,8 @@ export class InteractiveTui {
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
     this.#activeSecretsProvider = options.activeSecrets;
+    this.#credentialStore = options.credentialStore ?? new KeyringCredentialStore();
+    this.#credentialEnvironment = options.credentialEnvironment ?? process.env;
     this.#attachments =
       options.attachmentStore ??
       new AttachmentStore(paths.attachments, Date.now, (content) =>
@@ -305,7 +315,11 @@ export class InteractiveTui {
       const deepseek = new PiAgentEngine(
         paths.sessions,
         async () => {
-          const lease = resolveCredential("deepseek");
+          const lease = resolveCredential(
+            "deepseek",
+            this.#credentialEnvironment,
+            this.#credentialStore,
+          );
           return lease ? { secret: lease.value, release: lease.release } : undefined;
         },
         "deepseek",
@@ -314,7 +328,11 @@ export class InteractiveTui {
       const minimax = new MiniMaxPiAgentEngine(
         paths.sessions,
         async () => {
-          const lease = resolveCredential("minimax-cn");
+          const lease = resolveCredential(
+            "minimax-cn",
+            this.#credentialEnvironment,
+            this.#credentialStore,
+          );
           return lease ? { secret: lease.value, release: lease.release } : undefined;
         },
         this.#shellRunner,
@@ -338,7 +356,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
       "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
@@ -390,6 +408,10 @@ export class InteractiveTui {
       });
     } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
       this.showTranscript(trimmed.slice(11).trim());
+    } else if (trimmed === ":credentials" || trimmed === ":credential") {
+      this.showCredentials();
+    } else if (trimmed.startsWith(":credential ")) {
+      this.configureCredential(trimmed.slice(12).trim());
     } else if (trimmed === ":model" || trimmed.startsWith(":model ")) {
       this.configureModel(trimmed.slice(6).trim());
     } else if (trimmed === ":attach" || trimmed.startsWith(":attach ")) {
@@ -659,6 +681,50 @@ export class InteractiveTui {
     }
     this.#workspacePath = await realpath(candidate);
     this.write(`workspace selected: ${this.#workspacePath}\n`);
+  }
+
+  private showCredentials(): void {
+    const lines = (["deepseek", "minimax-cn"] as const).map((name) => {
+      try {
+        return `${name}: ${this.#credentialStore.has(name)}`;
+      } catch {
+        return `${name}: unavailable`;
+      }
+    });
+    this.write(`credentials (OS store presence only)\n${lines.join("\n")}\n`);
+  }
+
+  private configureCredential(value: string): void {
+    const [action, requestedName, ...extra] = value.split(/\s+/u).filter((part) => part.length > 0);
+    if (extra.length > 0) {
+      this.write(
+        "credential rejected: provide no credential value; use the Candy-owned temporary environment\n",
+      );
+      return;
+    }
+    const name = parseCredentialName(requestedName);
+    if ((action !== "set" && action !== "replace" && action !== "delete") || name === undefined) {
+      this.write("credential usage: :credential set|replace|delete <deepseek|minimax-cn>\n");
+      return;
+    }
+    try {
+      if (action === "delete") {
+        this.#credentialStore.delete(name);
+        this.write(`${name} credential deleted\n`);
+        return;
+      }
+      const environmentName = CANDY_CREDENTIAL_ENV_KEYS[name];
+      const temporary = this.#credentialEnvironment[environmentName];
+      if (temporary === undefined) {
+        this.write(`${name} credential unavailable: set ${environmentName} for this operation\n`);
+        return;
+      }
+      if (action === "set") this.#credentialStore.set(name, temporary);
+      else this.#credentialStore.replace(name, temporary);
+      this.write(`${name} credential ${action} (present)\n`);
+    } catch (error) {
+      this.write(`${name} credential operation rejected: ${credentialStoreError(error)}\n`);
+    }
   }
 
   private configureModel(value: string): void {
@@ -1205,7 +1271,11 @@ export class InteractiveTui {
     const leases: NonNullable<ReturnType<typeof resolveCredential>>[] = [];
     for (const provider of ["deepseek", "minimax-cn"] as const) {
       try {
-        const lease = resolveCredential(provider);
+        const lease = resolveCredential(
+          provider,
+          this.#credentialEnvironment,
+          this.#credentialStore,
+        );
         if (lease !== undefined) leases.push(lease);
       } catch {
         // Presence is optional; the provider path reports needs_credentials when used.
@@ -1220,7 +1290,7 @@ export class InteractiveTui {
 
   private activeSecretsSnapshot(): readonly string[] {
     if (this.#activeSecretsProvider !== undefined) return this.#activeSecretsProvider();
-    return resolveActiveTuiProviderSecrets();
+    return resolveActiveTuiProviderSecrets(this.#credentialEnvironment, this.#credentialStore);
   }
 
   private hasActiveProviderSecret(value: string): boolean {
@@ -2133,11 +2203,25 @@ function containsCredentialMaterial(value: string): boolean {
   );
 }
 
-function resolveActiveTuiProviderSecrets(): readonly string[] {
+function parseCredentialName(value: string | undefined): CredentialName | undefined {
+  if (value === "deepseek") return "deepseek";
+  if (value === "minimax" || value === "minimax-cn") return "minimax-cn";
+  return undefined;
+}
+
+function credentialStoreError(error: unknown): string {
+  if (error instanceof Error && /already exists|invalid/u.test(error.message)) return error.message;
+  return "OS credential store unavailable";
+}
+
+function resolveActiveTuiProviderSecrets(
+  environment: NodeJS.ProcessEnv,
+  store: CredentialStore,
+): readonly string[] {
   const leases: NonNullable<ReturnType<typeof resolveCredential>>[] = [];
   for (const provider of ["deepseek", "minimax-cn"] as const) {
     try {
-      const lease = resolveCredential(provider);
+      const lease = resolveCredential(provider, environment, store);
       if (lease !== undefined) leases.push(lease);
     } catch {
       // Presence is optional; the provider path reports needs_credentials when used.
