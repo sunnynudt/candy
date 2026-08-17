@@ -35,6 +35,7 @@ const steps = [
   "smoke:tui:pi:cancellation",
   "smoke:tui-task",
   "smoke:tui:journey:windows",
+  "smoke:tui:terminal:windows",
   "smoke:credential-manager:windows",
   "smoke:native:windows",
 ];

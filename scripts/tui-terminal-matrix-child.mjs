@@ -1,5 +1,15 @@
 import { InteractiveTui } from "../apps/tui/dist/main.js";
 
+// The ConPTY bridge closes the pseudo-console output pipe as its host process
+// exits. A late terminal stop() write (e.g. showCursor) can then surface as
+// EPIPE during Node teardown. In a real interactive terminal the pipe stays
+// open, so this is a harness-only edge: swallow EPIPE so the matrix exit code
+// stays truthful, and rethrow anything else.
+process.on("uncaughtException", (error) => {
+  if (error instanceof Error && error.code === "EPIPE") return;
+  throw error;
+});
+
 const appDataRoot = process.env.CANDY_TERMINAL_MATRIX_APP_DATA_ROOT;
 const workspacePath = process.env.CANDY_TERMINAL_MATRIX_WORKSPACE;
 const mode = process.env.CANDY_TERMINAL_MATRIX_MODE;
