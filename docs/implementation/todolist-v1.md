@@ -4,13 +4,13 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前 HEAD `89b261f` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **213/213**。Issue #4 安全修复 checkpoint：`d517729` 统一凭据检测/脱敏、provider redirect fail-closed 和 Shell publication guard；`2172da5` 将 Task Worktree Git metadata 绑定到 Candy 从原始仓库解析的 common directory；`6c06118` 让 workspace 文件读写/搜索使用 guarded file handles；`89b261f` 增加 AGENTS/resource guarded read、Worktree canonical parent/candidate containment、Apply Changes 逐级安全目录创建及回归测试。当前 HEAD 的 live DeepSeek 通过 **7/7**，国内 MiniMax 通过 **8/8**。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11 仍待目标主机；最终独立安全扫描仍为 incomplete，`.omo/` 保持用户-owned 未跟踪。
+当前 HEAD `b672d5a` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **213/213**。Issue #4 安全修复 checkpoint：`d517729` 统一凭据检测/脱敏、provider redirect fail-closed 和 Shell publication guard；`2172da5` 将 Task Worktree Git metadata 绑定到 Candy 从原始仓库解析的 common directory；`6c06118` 让 workspace 文件读写/搜索使用 guarded file handles；`89b261f` 增加 AGENTS/resource guarded read、Worktree canonical parent/candidate containment、Apply Changes 逐级安全目录创建及回归测试；`b672d5a` 增加 workspace 目录逐级创建、canonical parent containment 及 symlink/junction mkdir/write 回归。当前 HEAD 的 live DeepSeek 通过 **7/7**，国内 MiniMax 通过 **8/8**。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11 仍待目标主机；最终独立安全扫描仍为 incomplete，`.omo/` 保持用户-owned 未跟踪。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-`89b261f` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，source revision 为 `89b261f66cfc0c283a8e86e275162054e7d8a61e`，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **213/213**；`npm run acceptance:macos:baseline` 在当前 `26.6.1` 主机正确以 preflight blocked 结束。下方较早的结果仅保留为历史 checkpoint 证据。
+`b672d5a` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，source revision 为 `b672d5a7e0f08c6b5dfe6f1c8299c88be79f40f2`，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **213/213**；`npm run acceptance:macos:baseline` 在当前 `26.6.1` 主机正确以 preflight blocked 结束。下方较早的结果仅保留为历史 checkpoint 证据。
 
 `a28606c` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **203/203**；新增 retry 成功投影、compaction 到 settled 顺序和已取消 turn 不启动 provider 的证据。
 
