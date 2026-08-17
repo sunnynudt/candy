@@ -1091,6 +1091,9 @@ async function snapshotNonGitTree(
       throw new NonGitWorkspaceSnapshotLimitError(
         "Non-Git workspace snapshot exceeded its depth limit.",
       );
+    const directoryMetadata = await lstat(directory).catch(() => undefined);
+    if (directoryMetadata === undefined) return;
+    if (directoryMetadata.isSymbolicLink() || !directoryMetadata.isDirectory()) return;
     const handle = await opendir(directory).catch(() => undefined);
     if (handle === undefined) return;
     try {
@@ -1104,12 +1107,19 @@ async function snapshotNonGitTree(
         const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
         if (entry.isDirectory()) {
           if (NON_GIT_IGNORED_DIRECTORIES.has(entry.name)) continue;
+          const childMetadata = await lstat(absolute).catch(() => undefined);
+          if (
+            childMetadata === undefined ||
+            childMetadata.isSymbolicLink() ||
+            !childMetadata.isDirectory()
+          )
+            continue;
           await visit(absolute, relative, depth + 1);
           continue;
         }
         if (!entry.isFile()) continue;
-        const metadata = await stat(absolute).catch(() => undefined);
-        if (metadata === undefined) continue;
+        const metadata = await lstat(absolute).catch(() => undefined);
+        if (metadata === undefined || metadata.isSymbolicLink() || !metadata.isFile()) continue;
         filesSeen += 1;
         if (filesSeen > limits.maxFiles)
           throw new NonGitWorkspaceSnapshotLimitError(

@@ -391,6 +391,27 @@ test("non-Git workspace snapshots fail closed at configured aggregate limits", a
   }
 });
 
+test("non-Git workspace snapshots do not follow replaced or pre-existing symlink entries", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-links-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-links-outside-"));
+  try {
+    writeFileSync(path.join(outside, "secret.txt"), "outside");
+    await mkdir(path.join(outside, "nested"));
+    writeFileSync(path.join(outside, "nested", "secret.txt"), "outside nested");
+    writeFileSync(path.join(root, "safe.txt"), "inside");
+    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
+    await symlink(path.join(outside, "nested"), path.join(root, "linked-directory"), "dir");
+
+    const tracker = new NonGitWorkspaceChangeTracker();
+    await tracker.captureBaseline(root);
+    const changes = await tracker.inspect(root);
+    assert.deepEqual(changes.tracked, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("attachment store applies a credential guard before persisting bytes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-guard-"));
   const store = new AttachmentStore(root, Date.now, () => true);
