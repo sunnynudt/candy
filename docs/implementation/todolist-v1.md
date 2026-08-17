@@ -120,6 +120,9 @@
 
 ## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
 
+- ☑️ 2026-08-17 Windows 真实 ConPTY 终端矩阵：新增 `smoke:tui:terminal:windows`，通过 `scripts/pty-host.ps1`（PowerShell Add-Type P/Invoke 创建 Windows 官方 ConPTY，零第三方依赖，与 Windows Terminal 同机制）驱动真实伪终端下的 TUI，覆盖中文 UTF-8 输入、bracketed paste、`:new`、Ctrl+C 取消、运行时失败恢复、启动失败安全退出与 `:quit`，并验证任务状态与凭据自由证据。
+  证据：当前 HEAD `npm run acceptance:windows` **17/17**，`npm run check` **239/239 + 2 skip**；报告为 `out/acceptance/windows/latest.md`（脱敏，gitignored）。
+
 - ☑️ 2026-08-17 Windows 跨驱动器 containment 修复与 16/16 验收：修复 `path.relative` 跨驱动器返回绝对路径被误判为“在内部”的缺陷（TUI app-data overlap、restricted resource loader、Pi session-file 三处 containment 检查）；目录链接 fixture 在 Windows 普通会话改用 junction，文件 symlink 断言在无 Developer Mode 时显式 skip（2 个），不把 EPERM 当 Pass。
   证据：当前 HEAD `npm run acceptance:windows` **16/16**，`npm run check` **239/239 + 2 skip**；报告为 `out/acceptance/windows/latest.md`（脱敏，gitignored）。真实 DeepSeek/MiniMax Windows 旅程、MiniMax Windows live Gate、真实账户 Credential Manager 生命周期、Developer Mode reparse 矩阵、独立 G2 与最终验收仍待完成。
 
