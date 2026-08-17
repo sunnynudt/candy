@@ -58,6 +58,7 @@ const steps = [
   "check:native",
   "measure:tui:responsiveness",
   "smoke:tui:launcher",
+  "smoke:tui:credentials",
   "smoke:tui-task",
   "smoke:tui:journey:macos",
   "smoke:tui:terminal:macos",

@@ -27,6 +27,7 @@ const steps = [
   "check:native",
   "measure:tui:responsiveness",
   "smoke:tui:launcher",
+  "smoke:tui:credentials",
   "smoke:tui-task",
   "smoke:tui:journey:windows",
   "smoke:credential-manager:windows",
