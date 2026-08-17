@@ -14,6 +14,8 @@ Post-compaction-cancellation evidence: `npm run check` passes **205/205**; the T
 
 Post-production-Pi-compaction evidence: `npm run check` passes **207/207**; production Pi fixtures cover overflow recovery and cancellation during an in-flight compaction request.
 
+Post-live-provider-revalidation evidence: source revision `7f2d967` passes the Candy-owned DeepSeek Gate **7/7** and domestic MiniMax Gate **8/8**; sanitized reports are bound to this revision.
+
 Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Implementation checkpoint `819d8a7` wires the Windows 11 toolchain gate and a Windows-only core TUI journey covering Auto Worktree, Apply, and restart no-replay; `c632f74` adds platform OS-store TUI credential lifecycle smoke with presence-only output; `456bab2` adds a real PiAgentEngine-backed deterministic TUI journey covering the approved DeepSeek endpoint, Candy-owned task/session persistence, and session credential exclusion; `737d7d7` adds a Pi-backed `candy_write` tool-loop journey covering workspace mutation and post-tool provider completion; `34ae949` adds credential revocation evidence covering delete, next-turn `needs_credentials`, no follow-up provider request, preserved history, and credential-free session data; `a36aac4` persists bounded workspace review metadata and adds real Pi coding review/restart/Apply evidence; `54b54c1` adds real Pi provider-stream cancellation with abort propagation and no false completion; the production Pi compaction checkpoint adds overflow recovery and in-flight compaction cancellation evidence. The separately bound current macOS acceptance is 14/14 on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`, deterministic check 207/207, the TUI-only ten-run responsiveness gate passing, and bounded, credential-redacted TUI tool arguments and output covered by tests. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
@@ -74,7 +76,12 @@ Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macO
 - Production `PiAgentEngine` fixtures now cover context overflow, compaction summary completion, continuation, and cancellation while the compaction provider request is unsettled. The cancellation path rejects as cancelled and emits no false completion.
 - `npm run check` passes **207/207** on the pinned Node `22.23.2`/npm `10.9.8` toolchain. Remaining blockers are Windows 11, exact macOS `26.5.2`, native Trusted Shell G2, live-provider revalidation on this revision, signing, and final V1 acceptance.
 
-## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
+## 2026-08-17 Issue #4 live provider revalidation checkpoint (source `7f2d967`)
+
+- The Candy-owned DeepSeek live Gate passes **7/7** against `https://api.deepseek.com`; the domestic MiniMax live Gate passes **8/8** against `https://api.minimaxi.com`. Both reports cover cancellation, controlled error contracts, secret-free session scanning, and secret-lease release; MiniMax also covers the image and thinking/tool paths.
+- Reports are sanitized and source-bound to `7f2d967`. This closes current-host provider revalidation only; Windows 11, exact macOS `26.5.2`, native Trusted Shell G2, signing, and final V1 acceptance remain open.
+
+## 2026-08-17 Issue #4 historical live provider checkpoint (source `b23383a`)
 
 - Source revision `b23383a` passes the Candy-owned DeepSeek live gate **7/7** against `https://api.deepseek.com`, covering streaming, tool/replay, cancellation, controlled error contracts, secret-free session scanning, and secret-lease release.
 - The same revision passes the domestic MiniMax live gate **8/8** against `https://api.minimaxi.com`, covering text, image, thinking/tool replay, cancellation, controlled error contracts, `LIVE-MM-05` product policy, secret-free session scanning, and secret-lease release.

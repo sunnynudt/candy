@@ -20,6 +20,8 @@
 
 新增生产 Pi 确定性证据：`PiAgentEngine` 在 context overflow 后完成 compaction summary 并继续当前 turn；compaction provider request 未完成时取消会 fail as cancelled，且不投影 `turn.completed`。
 
+新增当前 revision provider 证据：`7f2d967` 的 Candy-owned DeepSeek live Gate 通过 **7/7**，国内 MiniMax live Gate 通过 **8/8**；报告仅保留脱敏摘要。
+
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
 - `456bab2` 新增 `smoke:tui:pi`：使用 Candy 生产 `PiAgentEngine` 和真实 Candy TUI 控制环，以 mock DeepSeek SSE 保持确定性；断言只访问 `https://api.deepseek.com/chat/completions`，Pi 响应投影到 TUI，任务/transcript 写入 Candy-owned SQLite/session storage，并扫描 session 内容确认 fixture credential 未进入持久化数据。
@@ -73,7 +75,12 @@
 - 新增 production `PiAgentEngine` fixture，覆盖 context overflow、compaction summary、continuation，以及 compaction provider request 未完成时的取消；取消路径返回 cancelled 且没有 false completion。
 - 固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 通过 **207/207**。Windows 11、精确 macOS `26.5.2`、native Trusted Shell G2、新 revision live-provider、签名发布和最终 V1 acceptance 仍未完成。
 
-## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
+## 2026-08-17 Issue #4 live provider revalidation checkpoint (source `7f2d967`)
+
+- 当前 revision 的 Candy-owned DeepSeek live Gate 通过 **7/7**，国内 MiniMax live Gate 通过 **8/8**；两者均覆盖取消、受控错误契约、session 无凭据扫描和 lease release，MiniMax 另覆盖图片与 thinking/tool replay。
+- 报告位于 `out/acceptance/live/`，仅保留脱敏摘要并绑定 `7f2d967`。该 checkpoint 只关闭当前主机 provider revalidation；Windows 11、精确 macOS `26.5.2`、G2、签名发布和最终 V1 acceptance 仍未完成。
+
+## 2026-08-17 Issue #4 historical live provider checkpoint (source `b23383a`)
 
 - source revision `b23383a` 的 Candy-owned DeepSeek live gate 通过 **7/7**，使用批准的 `https://api.deepseek.com`，覆盖 streaming、tool/replay、cancellation、受控错误合同、session 无凭据扫描和 lease release。
 - 同一 revision 的国内 MiniMax live gate 通过 **8/8**，使用 `https://api.minimaxi.com`，覆盖 text、image、thinking/tool replay、cancellation、受控错误合同、`LIVE-MM-05` 产品策略、session 无凭据扫描和 lease release。
