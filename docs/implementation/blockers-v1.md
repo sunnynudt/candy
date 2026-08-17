@@ -2,7 +2,13 @@
 
 Updated: 2026-08-17
 
-Post-`7489139` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **236/236** on Node `22.23.2`/npm `10.9.8`. TUI attachment import now reads through a bounded opened handle after regular-file and no-follow final validation. Current-HEAD scan `e268e95b-fb60-482f-84e2-38659a98c411` completed against `2e77fb4` with parent-thread fallback and reported **6 open findings (4 medium, 2 low)**; it is not a security clearance. Its attachment-source finding is addressed by `7489139`; descriptor-relative/reparse-safe workspace/apply/worktree/session/non-Git races and nested-interpreter Trusted Shell publication policy remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`1bcdd9f` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **237/237** on Node `22.23.2`/npm `10.9.8`. Non-Git snapshot enumeration now rejects symlink and non-regular entries before descent or recording. Current-HEAD scan `e268e95b-fb60-482f-84e2-38659a98c411` completed against `2e77fb4` with parent-thread fallback and reported **6 open findings (4 medium, 2 low)**; it is not a security clearance. Its attachment-source finding is addressed by `7489139`, and the ordinary symlink-follow route in non-Git snapshots is covered by `1bcdd9f`; descriptor-relative/reparse-safe workspace/apply/worktree/session and residual non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `1bcdd9f` non-Git snapshot checkpoint
+
+- Code checkpoint `1bcdd9f2fd51bd97d45b9f9279ad869e472c5f2f` is pushed and matches `origin/codex/candy-v1-foundation`. Non-Git snapshots lstat the root and children, reject symlinks and non-regular entries, and do not recurse through symlinked directories; the new regression confirms outside-root symlink content is not captured.
+- Focused runtime tests pass **31/31**, full `npm run check` passes **237/237**, and post-push macOS acceptance passes **14/14** at source revision `1bcdd9f2fd51bd97d45b9f9279ad869e472c5f2f`.
+- This is a narrow symlink-follow hardening checkpoint, not proof of full descriptor-relative or OS-level replacement-race safety. Remaining blockers include workspace/apply/worktree/session races, residual non-Git race analysis, nested-interpreter Trusted Shell publication policy, Windows 11, exact macOS `26.5.2`, independent G2, signed release, and final V1 acceptance. `.omo/` remains user-owned, untracked, and preserved.
 
 ## 2026-08-17 Issue #4 `7489139` attachment-source checkpoint
 
