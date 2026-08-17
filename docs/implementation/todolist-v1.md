@@ -48,7 +48,7 @@
 - 新增 TUI 回归覆盖模板列表、带空格参数、active secret 脱敏、未知模板和参数边界；固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 通过 **201/201**。
 - 该 checkpoint 只补齐 Issue #4 user story #27 的确定性实现证据；Windows 11、精确 macOS `26.5.2`、新 revision 的 live-provider 重跑、G2、签名和最终 V1 acceptance 仍未完成。
 
-## 2026-08-17 Issue #4 current-HEAD live provider checkpoint
+## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
 
 - source revision `b23383a` 的 Candy-owned DeepSeek live gate 通过 **7/7**，使用批准的 `https://api.deepseek.com`，覆盖 streaming、tool/replay、cancellation、受控错误合同、session 无凭据扫描和 lease release。
 - 同一 revision 的国内 MiniMax live gate 通过 **8/8**，使用 `https://api.minimaxi.com`，覆盖 text、image、thinking/tool replay、cancellation、受控错误合同、`LIVE-MM-05` 产品策略、session 无凭据扫描和 lease release。

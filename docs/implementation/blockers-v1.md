@@ -44,7 +44,7 @@ Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macO
 - `npm run check` passes **201/201** on Node `22.23.2`/npm `10.9.8`; the new regression covers listing, quoted expansion, secret redaction, unknown-template rejection, and the argument bound.
 - This closes the deterministic implementation gap for Issue #4 user story #27 only. It does not close Windows 11, exact macOS `26.5.2`, live-provider revalidation on this revision, G2, signing, or final V1 acceptance.
 
-## 2026-08-17 Issue #4 current-HEAD live provider checkpoint
+## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
 
 - Source revision `b23383a` passes the Candy-owned DeepSeek live gate **7/7** against `https://api.deepseek.com`, covering streaming, tool/replay, cancellation, controlled error contracts, secret-free session scanning, and secret-lease release.
 - The same revision passes the domestic MiniMax live gate **8/8** against `https://api.minimaxi.com`, covering text, image, thinking/tool replay, cancellation, controlled error contracts, `LIVE-MM-05` product policy, secret-free session scanning, and secret-lease release.
