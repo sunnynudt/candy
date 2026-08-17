@@ -2,7 +2,12 @@
 
 Updated: 2026-08-17
 
-Post-`6f63c3e` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **239/239** on Node `22.23.2`/npm `10.9.8`. Workspace file reads/writes now rebind the selected root and opened file after validation, and non-Git snapshots recheck traversed directory identity. Fresh current-HEAD scan `631e277f-7272-4d06-9d00-70f486f0a0ab` is bound to `6f63c3e`, completed with parent fallback, and reports **5 open findings (4 medium, 1 low)**; it is partial and not a security clearance because independent workers were unavailable. Its attachment-source finding is addressed by `7489139`, the ordinary non-Git symlink route by `1bcdd9f`, and the pre-existing session symlink route by `e6170b6`; descriptor-relative/reparse-safe workspace directory, Apply/worktree, residual session and file-level non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`2c4215b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`. Root identity/canonical rechecks now surround Git worktree and Apply Changes operations. Standard scan `b5bec00b-b140-4241-8fd2-9c8252f8ffb8` is bound to `2c4215b`, completed with parent fallback, and reports **5 open findings (4 medium, 1 low)**; it is not a security clearance because the independent baseline worker could not start. Remaining blockers are descriptor-relative/reparse-safe workspace, worktree, Apply, session-manager and non-Git file-level races, plus conditional Trusted Shell descendant-publication policy. Exact macOS `26.5.2` is blocked on this `26.6.1` host; Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `2c4215b` Apply/worktree checkpoint
+
+- Code checkpoint `2c4215bb4ba8be85dd8860c4f68550df4b2a11e0` is pushed to and matches `origin/codex/candy-v1-foundation`. Full `npm run check` passes **241/241**; current macOS acceptance passes **14/14** at source revision `2c4215b` on macOS `26.6.1` arm64 with a passing real-PTY terminal matrix.
+- The new root binding closes common root replacement windows around Git and Apply commands but does not establish atomic descriptor-relative or Windows reparse-safe execution. The current scan keeps five source-backed residual findings open. Windows 11, exact macOS `26.5.2`, independent G2, signing, final V1 acceptance, and `.omo/` preservation boundaries remain open gates.
 
 ## 2026-08-17 Issue #4 `6f63c3e` workspace binding checkpoint
 
