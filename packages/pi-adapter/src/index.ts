@@ -1,15 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import {
-  access,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { access, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import {
@@ -623,6 +620,7 @@ export interface CandyNetworkOperationsOptions {
 }
 
 const WINDOWS_GIT_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
+const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
 
 export function createCandyBashOperations(
   workspaceRoot: string,
@@ -1042,8 +1040,7 @@ export function createCandyWorkspaceOperations(
   const root = path.resolve(workspaceRoot);
   return {
     readFile: async (absolutePath) => {
-      await assertWorkspacePath(root, absolutePath, false);
-      return readFile(absolutePath);
+      return readWorkspaceFile(root, absolutePath);
     },
     access: async (absolutePath) => {
       await assertWorkspacePath(root, absolutePath, false);
@@ -1056,7 +1053,7 @@ export function createCandyWorkspaceOperations(
         activeSecrets.some((secret) => secret.length > 0 && content.includes(secret))
       )
         throw new Error("Provider credentials are forbidden in workspace writes.");
-      await writeFile(absolutePath, content, "utf8");
+      await writeWorkspaceFile(root, absolutePath, content);
     },
     mkdir: async (directory) => {
       await assertWorkspacePath(root, directory, true);
@@ -1290,7 +1287,7 @@ function createCandyWorkspaceBrowseTools(
           truncated = true;
           break;
         }
-        const buffer = await readFile(current.absolutePath);
+        const buffer = await readWorkspaceFile(root, current.absolutePath);
         throwIfToolAborted(signal);
         if (buffer.includes(0)) continue;
         let content: string;
@@ -1631,6 +1628,41 @@ function sameFileSnapshot(
     before.size === after.size &&
     before.mtimeMs === after.mtimeMs
   );
+}
+
+async function readWorkspaceFile(root: string, absolutePath: string): Promise<Buffer> {
+  await assertWorkspacePath(root, absolutePath, false);
+  const handle = await open(absolutePath, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw new Error("Workspace reads require a regular file.");
+    const current = await lstat(absolutePath);
+    if (!sameFileSnapshot(opened, current))
+      throw new Error("Workspace file changed while it was being opened.");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeWorkspaceFile(
+  root: string,
+  absolutePath: string,
+  content: string,
+): Promise<void> {
+  const handle = await open(
+    absolutePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NO_FOLLOW_FINAL_PATH,
+    0o666,
+  );
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw new Error("Workspace writes require a regular file.");
+    await assertWorkspacePath(root, absolutePath, false);
+    await handle.writeFile(content, "utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 async function assertWorkspacePath(
