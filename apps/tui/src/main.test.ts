@@ -170,7 +170,10 @@ test("interactive TUI exposes sanitized provider recovery actions", async () => 
     assert.ok(taskId);
     assert.match(
       output,
-      new RegExp(`recovery: :resume ${taskId}, :model deepseek-pro, or :cancel`, "u"),
+      new RegExp(
+        `recovery: :resume ${taskId} <continuation>[\\s\\S]*deepseek-pro[\\s\\S]*:cancel`,
+        "u",
+      ),
     );
     assert.doesNotMatch(output, /fixture-secret|Bearer\s+|sk-proj-/iu);
     terminal.emitInput(`:cancel ${taskId}`);
@@ -912,6 +915,84 @@ test("interactive TUI restores a task and its transcript before continuing after
       { role: "assistant", text: "second persisted answer" },
     ]);
     after.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI never replays an interrupted prompt and requires explicit continuation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-explicit-recovery-"));
+  const firstTerminal = new FakeTerminal();
+  try {
+    const firstRun = new InteractiveTui({
+      appDataRoot: root,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "partial side-effect evidence",
+          };
+          throw new Error("ambiguous side effect");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("perform the original operation");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /ambiguous side effect/u);
+    const taskId = firstOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const calls: string[] = [];
+    let recoverPromptCalls = 0;
+    const secondRun = new InteractiveTui({
+      appDataRoot: root,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "safe continuation" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+        async recoverPrompt() {
+          recoverPromptCalls += 1;
+          return "replay the interrupted operation";
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    secondTerminal.emitInput(`:resume ${taskId}`);
+    secondTerminal.emitInput("\r");
+    const evidence = await waitForOutput(
+      secondTerminal,
+      new RegExp(
+        `${taskId} requires an explicit continuation[\\s\\S]*partial side-effect evidence`,
+        "u",
+      ),
+    );
+    assert.match(evidence, /perform the original operation/u);
+    assert.equal(calls.length, 0);
+    assert.equal(recoverPromptCalls, 0);
+
+    secondTerminal.emitInput(
+      `:resume ${taskId} inspect the saved evidence before taking any new action`,
+    );
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /safe continuation/u);
+    assert.deepEqual(calls, ["inspect the saved evidence before taking any new action"]);
+    assert.equal(recoverPromptCalls, 0);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
   } finally {
     await rm(root, { recursive: true, force: true });
   }

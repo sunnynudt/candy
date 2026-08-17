@@ -175,6 +175,7 @@ export interface TuiShellRunner {
 
 export interface TuiAgentEngine {
   runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
+  /** Retained for compatibility with embedders; TUI recovery never calls it. */
   recoverPrompt?(taskId: string, cwd: string): Promise<string | undefined>;
 }
 
@@ -231,7 +232,6 @@ export class InteractiveTui {
   readonly #shellRunner: TuiShellRunner | undefined;
   readonly #trustedShellAutoAvailable: boolean;
   readonly #controllers = new Map<string, TaskController>();
-  readonly #prompts = new Map<string, string>();
   readonly #abortControllers = new Map<string, AbortController>();
   readonly #taskRuns = new Map<string, Promise<void>>();
   readonly #validatorAbortControllers = new Map<string, AbortController>();
@@ -336,7 +336,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
       "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
@@ -435,7 +435,12 @@ export class InteractiveTui {
     } else if (trimmed.startsWith(":pause ")) {
       this.pause(trimmed.slice(7).trim());
     } else if (trimmed.startsWith(":resume ")) {
-      this.resume(trimmed.slice(8).trim());
+      const resumeValue = trimmed.slice(8).trim();
+      const separator = resumeValue.indexOf(" ");
+      this.resume(
+        separator < 0 ? resumeValue : resumeValue.slice(0, separator),
+        separator < 0 ? undefined : resumeValue.slice(separator + 1).trim(),
+      );
     } else if (trimmed.startsWith(":cancel ")) {
       void this.cancel(trimmed.slice(8).trim()).catch((error: unknown) => {
         this.write(`cancel rejected: ${safeError(error)}\n`);
@@ -540,7 +545,6 @@ export class InteractiveTui {
     this.#selectedAttachmentIds = [];
     const controller = new TaskController(taskId, approvalProfile, this.#store);
     this.#controllers.set(taskId, controller);
-    this.#prompts.set(taskId, prompt);
     this.#currentTaskId = taskId;
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
@@ -618,7 +622,6 @@ export class InteractiveTui {
       return;
     }
     task.queueForContinuation(snapshot.revision);
-    this.#prompts.set(currentTaskId, prompt);
     this.#scheduler.enqueue(currentTaskId);
     this.write(`continuing ${currentTaskId}\n`);
     this.drain(new Map([[currentTaskId, prompt]]));
@@ -1280,13 +1283,10 @@ export class InteractiveTui {
             : "Trusted Shell Auto is disabled pending the macOS G2 gate.",
         );
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
-      const prompt =
-        explicitPrompt ??
-        this.#prompts.get(taskId) ??
-        (await this.#engine.recoverPrompt?.(taskId, executionPath));
-      if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
+      const prompt = explicitPrompt;
+      if (prompt === undefined)
+        throw new Error("Explicit continuation required; the interrupted prompt was not replayed.");
       if (explicitPrompt !== undefined) {
-        this.#prompts.set(taskId, explicitPrompt);
         this.#store.appendTranscript(taskId, [
           { role: "user", text: transcriptText(explicitPrompt) },
         ]);
@@ -1399,7 +1399,9 @@ export class InteractiveTui {
             throw error;
         }
         if (error instanceof ProviderContractError && stoppedState === "interrupted") {
-          this.write(`recovery: :resume ${taskId}, :model deepseek-pro, or :cancel ${taskId}\n`);
+          this.write(
+            `recovery: :resume ${taskId} <continuation>, :model deepseek-pro, or :cancel ${taskId}\n`,
+          );
         }
       }
     } finally {
@@ -1493,12 +1495,25 @@ export class InteractiveTui {
     }
   }
 
-  private resume(taskId: string): void {
+  private resume(taskId: string, continuation?: string): void {
     const task = this.#controllers.get(taskId);
     if (task?.snapshot().state === "paused" || task?.snapshot().state === "interrupted") {
+      if (continuation === undefined || continuation.length === 0) {
+        this.#currentTaskId = taskId;
+        this.write(
+          `${taskId} requires an explicit continuation; no interrupted prompt was replayed.\n`,
+        );
+        this.showTranscript(taskId);
+        this.write(`use :resume ${taskId} <continuation> after reviewing the saved evidence\n`);
+        return;
+      }
+      if (containsCredentialMaterial(continuation) || this.hasActiveProviderSecret(continuation)) {
+        this.write("continuation rejected: credential material is forbidden\n");
+        return;
+      }
       this.#scheduler.enqueue(taskId);
-      this.write(`${taskId} queued for resume\n`);
-      this.drain();
+      this.write(`${taskId} queued for explicit continuation\n`);
+      this.drain(new Map([[taskId, continuation]]));
     } else {
       this.write(`${taskId} is not resumable\n`);
     }
@@ -1783,10 +1798,6 @@ class TuiModelRouter implements TuiAgentEngine {
     signal: AbortSignal,
   ): AsyncIterable<PiAgentObservation> {
     return (input.model === "MiniMax-M3" ? this.minimax : this.deepseek).runTurn(input, signal);
-  }
-
-  public recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
-    return this.deepseek.recoverPrompt?.(taskId, cwd) ?? Promise.resolve(undefined);
   }
 }
 
