@@ -1617,6 +1617,28 @@ export interface PiImageInput {
 
 export type PiAgentObservation =
   | { readonly type: "turn.started"; readonly taskId: string }
+  | {
+      readonly type: "turn.retrying";
+      readonly taskId: string;
+      readonly attempt: number;
+      readonly maxAttempts: number;
+      readonly delayMs: number;
+    }
+  | {
+      readonly type: "turn.retry.completed";
+      readonly taskId: string;
+      readonly attempt: number;
+      readonly ok: boolean;
+    }
+  | {
+      readonly type: "turn.compaction";
+      readonly taskId: string;
+      readonly phase: "started" | "completed";
+      readonly reason: "manual" | "threshold" | "overflow";
+      readonly aborted?: boolean;
+      readonly willRetry?: boolean;
+    }
+  | { readonly type: "turn.settled"; readonly taskId: string }
   | { readonly type: "assistant.thinking.delta"; readonly taskId: string; readonly text: string }
   | { readonly type: "assistant.delta"; readonly taskId: string; readonly text: string }
   | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
@@ -1627,6 +1649,39 @@ export type PiAgentObservation =
       readonly ok: boolean;
     }
   | { readonly type: "turn.completed"; readonly taskId: string };
+
+export function projectPiLifecycleObservation(
+  event: piSdk.AgentSessionEvent,
+  taskId: string,
+): PiAgentObservation | undefined {
+  if (event.type === "auto_retry_start") {
+    return {
+      type: "turn.retrying",
+      taskId,
+      attempt: event.attempt,
+      maxAttempts: event.maxAttempts,
+      delayMs: event.delayMs,
+    };
+  }
+  if (event.type === "auto_retry_end") {
+    return { type: "turn.retry.completed", taskId, attempt: event.attempt, ok: event.success };
+  }
+  if (event.type === "compaction_start") {
+    return { type: "turn.compaction", taskId, phase: "started", reason: event.reason };
+  }
+  if (event.type === "compaction_end") {
+    return {
+      type: "turn.compaction",
+      taskId,
+      phase: "completed",
+      reason: event.reason,
+      aborted: event.aborted,
+      willRetry: event.willRetry,
+    };
+  }
+  if (event.type === "agent_settled") return { type: "turn.settled", taskId };
+  return undefined;
+}
 
 /**
  * Pi-backed runtime path. Only the documented coding-agent root SDK is used;
@@ -1782,9 +1837,16 @@ export class PiAgentEngine {
       }
       const events = new AsyncEventQueue<piSdk.AgentSessionEvent>();
       const unsubscribe = session.subscribe((event) => events.push(event));
-      const abort = (): void => session?.agent.abort();
+      const abort = (): void => {
+        session?.agent.abort();
+        session?.abortRetry();
+        session?.abortCompaction();
+        session?.abortBranchSummary();
+        session?.abortBash();
+      };
       signal.addEventListener("abort", abort, { once: true });
       let promptError: Error | undefined;
+      let lastAssistantError: string | undefined;
       const promptPromise = session
         .prompt(
           input.prompt,
@@ -1809,6 +1871,11 @@ export class PiAgentEngine {
         for (;;) {
           const event = await events.next();
           if (event.done) break;
+          const lifecycleObservation =
+            event.value.type === "agent_settled"
+              ? undefined
+              : projectPiLifecycleObservation(event.value, input.taskId);
+          if (lifecycleObservation !== undefined) yield lifecycleObservation;
           if (event.value.type === "agent_start" && !started) {
             started = true;
             yield { type: "turn.started", taskId: input.taskId };
@@ -1841,15 +1908,20 @@ export class PiAgentEngine {
             };
           } else if (
             event.value.type === "message_end" &&
-            event.value.message.role === "assistant" &&
-            event.value.message.stopReason === "error"
+            event.value.message.role === "assistant"
           ) {
-            promptError ??= sanitizePiProviderError(
-              new Error(event.value.message.errorMessage ?? "Provider request failed."),
-            );
-          } else if (event.value.type === "agent_end") {
+            lastAssistantError =
+              event.value.message.stopReason === "error"
+                ? (event.value.message.errorMessage ?? "Provider request failed.")
+                : undefined;
+          } else if (event.value.type === "agent_settled") {
             await promptPromise;
+            if (signal.aborted) throw new Error("Pi agent turn cancelled.");
             if (promptError !== undefined) throw promptError;
+            if (lastAssistantError !== undefined) {
+              throw sanitizePiProviderError(new Error(lastAssistantError));
+            }
+            yield { type: "turn.settled", taskId: input.taskId };
             break;
           }
         }

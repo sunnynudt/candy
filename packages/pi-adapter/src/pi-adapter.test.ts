@@ -27,6 +27,8 @@ import {
   PI_COMPATIBILITY_VERSION,
   listPiPublicExports,
   PiAgentEngine,
+  type PiAgentObservation,
+  projectPiLifecycleObservation,
   parseMiniMaxSseLine,
   parseDeepSeekSseLine,
   ProviderContractError,
@@ -490,7 +492,7 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     );
   };
   try {
-    const observations = [];
+    const observations: PiAgentObservation[] = [];
     for await (const observation of new PiAgentEngine(root, async () => ({
       secret: "fixture-secret",
       release: () => undefined,
@@ -508,7 +510,13 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     }
     assert.deepEqual(
       observations.map((observation) => observation.type),
-      ["turn.started", "assistant.delta", "assistant.thinking.delta", "turn.completed"],
+      [
+        "turn.started",
+        "assistant.delta",
+        "assistant.thinking.delta",
+        "turn.settled",
+        "turn.completed",
+      ],
     );
     const entries = await readdir(path.join(root, "task-1"));
     const sessionFile = entries.find((entry) => entry.endsWith(".jsonl"));
@@ -549,6 +557,137 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Pi agent engine projects retry lifecycle and settles only after retry success", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-retry-lifecycle-"));
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    if (requests === 1) return new Response(null, { status: 429 });
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  };
+
+  try {
+    const observations: PiAgentObservation[] = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-retry-lifecycle",
+        prompt: "recover this turn",
+        model: "deepseek-v4-flash",
+        cwd: process.cwd(),
+      },
+      new AbortController().signal,
+    )) {
+      observations.push(observation);
+    }
+
+    assert.equal(requests, 2);
+    assert.deepEqual(
+      observations.map((observation) => observation.type),
+      [
+        "turn.started",
+        "turn.retrying",
+        "assistant.delta",
+        "turn.retry.completed",
+        "turn.settled",
+        "turn.completed",
+      ],
+    );
+    const retry = observations.find((observation) => observation.type === "turn.retrying");
+    assert.ok(retry && retry.attempt === 1 && retry.maxAttempts >= 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi agent engine cancellation aborts an unsettled retry", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-retry-cancel-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 429 });
+  const controller = new AbortController();
+
+  try {
+    const observations: PiAgentObservation[] = [];
+    await assert.rejects(
+      (async () => {
+        for await (const observation of new PiAgentEngine(root, async () => ({
+          secret: "fixture-secret",
+          release: () => undefined,
+        })).runTurn(
+          {
+            taskId: "task-retry-cancel",
+            prompt: "cancel while retrying",
+            model: "deepseek-v4-flash",
+            cwd: process.cwd(),
+          },
+          controller.signal,
+        )) {
+          observations.push(observation);
+          if (observation.type === "turn.retrying") controller.abort();
+        }
+      })(),
+      /cancelled/u,
+    );
+    assert.ok(observations.some((observation) => observation.type === "turn.retrying"));
+    assert.equal(
+      observations.some((observation) => observation.type === "turn.completed"),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi lifecycle event fixtures preserve retry, compaction, and settled ordering", () => {
+  const taskId = "task-lifecycle-fixture";
+  const events = [
+    {
+      type: "compaction_start" as const,
+      reason: "overflow" as const,
+    },
+    {
+      type: "compaction_end" as const,
+      reason: "overflow" as const,
+      result: undefined,
+      aborted: false,
+      willRetry: true,
+    },
+    {
+      type: "auto_retry_start" as const,
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2_000,
+      errorMessage: "redacted provider failure",
+    },
+    {
+      type: "auto_retry_end" as const,
+      success: true,
+      attempt: 1,
+    },
+    { type: "agent_settled" as const },
+  ];
+  assert.deepEqual(
+    events.map((event) => projectPiLifecycleObservation(event, taskId)?.type),
+    ["turn.compaction", "turn.compaction", "turn.retrying", "turn.retry.completed", "turn.settled"],
+  );
+  assert.deepEqual(projectPiLifecycleObservation(events[1]!, taskId), {
+    type: "turn.compaction",
+    taskId,
+    phase: "completed",
+    reason: "overflow",
+    aborted: false,
+    willRetry: true,
+  });
 });
 
 test("Pi agent engine keeps hostile .pi resources outside the Candy session boundary", async () => {

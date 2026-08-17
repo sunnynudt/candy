@@ -81,7 +81,8 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
     };
     const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
     for await (const observation of engine.runTurn(piInput, signal)) {
-      yield mapPiObservation(observation);
+      const mapped = mapPiObservation(observation);
+      if (mapped !== undefined) yield mapped;
     }
   }
 
@@ -1349,7 +1350,7 @@ function containsActiveProviderSecret(
   );
 }
 
-function mapPiObservation(observation: PiAgentObservation): AgentObservation {
+function mapPiObservation(observation: PiAgentObservation): AgentObservation | undefined {
   if (observation.type === "turn.started")
     return { type: "turn.started", taskId: observation.taskId, at: Date.now() };
   if (observation.type === "assistant.delta")
@@ -1365,7 +1366,9 @@ function mapPiObservation(observation: PiAgentObservation): AgentObservation {
       tool: observation.tool,
       ok: observation.ok,
     };
-  return { type: "turn.completed", taskId: observation.taskId, at: Date.now() };
+  if (observation.type === "turn.completed")
+    return { type: "turn.completed", taskId: observation.taskId, at: Date.now() };
+  return undefined;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

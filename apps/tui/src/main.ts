@@ -1352,6 +1352,22 @@ export class InteractiveTui {
               },
             ]);
           }
+          if (observation.type === "turn.retrying") {
+            this.write(
+              `\n[provider retry ${observation.attempt}/${observation.maxAttempts}; waiting ${observation.delayMs}ms]\n`,
+            );
+          }
+          if (observation.type === "turn.retry.completed" && !observation.ok) {
+            this.write(`\n[provider retry ${observation.attempt} failed]\n`);
+          }
+          if (observation.type === "turn.compaction") {
+            this.write(
+              observation.phase === "started"
+                ? `\n[context compaction: ${observation.reason}]\n`
+                : `\n[context compaction ${observation.aborted ? "cancelled" : "settled"}: ${observation.reason}]\n`,
+            );
+          }
+          if (observation.type === "turn.settled") this.write("\n[turn settled]\n");
         }
       };
       await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
