@@ -175,6 +175,8 @@ export interface TuiShellRunner {
 
 export interface TuiAgentEngine {
   runTurn(input: PiAgentEngineInput, signal: AbortSignal): AsyncIterable<PiAgentObservation>;
+  steer?(taskId: string, text: string): Promise<void>;
+  followUp?(taskId: string, text: string): Promise<void>;
   /** Retained for compatibility with embedders; TUI recovery never calls it. */
   recoverPrompt?(taskId: string, cwd: string): Promise<string | undefined>;
 }
@@ -336,7 +338,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
       "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
@@ -441,6 +443,10 @@ export class InteractiveTui {
         separator < 0 ? resumeValue : resumeValue.slice(0, separator),
         separator < 0 ? undefined : resumeValue.slice(separator + 1).trim(),
       );
+    } else if (trimmed.startsWith(":steer ")) {
+      void this.queueActiveTurnMessage("steer", trimmed.slice(7).trim());
+    } else if (trimmed.startsWith(":follow-up ")) {
+      void this.queueActiveTurnMessage("followUp", trimmed.slice(11).trim());
     } else if (trimmed.startsWith(":cancel ")) {
       void this.cancel(trimmed.slice(8).trim()).catch((error: unknown) => {
         this.write(`cancel rejected: ${safeError(error)}\n`);
@@ -609,7 +615,9 @@ export class InteractiveTui {
       if (snapshot.ownerId !== undefined && snapshot.ownerId !== this.#ownerId) {
         this.write(`task ${currentTaskId} is read-only: owned by ${snapshot.ownerId}\n`);
       } else {
-        this.write(`task ${currentTaskId} is already running; wait for the active turn\n`);
+        this.write(
+          `task ${currentTaskId} is already running; use :steer <text>, :follow-up <text>, or :cancel ${currentTaskId}\n`,
+        );
       }
       return;
     }
@@ -1344,11 +1352,12 @@ export class InteractiveTui {
             ]);
           }
           if (observation.type === "tool.completed") {
-            this.write(`\n[tool ${observation.tool}]\n`);
+            const tool = boundedToolName(observation.tool, activeSecrets);
+            this.write(`\n[tool ${tool}]\n`);
             this.#store.appendTranscript(taskId, [
               {
                 role: "tool",
-                text: transcriptText(`${observation.tool}:${observation.ok ? "ok" : "error"}`),
+                text: transcriptText(`${tool}:${observation.ok ? "ok" : "error"}`),
               },
             ]);
           }
@@ -1439,6 +1448,56 @@ export class InteractiveTui {
       return;
     }
     this.write(`${taskId} is not an active task\n`);
+  }
+
+  private async queueActiveTurnMessage(mode: "steer" | "followUp", text: string): Promise<void> {
+    if (text.length === 0) {
+      this.write(`:${mode === "steer" ? "steer" : "follow-up"} requires text\n`);
+      return;
+    }
+    if (containsCredentialMaterial(text) || this.hasActiveProviderSecret(text)) {
+      this.write("turn message rejected: credential material is forbidden\n");
+      return;
+    }
+    const task = this.currentTask();
+    const snapshot = task?.snapshot();
+    if (task === undefined || snapshot === undefined) {
+      this.write("no current task; create or select a task first\n");
+      return;
+    }
+    if (snapshot.state !== "running") {
+      this.write(
+        `task ${snapshot.taskId} has no active turn to ${mode === "steer" ? "steer" : "follow up"}\n`,
+      );
+      return;
+    }
+    if (snapshot.ownerId !== this.#ownerId) {
+      this.write(
+        `task ${snapshot.taskId} is read-only: owned by ${snapshot.ownerId ?? "another client"}\n`,
+      );
+      return;
+    }
+    const queue = this.#engine[mode];
+    if (queue === undefined) {
+      this.write(
+        `task ${snapshot.taskId} does not expose ${mode === "steer" ? "steering" : "follow-up"} control\n`,
+      );
+      return;
+    }
+    try {
+      await queue.call(this.#engine, snapshot.taskId, text);
+      this.#store.appendTranscript(snapshot.taskId, [
+        {
+          role: "user",
+          text: transcriptText(`[${mode === "steer" ? "steer" : "follow-up"}] ${text}`),
+        },
+      ]);
+      this.write(`${snapshot.taskId} ${mode === "steer" ? "steering" : "follow-up"} queued\n`);
+    } catch (error) {
+      this.write(
+        `${snapshot.taskId} ${mode === "steer" ? "steering" : "follow-up"} rejected: ${safeError(error)}\n`,
+      );
+    }
   }
 
   private startOwnerWatch(taskId: string, abort: AbortController): void {
@@ -1788,16 +1847,39 @@ function createNativeTuiShellRunner(): TuiShellRunner | undefined {
 }
 
 class TuiModelRouter implements TuiAgentEngine {
+  readonly #activeEngines = new Map<string, TuiAgentEngine>();
+
   public constructor(
     private readonly deepseek: TuiAgentEngine,
     private readonly minimax: TuiAgentEngine,
   ) {}
 
-  public runTurn(
+  public async *runTurn(
     input: PiAgentEngineInput,
     signal: AbortSignal,
   ): AsyncIterable<PiAgentObservation> {
-    return (input.model === "MiniMax-M3" ? this.minimax : this.deepseek).runTurn(input, signal);
+    const engine = input.model === "MiniMax-M3" ? this.minimax : this.deepseek;
+    this.#activeEngines.set(input.taskId, engine);
+    try {
+      yield* engine.runTurn(input, signal);
+    } finally {
+      if (this.#activeEngines.get(input.taskId) === engine)
+        this.#activeEngines.delete(input.taskId);
+    }
+  }
+
+  public steer(taskId: string, text: string): Promise<void> {
+    const engine = this.#activeEngines.get(taskId);
+    if (engine?.steer === undefined)
+      return Promise.reject(new Error("Pi steering is unavailable."));
+    return engine.steer(taskId, text);
+  }
+
+  public followUp(taskId: string, text: string): Promise<void> {
+    const engine = this.#activeEngines.get(taskId);
+    if (engine?.followUp === undefined)
+      return Promise.reject(new Error("Pi follow-up is unavailable."));
+    return engine.followUp(taskId, text);
   }
 }
 
@@ -2005,6 +2087,11 @@ function redactSensitive(value: string, activeSecrets: readonly string[]): strin
     (result, secret) => (secret.length === 0 ? result : result.split(secret).join("[REDACTED]")),
     redactTuiOutput(value),
   );
+}
+
+function boundedToolName(value: string, activeSecrets: readonly string[]): string {
+  const redacted = redactSensitive(value, activeSecrets).replace(/[\r\n\t]/gu, " ");
+  return redacted.length <= 128 ? redacted : `${redacted.slice(0, 128)}…`;
 }
 
 function safeError(error: unknown): string {

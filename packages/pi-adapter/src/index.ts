@@ -1688,6 +1688,8 @@ export function projectPiLifecycleObservation(
  * Pi owns the loop, read tool, stream and Candy-owned session JSONL.
  */
 export class PiAgentEngine {
+  readonly #activeSessions = new Map<string, piSdk.AgentSession>();
+
   public constructor(
     private readonly sessionRoot: string,
     private readonly acquireSecret: SecretLeaseProvider,
@@ -1730,6 +1732,18 @@ export class PiAgentEngine {
       if (prompt.length > 0) return prompt;
     }
     return undefined;
+  }
+
+  public async steer(taskId: string, text: string): Promise<void> {
+    const session = this.#activeSessions.get(taskId);
+    if (session === undefined) throw new Error("Pi agent turn is no longer active.");
+    await session.steer(text);
+  }
+
+  public async followUp(taskId: string, text: string): Promise<void> {
+    const session = this.#activeSessions.get(taskId);
+    if (session === undefined) throw new Error("Pi agent turn is no longer active.");
+    await session.followUp(text);
   }
 
   public async *runTurn(
@@ -1832,6 +1846,7 @@ export class PiAgentEngine {
         settingsManager,
       });
       session = created.session;
+      this.#activeSessions.set(input.taskId, session);
       if (input.thinkingLevel !== undefined) {
         session.setThinkingLevel(input.thinkingLevel);
       }
@@ -1932,6 +1947,9 @@ export class PiAgentEngine {
       if (signal.aborted) throw new Error("Pi agent turn cancelled.");
       yield { type: "turn.completed", taskId: input.taskId };
     } finally {
+      if (session !== undefined && this.#activeSessions.get(input.taskId) === session) {
+        this.#activeSessions.delete(input.taskId);
+      }
       session?.dispose();
       credentialStore.clear();
       lease.release();

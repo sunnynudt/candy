@@ -235,6 +235,75 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
   }
 });
 
+test("interactive TUI bounds and redacts tool visibility while steering and cancelling", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-steering-"));
+  const terminal = new FakeTerminal();
+  const steering: string[] = [];
+  const followUps: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input, signal) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "candy_" + "x".repeat(300),
+          ok: true,
+        };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "sk-proj-tool-output-canary-1234567890",
+          ok: true,
+        };
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            signal.removeEventListener("abort", onAbort);
+            reject(new Error("cancelled"));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+          void input;
+          void resolve;
+        });
+      },
+      async steer(_taskId, text) {
+        steering.push(text);
+      },
+      async followUp(_taskId, text) {
+        followUps.push(text);
+      },
+    };
+    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("start a long turn");
+    terminal.emitInput("\r");
+    const taskOutput = await waitForOutput(terminal, /\[tool candy_/u);
+    assert.match(taskOutput, /\[tool \[REDACTED\]\]/u);
+    assert.doesNotMatch(taskOutput, /x{150}/u);
+    const taskId = taskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    terminal.emitInput(":steer focus on the failing test");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /steering queued/u);
+    terminal.emitInput(":follow-up report only after validation");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /follow-up queued/u);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    terminal.emitInput("\x03");
+    await runPromise;
+    assert.deepEqual(steering, ["focus on the failing test"]);
+    assert.deepEqual(followUps, ["report only after validation"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI enables Trusted Shell Auto in the accepted macOS composition root", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
