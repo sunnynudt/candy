@@ -59,7 +59,10 @@ execFileSync(
 
 const runner = new NativeProcessRunner(runnerPath);
 const operations = createCandyWorkspaceOperations(workspace);
-const shellOperations = createCandyBashOperations(workspace, { runner });
+const shellOperations = createCandyBashOperations(workspace, {
+  runner,
+  trustedGitCommonDirectory: path.join(root, "repository", ".git"),
+});
 const outsideRead = path.join(outside, "read.txt");
 const outsideWrite = path.join(outside, "native-write.txt");
 const symlinkRoot = path.join(workspace, "link");
