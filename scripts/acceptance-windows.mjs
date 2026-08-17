@@ -9,13 +9,10 @@ import { cleanChildEnvironment } from "@candy/platform";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const acceptanceRoot = path.join(root, "out", "acceptance", "windows");
 const npmScript = process.env.npm_execpath;
-const electronOverride = process.env.ELECTRON_OVERRIDE_DIST_PATH;
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error("Windows acceptance requires Windows x64.");
 if (!npmScript) throw new Error("Run Windows acceptance through npm.");
-if (!electronOverride)
-  throw new Error("Set ELECTRON_OVERRIDE_DIST_PATH to the verified Electron runtime first.");
 
 const startedAt = new Date();
 const revision = runCapture("git", ["rev-parse", "HEAD"]);
@@ -27,25 +24,10 @@ const steps = [
   "check:toolchain",
   "check",
   "check:native",
-  "smoke:native:windows",
-  "smoke:credential-manager:windows",
+  "smoke:tui:launcher",
   "smoke:tui-task",
-  "smoke:app-server",
-  "smoke:recovery:windows",
-  "smoke:long-running:windows",
-  "smoke:attachment-recovery:windows",
-  "smoke:cross-client:windows",
-  "smoke:concurrency:windows",
-  "smoke:desktop",
-  "smoke:desktop:packaged:windows",
-  "smoke:desktop:packaged:recovery:windows",
-  "smoke:desktop:packaged:handoff:windows",
-  "smoke:desktop:packaged:long-running:windows",
-  "smoke:desktop:packaged:credential-isolation:windows",
-  "smoke:desktop:packaged:coding-journey:windows",
-  "smoke:browser:windows",
-  "smoke:credential-manager:packaged:windows",
-  "measure:windows:responsiveness",
+  "smoke:credential-manager:windows",
+  "smoke:native:windows",
 ];
 const results = [];
 
@@ -63,10 +45,9 @@ const report = [
   `- Lockfile SHA-256: \`${lockfileDigest}\``,
   `- Platform: Windows ${os.arch()} (${os.version()})`,
   `- Node: \`${process.version}\``,
-  "- Electron runtime: `43.2.0` verified local Windows x64 distribution",
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  "This is a sanitized deterministic Windows implementation and smoke run. It does not run live providers, inspect other tool credentials, or claim signed packaging, Browser acceptance, native security acceptance, complete ACC-01..12, cross-platform support, or final V1 acceptance.",
+  "This is a sanitized deterministic TUI-only Windows 11 implementation and smoke run. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, complete cross-platform support, exact macOS baseline compatibility, V2 Desktop/Browser completion, or final V1 acceptance.",
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",
@@ -77,13 +58,12 @@ const report = [
       `| \`npm run ${result.script}\` | ${result.status === "pass" ? "Pass" : "Fail"} | ${result.durationMs} ms |`,
   ),
   "",
-  "## Required Windows evidence still open",
+  "## Required TUI evidence still open",
   "",
-  "- Windows signed Desktop installation and complete packaged Browser evidence; the unsigned packaged JSONL, active-owner/tool recovery, and sequential packaged cross-client handoff smokes are recorded separately.",
-  "- Full Windows Credential Manager lifecycle for the already-present DeepSeek account; the synthetic empty MiniMax account was tested and real credentials were not changed.",
-  "- Windows G2 OS-level no-network and arbitrary-command workspace containment, runtime reparse/race prevention, packaging, and independent security review. Shell Auto and Shell Auto Debug remain disabled.",
-  "- Browser Workspace physical input-origin evidence, broader hostile-page coverage, and complete Browser/ACC-09/ACC-12 acceptance; the deterministic authorization, observation, action, Take Control, download, redirect, popup, permission, and selector-boundary fixture is recorded separately.",
-  "- Remaining ACC-01..12 Windows journeys, complete ACC-12 metrics, the live Windows MiniMax provider matrix, Windows signing identity, and product-owner acceptance.",
+  "- Windows Trusted Shell G2/native security evidence and independent security review; Shell remains fail-closed until that gate passes.",
+  "- Live DeepSeek/MiniMax provider contracts and real provider cancellation evidence.",
+  "- Exact macOS 26.5.2 regression evidence and current macOS TUI parity.",
+  "- Electron Desktop and Browser Workspace acceptance is V2 and is not part of this report.",
   "",
 ].join("\n");
 
@@ -97,7 +77,6 @@ if (failed > 0) process.exitCode = 1;
 async function runNpmScript(script) {
   const started = Date.now();
   const environment = cleanChildEnvironment(process.env);
-  environment.ELECTRON_OVERRIDE_DIST_PATH = electronOverride;
   const result = await new Promise((resolve) => {
     const child = spawn(process.execPath, [npmScript, "run", script], {
       cwd: root,

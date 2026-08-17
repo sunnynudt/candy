@@ -56,24 +56,10 @@ const steps = [
   "check:toolchain",
   "check",
   "check:native",
-  "measure:macos:responsiveness",
-  "smoke:sandbox:macos",
-  "smoke:long-running:macos",
-  "smoke:runtime-session-remap",
-  "smoke:recovery:macos",
-  "smoke:safe-edit",
-  "smoke:tui",
+  "smoke:tui:launcher",
   "smoke:tui-task",
   "smoke:tui:journey:macos",
-  "smoke:app-server",
-  "smoke:desktop",
-  "smoke:desktop:packaged",
-  "smoke:desktop:packaged:recovery:macos",
-  "smoke:desktop:packaged:handoff:macos",
-  "smoke:desktop:packaged:long-running:macos",
-  "smoke:desktop:packaged:credential-isolation:macos",
-  "smoke:desktop:packaged:coding-journey:macos",
-  "smoke:browser:macos",
+  "smoke:tui:terminal:macos",
 ];
 const results = [];
 
@@ -99,7 +85,7 @@ const report = [
   `- Node: \`${process.version}\``,
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  `This is a deterministic and packaged smoke run for the ${acceptanceTarget}. The exact host version is recorded above. It does not run live providers, inspect other tool credentials, or claim signing, complete Browser/recovery, full ACC-12, or final V1 acceptance.`,
+  `This is a deterministic TUI-only smoke run for the ${acceptanceTarget}. The exact host version is recorded above. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, exact-baseline compatibility, Windows parity, V2 Desktop/Browser completion, or final V1 acceptance.`,
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",
@@ -120,11 +106,11 @@ const report = [
     ? "- Current macOS Tahoe 26.x primary acceptance evidence (run npm run acceptance:macos)."
     : `- Exact macOS ${baselineMacosVersion} Apple Silicon regression evidence (run npm run acceptance:macos:baseline when that host is available).`,
   acceptanceMode === "baseline"
-    ? "- macOS Trusted Shell Auto Personal Preview evidence is current-host-only; Windows/Desktop Shell, Shell-based Auto Debug, and exact-baseline compatibility remain separate gates."
-    : "- Windows/Desktop Trusted Shell, Shell-based Auto Debug, exact 26.5.2 compatibility, and signed release acceptance remain separate gates.",
-  "- Apple signing/notarization and complete packaged Browser adversarial/input-origin evidence.",
-  "- User cancellation to a real Provider stream-stop request remains Blocked because the deterministic measurement uses no Provider stream.",
-  "- Provider latency/public-network behavior and complete ACC-12 UI/recovery evidence remain outside the deterministic ten-run cold-start and four-local-seam measurement.",
+    ? "- macOS Trusted Shell Auto Personal Preview evidence is current-host-only; Windows Trusted Shell, Shell-based Auto Debug, and exact-baseline compatibility remain separate gates."
+    : "- Windows Trusted Shell, Shell-based Auto Debug, exact 26.5.2 compatibility, and signed release acceptance remain separate gates.",
+  "- Windows 11 TUI evidence, exact macOS 26.5.2 baseline evidence, and platform-specific Trusted Shell G2 evidence remain separate gates.",
+  "- Live DeepSeek/MiniMax provider contracts and provider cancellation evidence remain separate gates.",
+  "- Electron Desktop and Browser Workspace acceptance is V2 and is not part of this report.",
   "",
 ].join("\n");
 

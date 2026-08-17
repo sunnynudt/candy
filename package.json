@@ -49,6 +49,7 @@
     "lint": "eslint apps packages scripts",
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
+    "smoke:tui:launcher": "npm run build && node scripts/candy.mjs --smoke",
     "smoke:tui:journey:macos": "npm run build && node scripts/smoke-tui-journey-macos.mjs",
     "smoke:tui:terminal:macos": "npm run build && node scripts/smoke-tui-terminal-matrix-macos.mjs",
     "smoke:tui:trusted-shell:macos": "npm run build && node scripts/smoke-tui-trusted-shell-macos.mjs",
