@@ -2,7 +2,13 @@
 
 Updated: 2026-08-17
 
-Post-`e6170b6` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **238/238** on Node `22.23.2`/npm `10.9.8`. Candy-owned Pi session roots/task directories reject symlinks, and selected existing session files are validated and read through no-follow handles. Current-HEAD scan `e268e95b-fb60-482f-84e2-38659a98c411` completed against `2e77fb4` with parent-thread fallback and reported **6 open findings (4 medium, 2 low)**; it is not a security clearance. Its attachment-source finding is addressed by `7489139`, the ordinary non-Git symlink route by `1bcdd9f`, and the session symlink route by `e6170b6`; descriptor-relative/reparse-safe workspace/apply/worktree and residual session/non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`e6170b6` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **238/238** on Node `22.23.2`/npm `10.9.8`. Candy-owned Pi session roots/task directories reject symlinks, and selected existing session files are validated and read through no-follow handles. Fresh current-HEAD scan `2c682ace-5786-4844-9890-1eb2052b6a38` is bound to `09dc079`, completed with parent fallback, and reports **5 open findings (4 medium, 1 low)**; it is partial and not a security clearance because independent workers were unavailable. Its attachment-source finding is addressed by `7489139`, the ordinary non-Git symlink route by `1bcdd9f`, and the pre-existing session symlink route by `e6170b6`; descriptor-relative/reparse-safe workspace/apply/worktree and residual session/non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 current-HEAD scan `2c682ace`
+
+- The scan is bound to current docs HEAD `09dc079` and reports **5 open findings: 4 medium, 1 low**. The parent fallback was used because all six subagent slots were occupied; coverage is partial and `.omo/**` was explicitly excluded and preserved.
+- Open security blockers are Apply/worktree races, workspace-operation races, residual session-root replacement races, non-Git traversal races, and nested-interpreter Trusted Shell publication policy. The scan report is not a clearance.
+- Windows 11, exact macOS `26.5.2`, independent G2, signing, and final V1 acceptance remain open.
 
 ## 2026-08-17 Issue #4 `e6170b6` Pi session-root checkpoint
 
