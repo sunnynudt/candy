@@ -30,8 +30,12 @@ import {
 } from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
 
-async function waitForOutput(terminal: FakeTerminal, pattern: RegExp): Promise<string> {
-  for (let attempt: number = 0; attempt < 500; attempt += 1) {
+async function waitForOutput(
+  terminal: FakeTerminal,
+  pattern: RegExp,
+  maxAttempts: number = 500,
+): Promise<string> {
+  for (let attempt: number = 0; attempt < maxAttempts; attempt += 1) {
     const output: string = terminal.writes.join("");
     if (pattern.test(output)) return output;
     await new Promise<void>((resolve: () => void): void => {
@@ -263,7 +267,11 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     terminal.emitInput("remove the obsolete file");
     terminal.emitInput("\r");
-    const approvalOutput = await waitForOutput(terminal, /approval required: delete obsolete\.ts/u);
+    const approvalOutput = await waitForOutput(
+      terminal,
+      /approval required: delete obsolete\.ts[\s\S]*:approve delete-[a-z0-9]+/u,
+      5_000,
+    );
     const approvalId = approvalOutput.match(/:approve (delete-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
     terminal.emitInput(`:approve ${approvalId}`);
