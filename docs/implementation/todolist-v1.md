@@ -8,7 +8,7 @@
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。当前 revision `e601e76948844dca0d4bb79a67e895591b0d6469` 的 macOS TUI-only acceptance 为 7/7（macOS `26.6.1` arm64）；精确 `26.5.2` 在当前主机 preflight blocked，Windows 11 仍待目标主机执行。
+当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。当前 revision `6a012a353689acca200eb610cc7f9558f7b7e468` 的 macOS TUI-only acceptance 为 7/7（macOS `26.6.1` arm64），确定性检查为 197/197，并覆盖有界、凭据脱敏的工具参数及增量/完成输出；精确 `26.5.2` 在当前主机 preflight blocked，Windows 11 仍待目标主机执行。
 
 当前接力规则：白天在 MacBook Pro 上优先实现、测试和记录当前 macOS Tahoe `26.x` Apple Silicon 能力；只有在声明精确兼容性时才运行 macOS `26.5.2` 回归基线。晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
