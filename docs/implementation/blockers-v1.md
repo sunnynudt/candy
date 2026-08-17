@@ -2,7 +2,7 @@
 
 Updated: 2026-08-17
 
-Post-`0e216e9` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **217/217** on Node `22.23.2`/npm `10.9.8`. Published security checkpoints include `59e818a` and `0e216e9`; the latest adds delete-approval and Candy resource path redaction, provider SSE byte limits, and bounded Git subprocess output. Live DeepSeek and domestic MiniMax pass **7/7** and **8/8**, respectively, all bound to `0e216e9`. A fresh standard security scan for `0e216e9` is required; pathname check/use races remain open and no current-HEAD full-scan Pass is claimed. The exact macOS `26.5.2` command is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`7aa382c` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **220/220** on Node `22.23.2`/npm `10.9.8`. The latest checkpoint adds task-id validation, attachment metadata-id validation, and bounded untracked Apply-file reads. Live DeepSeek passes **7/7**; domestic MiniMax passes **7/8**, with LIVE-MM-03 failing its thinking/tool-delta assertion. The sealed standard scan `e7f04f06-b75a-468a-9a74-5a027404708a` reports five open findings. The exact macOS `26.5.2` command is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
@@ -22,12 +22,12 @@ Post-native-containment-revalidation evidence: current source revision `38775e2`
 
 Post-clean-install evidence: pinned `npm ci --ignore-scripts` completed with an unchanged lockfile, 0 vulnerabilities, successful toolchain assertion, and successful build.
 
-Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `0e216e9` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 217/217; live DeepSeek and domestic MiniMax pass 7/7 and 8/8. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate and the fresh current-HEAD security scan's residual pathname-race review.
+Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `7aa382c` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 220/220; DeepSeek passes 7/7 and domestic MiniMax passes 7/8, with the MiniMax thinking/tool-delta assertion still open. The sealed current-HEAD scan reports five open findings: pathname TOCTOU containment, nested-interpreter publication bypass, post-materialization JSONL limits, stale app-server owner recovery, and attachment/non-Git snapshot aggregate bounds. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
 
-## 2026-08-17 Issue #4 final current-host checkpoint
+## 2026-08-17 Issue #4 current checkpoint
 
-- `0e216e9` is the published canonical-branch HEAD. Current macOS acceptance passes **14/14**, `npm run check` passes **217/217**, and live DeepSeek/MiniMax pass **7/7** and **8/8**. Remaining blockers are platform/security evidence boundaries.
-- Remaining blockers are evidence boundaries, not an observed current-host test failure: Windows 11 execution, exact macOS `26.5.2`, signed release, independent Trusted Shell/G2 approval, and the fresh current-HEAD security scan. The pathname check/use race remains explicitly open pending that scan's sealed result.
+- `7aa382c2330e5c62acd51cfa97c176c74d81938f` is the published canonical-branch HEAD. Current macOS acceptance passes **14/14**, `npm run check` passes **220/220**, DeepSeek passes **7/7**, and domestic MiniMax passes **7/8** because LIVE-MM-03 did not satisfy the thinking/tool-delta assertion.
+- Remaining blockers include five findings from sealed scan `e7f04f06-b75a-468a-9a74-5a027404708a`: pathname TOCTOU containment, nested-interpreter publication bypass, post-materialization JSONL limits, stale app-server owner recovery, and attachment/non-Git snapshot aggregate bounds. Windows 11 execution, exact macOS `26.5.2`, signed release, and independent Trusted Shell/G2 approval also remain open.
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
