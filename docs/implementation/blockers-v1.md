@@ -2,7 +2,13 @@
 
 Updated: 2026-08-17
 
-Post-`2c4215b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`. Root identity/canonical rechecks now surround Git worktree and Apply Changes operations. Standard scan `b5bec00b-b140-4241-8fd2-9c8252f8ffb8` is bound to `2c4215b`, completed with parent fallback, and reports **5 open findings (4 medium, 1 low)**; it is not a security clearance because the independent baseline worker could not start. Remaining blockers are descriptor-relative/reparse-safe workspace, worktree, Apply, session-manager and non-Git file-level races, plus conditional Trusted Shell descendant-publication policy. Exact macOS `26.5.2` is blocked on this `26.6.1` host; Windows 11 evidence remains unavailable.
+Post-`88b60be` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`. Non-Git snapshot files now use opened no-follow handles with identity binding. Standard scan `78bc305c-c0e7-4880-bd6a-d76954ddd465` is bound to `88b60be`, completed with parent fallback, and reports **4 open medium findings**; the prior low file-metadata finding is addressed, but this is not a security clearance. Remaining blockers are descriptor-relative/reparse-safe workspace intermediate operations, worktree path-check/use races, residual session-manager path races, and conditional Trusted Shell descendant-publication policy. Exact macOS `26.5.2` is blocked on this `26.6.1` host; Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `88b60be` non-Git snapshot binding checkpoint
+
+- Code checkpoint `88b60be367d69b1c01e7ef26c9b18a9f8e146151` is pushed and matches `origin/codex/candy-v1-foundation`. Non-Git snapshot files are opened with a no-follow final-path handle; pre/post identity checks must match the opened handle, and metadata is taken from that handle. Mismatches fail closed.
+- Full `npm run check` passes **241/241** and current macOS acceptance passes **14/14** at source revision `88b60be` on macOS `26.6.1` arm64 with a passing real-PTY terminal matrix.
+- The current scan reports four open medium findings. It closes only the low file-metadata race category; it does not establish descriptor-relative/reparse-safe directory operations, clear the worktree/session/Trusted Shell residuals, or provide Windows 11, exact `26.5.2`, independent G2, signing, or final V1 evidence. `.omo/` remains user-owned, untracked, and preserved.
 
 ## 2026-08-17 Issue #4 `2c4215b` Apply/worktree checkpoint
 

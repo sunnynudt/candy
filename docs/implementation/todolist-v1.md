@@ -4,7 +4,7 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 HEAD `2c4215b` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 workspace binding checkpoint：`2c4215b` 为 Git worktree 与 Apply Changes 增加 root identity/canonical recheck，并补充 root replacement 回归；最新标准扫描 `b5bec00b-b140-4241-8fd2-9c8252f8ffb8` 绑定当前 HEAD，报告 **5 个开放 finding（4 medium、1 low）**，不构成 security clearance。该扫描因六个 agent slot 占满使用 parent fallback。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11、独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 HEAD `88b60be` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 non-Git snapshot binding checkpoint：`88b60be` 为每个普通非 Git 快照文件绑定 no-follow opened handle，并以前后 identity 校验确保元数据来自同一对象；最新标准扫描 `78bc305c-c0e7-4880-bd6a-d76954ddd465` 绑定当前 HEAD，报告 **4 个开放 finding（全部 medium）**，此前的 low file-metadata finding 已处理，但不构成 security clearance。该扫描因六个 agent slot 占满使用 parent fallback。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11、独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -33,6 +33,8 @@
 新增 workspace binding 安全证据：`6f63c3e` 对 Pi workspace 文件读写绑定 selected root identity，在打开文件后复核 regular-file identity 与 canonical containment；non-Git snapshot 对每个 traversed directory 在 enumeration 后复核 identity，并新增 selected-root symlink regression。全量 `npm run check` **239/239**，current macOS acceptance **14/14**，报告 source revision 为 `6f63c3e`。该项只降低常见 final-file/root replacement route，不替代 descriptor-relative/reparse-safe directory、Apply/worktree、session-manager、file-level snapshot race、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
 新增 Apply/worktree root binding 安全证据：`2c4215b` 对 Git worktree create/inspect/status/reset/clean/change 及 Apply Changes 的 source/target roots 做 identity 与 canonical-path recheck，并在 Git 命令、collision 检查、opened untracked file 和最终写入周围增加 fail-closed 校验；新增 worktree containment 与 target-root replacement 回归。全量 `npm run check` **241/241**，current macOS acceptance **14/14**，报告 source revision 为 `2c4215b`。该项降低常见 root replacement route，但不替代 descriptor-relative/reparse-safe directory、Git cwd/path atomicity、session-manager、file-level snapshot race、Windows 11、精确 `26.5.2` 或独立 G2 证据。
+
+新增 non-Git snapshot file binding 安全证据：`88b60be` 为每个普通非 Git 快照文件打开 no-follow final-path handle，比较 opened handle 与前后 lstat 的 identity，并以 opened handle 的 size/mtime 记录快照；对象变化、变成 symlink、非 regular file 或无法安全打开时 fail closed。全量 `npm run check` **241/241**，current macOS acceptance **14/14**，报告 source revision 为 `88b60be`；标准扫描 `78bc305c-c0e7-4880-bd6a-d76954ddd465` 报告 4 个 open medium findings。该项关闭此前 low file-metadata race，不替代 descriptor-relative/reparse-safe intermediate directory、Git worktree、session-manager、Trusted Shell、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
