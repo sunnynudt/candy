@@ -293,12 +293,14 @@ export class DeepSeekClient {
     }
 
     const reader = response.body.getReader();
+    const detachAbort = cancelProviderReaderOnAbort(reader, signal);
     const decoder = new TextDecoder();
     let pending = "";
     let totalBytes = 0;
     try {
       for (;;) {
         const chunk = await reader.read();
+        throwIfProviderStreamAborted(signal);
         const decoded = decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
         totalBytes += Buffer.byteLength(decoded, "utf8");
         if (totalBytes > MAX_PROVIDER_SSE_TOTAL_BYTES) {
@@ -323,10 +325,13 @@ export class DeepSeekClient {
         if (chunk.done) break;
       }
       if (pending.trim()) {
+        throwIfProviderStreamAborted(signal);
         const delta = parseDeepSeekSseLine(pending);
         if (delta) yield delta;
       }
     } finally {
+      detachAbort();
+      await cancelProviderReader(reader);
       reader.releaseLock();
     }
   }
@@ -391,12 +396,14 @@ export class MiniMaxClient {
     }
 
     const reader = response.body.getReader();
+    const detachAbort = cancelProviderReaderOnAbort(reader, signal);
     const decoder = new TextDecoder();
     let pending = "";
     let totalBytes = 0;
     try {
       for (;;) {
         const chunk = await reader.read();
+        throwIfProviderStreamAborted(signal);
         const decoded = decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
         totalBytes += Buffer.byteLength(decoded, "utf8");
         if (totalBytes > MAX_PROVIDER_SSE_TOTAL_BYTES) {
@@ -421,13 +428,42 @@ export class MiniMaxClient {
         if (chunk.done) break;
       }
       if (pending.trim()) {
+        throwIfProviderStreamAborted(signal);
         const delta = parseMiniMaxSseLine(pending);
         if (delta) yield delta;
       }
     } finally {
+      detachAbort();
+      await cancelProviderReader(reader);
       reader.releaseLock();
     }
   }
+}
+
+function cancelProviderReaderOnAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): () => void {
+  const cancel = (): void => {
+    void cancelProviderReader(reader);
+  };
+  if (signal.aborted) cancel();
+  else signal.addEventListener("abort", cancel, { once: true });
+  return () => signal.removeEventListener("abort", cancel);
+}
+
+async function cancelProviderReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // The provider body may already be closed or errored.
+  }
+}
+
+function throwIfProviderStreamAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("Provider stream aborted.");
 }
 
 export function parseMiniMaxSseLine(line: string): MiniMaxDelta | undefined {

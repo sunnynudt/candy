@@ -506,6 +506,45 @@ test("provider SSE streams reject oversized events before unbounded buffering", 
   );
 });
 
+test("provider stream cancellation closes a pending DeepSeek reader", async () => {
+  const controller = new AbortController();
+  let transportReady!: () => void;
+  let readerCancelled = false;
+  const ready = new Promise<void>((resolve) => {
+    transportReady = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    cancel: () => {
+      readerCancelled = true;
+    },
+  });
+  const client = new DeepSeekClient(
+    async () => ({ secret: "fixture-secret", release: () => undefined }),
+    async () => {
+      transportReady();
+      return new Response(body, { status: 200 });
+    },
+  );
+  const stream = client.stream(
+    { model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], stream: true },
+    controller.signal,
+  );
+  const iterator = stream[Symbol.asyncIterator]();
+  const pending = iterator.next();
+  await ready;
+  controller.abort();
+  await assert.rejects(
+    Promise.race([
+      pending,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("provider reader did not cancel")), 500),
+      ),
+    ]),
+    /Provider stream aborted/u,
+  );
+  assert.equal(readerCancelled, true);
+});
+
 test("DeepSeek controlled provider failures expose only sanitized reasons", async () => {
   const cases = [
     {
@@ -594,6 +633,50 @@ test("MiniMax parser and client remain domestic-only and release the secret leas
   assert.equal(request?.init.redirect, "error");
   assert.deepEqual(chunks, [{ text: "ok", done: false }, { done: true }]);
   assert.equal(released, true);
+});
+
+test("provider stream cancellation closes a pending MiniMax reader", async () => {
+  const controller = new AbortController();
+  let transportReady!: () => void;
+  let readerCancelled = false;
+  const ready = new Promise<void>((resolve) => {
+    transportReady = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    cancel: () => {
+      readerCancelled = true;
+    },
+  });
+  const client = new MiniMaxClient(
+    async () => ({ secret: "fixture-secret", release: () => undefined }),
+    async () => {
+      transportReady();
+      return new Response(body, { status: 200 });
+    },
+  );
+  const stream = client.stream(
+    {
+      model: "MiniMax-M3",
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      max_tokens: 32,
+      stream: true,
+    },
+    controller.signal,
+  );
+  const iterator = stream[Symbol.asyncIterator]();
+  const pending = iterator.next();
+  await ready;
+  controller.abort();
+  await assert.rejects(
+    Promise.race([
+      pending,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("provider reader did not cancel")), 500),
+      ),
+    ]),
+    /Provider stream aborted/u,
+  );
+  assert.equal(readerCancelled, true);
 });
 
 test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions", async () => {
