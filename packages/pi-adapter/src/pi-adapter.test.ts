@@ -1258,6 +1258,16 @@ test("Candy workspace operations keep Pi edit/write inside the selected director
       operations.readFile(path.join(root, "linked", "secret.txt")),
       /symbolic/iu,
     );
+    await assert.rejects(
+      operations.mkdir(path.join(root, "linked", "created")),
+      /symbolic|escaped/iu,
+    );
+    await assert.rejects(
+      operations.writeFile(path.join(root, "linked", "created.txt"), "outside\n"),
+      /symbolic|escaped/iu,
+    );
+    await assert.rejects(access(path.join(outside, "created")), /ENOENT/u);
+    await assert.rejects(access(path.join(outside, "created.txt")), /ENOENT/u);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });

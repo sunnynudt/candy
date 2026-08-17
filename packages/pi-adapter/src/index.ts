@@ -1056,9 +1056,7 @@ export function createCandyWorkspaceOperations(
       await writeWorkspaceFile(root, absolutePath, content);
     },
     mkdir: async (directory) => {
-      await assertWorkspacePath(root, directory, true);
-      await mkdir(directory, { recursive: true });
-      await assertWorkspacePath(root, directory, false);
+      await ensureWorkspaceDirectory(root, directory);
     },
   };
 }
@@ -1650,6 +1648,7 @@ async function writeWorkspaceFile(
   absolutePath: string,
   content: string,
 ): Promise<void> {
+  await assertWorkspacePath(root, path.dirname(absolutePath), false);
   const handle = await open(
     absolutePath,
     fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NO_FOLLOW_FINAL_PATH,
@@ -1662,6 +1661,47 @@ async function writeWorkspaceFile(
     await handle.writeFile(content, "utf8");
   } finally {
     await handle.close();
+  }
+}
+
+async function ensureWorkspaceDirectory(root: string, directory: string): Promise<void> {
+  const absoluteRoot = path.resolve(root);
+  const absoluteDirectory = path.resolve(directory);
+  const relative = path.relative(absoluteRoot, absoluteDirectory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace tool path escaped the selected workspace.");
+  }
+  const rootStats = await lstat(absoluteRoot);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+    throw new Error("The selected workspace must be a real directory.");
+  }
+  let current = absoluteRoot;
+  await assertCanonicalWorkspacePath(absoluteRoot, current);
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment);
+    try {
+      const existing = await lstat(current);
+      if (existing.isSymbolicLink() || !existing.isDirectory()) {
+        throw new Error("Symbolic links are not allowed in workspace directories.");
+      }
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      await mkdir(current);
+    }
+    const checked = await lstat(current);
+    if (checked.isSymbolicLink() || !checked.isDirectory()) {
+      throw new Error("Workspace directory changed while it was being created.");
+    }
+    await assertCanonicalWorkspacePath(absoluteRoot, current);
+  }
+}
+
+async function assertCanonicalWorkspacePath(root: string, candidate: string): Promise<void> {
+  const realRoot = await realpath(root);
+  const realCandidate = await realpath(candidate);
+  const relative = path.relative(realRoot, realCandidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace tool path escaped the selected workspace.");
   }
 }
 
