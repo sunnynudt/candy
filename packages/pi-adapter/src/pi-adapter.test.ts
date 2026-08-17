@@ -29,6 +29,7 @@ import {
   PiAgentEngine,
   type PiAgentObservation,
   projectPiLifecycleObservation,
+  projectPiToolObservation,
   parseMiniMaxSseLine,
   parseDeepSeekSseLine,
   ProviderContractError,
@@ -39,6 +40,49 @@ import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
   assert.equal(PI_COMPATIBILITY_VERSION, "0.84.1");
   assert.ok(listPiPublicExports().length > 0);
+});
+
+test("Pi tool lifecycle projections expose bounded redacted arguments and output", () => {
+  const start = projectPiToolObservation(
+    {
+      type: "tool_execution_start",
+      toolCallId: "call-1",
+      toolName: "candy_read",
+      args: { path: "src/value.ts", token: "sk-proj-tool-canary-1234567890" },
+    },
+    "task-tools",
+    ["fixture-secret"],
+  );
+  const update = projectPiToolObservation(
+    {
+      type: "tool_execution_update",
+      toolCallId: "call-1",
+      toolName: "candy_read",
+      args: { path: "src/value.ts" },
+      partialResult: { content: [{ type: "text", text: "partial output" }] },
+    },
+    "task-tools",
+    ["fixture-secret"],
+  );
+  const end = projectPiToolObservation(
+    {
+      type: "tool_execution_end",
+      toolCallId: "call-1",
+      toolName: "candy_read",
+      result: { content: [{ type: "text", text: "Bearer fixture-secret" }] },
+      isError: false,
+    },
+    "task-tools",
+    ["fixture-secret"],
+  );
+  assert.equal(start.type, "tool.started");
+  assert.match(start.args ?? "", /src\/value\.ts/u);
+  assert.doesNotMatch(start.args ?? "", /sk-proj-tool-canary/u);
+  assert.equal(update.type, "tool.updated");
+  assert.match(update.output, /partial output/u);
+  assert.equal(end.type, "tool.completed");
+  assert.match(end.output ?? "", /\[REDACTED\]/u);
+  assert.doesNotMatch(end.output ?? "", /fixture-secret/u);
 });
 
 test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", async () => {

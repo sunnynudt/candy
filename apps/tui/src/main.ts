@@ -1421,13 +1421,29 @@ export class InteractiveTui {
               { role: "assistant", text: transcriptText(safeText) },
             ]);
           }
+          if (observation.type === "tool.started") {
+            const tool = boundedToolName(observation.tool, activeSecrets);
+            const args = boundedToolDetail(observation.args, activeSecrets);
+            const detail = args === undefined ? "" : ` args=${args}`;
+            this.write(`\n[tool ${tool}${detail}]\n`);
+            this.#store.appendTranscript(taskId, [
+              { role: "tool", text: transcriptText(`${tool}:started${detail}`) },
+            ]);
+          }
+          if (observation.type === "tool.updated") {
+            const tool = boundedToolName(observation.tool, activeSecrets);
+            const output = boundedToolDetail(observation.output, activeSecrets) ?? "(no output)";
+            this.write(`\n[tool ${tool} output=${output}]\n`);
+          }
           if (observation.type === "tool.completed") {
             const tool = boundedToolName(observation.tool, activeSecrets);
-            this.write(`\n[tool ${tool}]\n`);
+            const output = boundedToolDetail(observation.output, activeSecrets);
+            const detail = output === undefined ? "" : ` output=${output}`;
+            this.write(`\n[tool ${tool}${detail}]\n`);
             this.#store.appendTranscript(taskId, [
               {
                 role: "tool",
-                text: transcriptText(`${tool}:${observation.ok ? "ok" : "error"}`),
+                text: transcriptText(`${tool}:${observation.ok ? "ok" : "error"}${detail}`),
               },
             ]);
           }
@@ -2162,6 +2178,24 @@ function redactSensitive(value: string, activeSecrets: readonly string[]): strin
 function boundedToolName(value: string, activeSecrets: readonly string[]): string {
   const redacted = redactSensitive(value, activeSecrets).replace(/[\r\n\t]/gu, " ");
   return redacted.length <= 128 ? redacted : `${redacted.slice(0, 128)}…`;
+}
+
+function boundedToolDetail(
+  value: string | undefined,
+  activeSecrets: readonly string[],
+): string | undefined {
+  if (value === undefined) return undefined;
+  const redacted = replaceToolControlCharacters(redactSensitive(value, activeSecrets));
+  return redacted.length <= 2_048 ? redacted : `${redacted.slice(0, 2_048)}…`;
+}
+
+function replaceToolControlCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? " " : character;
+    })
+    .join("");
 }
 
 function safeError(error: unknown): string {

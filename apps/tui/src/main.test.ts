@@ -290,16 +290,32 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
       async *runTurn(input, signal) {
         yield { type: "turn.started", taskId: input.taskId };
         yield {
+          type: "tool.started",
+          taskId: input.taskId,
+          tool: "candy_read",
+          toolCallId: "call-1",
+          args: '{"path":"src/value.ts","token":"sk-proj-tool-output-canary-1234567890"}',
+        };
+        yield {
+          type: "tool.updated",
+          taskId: input.taskId,
+          tool: "candy_read",
+          toolCallId: "call-1",
+          output: '{"content":"partial fixture output"}',
+        };
+        yield {
           type: "tool.completed",
           taskId: input.taskId,
           tool: "candy_" + "x".repeat(300),
           ok: true,
+          output: '{"path":"src/value.ts","token":"sk-proj-tool-output-canary-1234567890"}',
         };
         yield {
           type: "tool.completed",
           taskId: input.taskId,
           tool: "sk-proj-tool-output-canary-1234567890",
           ok: true,
+          output: "Bearer fixture-secret-value-0123456789",
         };
         await new Promise<void>((resolve, reject) => {
           const onAbort = (): void => {
@@ -327,8 +343,15 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     terminal.emitInput("start a long turn");
     terminal.emitInput("\r");
     const taskOutput = await waitForOutput(terminal, /\[tool candy_/u);
-    assert.match(taskOutput, /\[tool \[REDACTED\]\]/u);
+    const updatedOutput = await waitForOutput(terminal, /partial fixture output/u);
+    const completedOutput = await waitForOutput(terminal, /output=.*\[REDACTED\]/u);
     assert.doesNotMatch(taskOutput, /x{150}/u);
+    assert.match(taskOutput, /args=.*src\/value\.ts/u);
+    assert.match(updatedOutput, /output=.*partial fixture output/u);
+    assert.match(completedOutput, /\[REDACTED\]/u);
+    assert.doesNotMatch(completedOutput, /sk-proj-tool-output-canary|Bearer fixture-secret/u);
+    const redactedToolOutput = await waitForOutput(terminal, /\[tool \[REDACTED\]/u);
+    assert.match(redactedToolOutput, /\[tool \[REDACTED\]/u);
     const taskId = taskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     terminal.emitInput(":steer focus on the failing test");

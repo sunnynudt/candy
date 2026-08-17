@@ -1208,6 +1208,34 @@ function isSafeFilesystemText(value: string): boolean {
   );
 }
 
+function boundedToolLabel(value: string, activeSecrets: readonly string[]): string {
+  const redacted = replaceToolControlCharacters(redactBashOutput(value, activeSecrets));
+  return redacted.length <= 128 ? redacted : `${redacted.slice(0, 128)}…`;
+}
+
+function boundedToolValue(value: unknown, activeSecrets: readonly string[], limit = 2_048): string {
+  let serialized: string;
+  if (typeof value === "string") serialized = value;
+  else {
+    try {
+      serialized = JSON.stringify(value) ?? String(value);
+    } catch {
+      serialized = "[unserializable tool value]";
+    }
+  }
+  const redacted = replaceToolControlCharacters(redactBashOutput(serialized, activeSecrets));
+  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit)}…`;
+}
+
+function replaceToolControlCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? " " : character;
+    })
+    .join("");
+}
+
 function containsUnpairedSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -1641,14 +1669,67 @@ export type PiAgentObservation =
   | { readonly type: "turn.settled"; readonly taskId: string }
   | { readonly type: "assistant.thinking.delta"; readonly taskId: string; readonly text: string }
   | { readonly type: "assistant.delta"; readonly taskId: string; readonly text: string }
-  | { readonly type: "tool.started"; readonly taskId: string; readonly tool: string }
+  | {
+      readonly type: "tool.started";
+      readonly taskId: string;
+      readonly tool: string;
+      readonly toolCallId?: string;
+      readonly args?: string;
+    }
+  | {
+      readonly type: "tool.updated";
+      readonly taskId: string;
+      readonly tool: string;
+      readonly toolCallId?: string;
+      readonly output: string;
+    }
   | {
       readonly type: "tool.completed";
       readonly taskId: string;
       readonly tool: string;
       readonly ok: boolean;
+      readonly toolCallId?: string;
+      readonly output?: string;
     }
   | { readonly type: "turn.completed"; readonly taskId: string };
+
+type PiToolExecutionEvent = Extract<
+  piSdk.AgentSessionEvent,
+  { readonly type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end" }
+>;
+
+export function projectPiToolObservation(
+  event: PiToolExecutionEvent,
+  taskId: string,
+  activeSecrets: readonly string[] = [],
+): PiAgentObservation {
+  if (event.type === "tool_execution_start") {
+    return {
+      type: "tool.started",
+      taskId,
+      tool: boundedToolLabel(event.toolName, activeSecrets),
+      toolCallId: boundedToolValue(event.toolCallId, activeSecrets, 128),
+      args: boundedToolValue(event.args, activeSecrets),
+    };
+  }
+  if (event.type === "tool_execution_update") {
+    return {
+      type: "tool.updated",
+      taskId,
+      tool: boundedToolLabel(event.toolName, activeSecrets),
+      toolCallId: boundedToolValue(event.toolCallId, activeSecrets, 128),
+      output: boundedToolValue(event.partialResult, activeSecrets),
+    };
+  }
+  return {
+    type: "tool.completed",
+    taskId,
+    tool: boundedToolLabel(event.toolName, activeSecrets),
+    toolCallId: boundedToolValue(event.toolCallId, activeSecrets, 128),
+    ok: !event.isError,
+    output: boundedToolValue(event.result, activeSecrets),
+  };
+}
 
 export function projectPiLifecycleObservation(
   event: piSdk.AgentSessionEvent,
@@ -1917,15 +1998,12 @@ export class PiAgentEngine {
               taskId: input.taskId,
               text: redactBashOutput(event.value.assistantMessageEvent.delta, activeSecrets),
             };
-          } else if (event.value.type === "tool_execution_start") {
-            yield { type: "tool.started", taskId: input.taskId, tool: event.value.toolName };
-          } else if (event.value.type === "tool_execution_end") {
-            yield {
-              type: "tool.completed",
-              taskId: input.taskId,
-              tool: event.value.toolName,
-              ok: !event.value.isError,
-            };
+          } else if (
+            event.value.type === "tool_execution_start" ||
+            event.value.type === "tool_execution_update" ||
+            event.value.type === "tool_execution_end"
+          ) {
+            yield projectPiToolObservation(event.value, input.taskId, activeSecrets);
           } else if (
             event.value.type === "message_end" &&
             event.value.message.role === "assistant"
