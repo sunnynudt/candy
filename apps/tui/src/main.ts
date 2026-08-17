@@ -10,6 +10,7 @@ import {
   ProviderContractError,
   type CandyNetworkApprovalRequest,
   type CandyPromptTemplateInfo,
+  loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
   type PiAgentEngineInput,
   type PiAgentObservation,
@@ -354,7 +355,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :prompts, :prompt <name> [args], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :resources, :prompts, :prompt <name> [args], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
       "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
@@ -406,6 +407,8 @@ export class InteractiveTui {
       });
     } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
       this.showTranscript(trimmed.slice(11).trim());
+    } else if (trimmed === ":resources") {
+      this.showResourceDiagnostics();
     } else if (trimmed === ":prompts") {
       this.listPromptTemplates();
     } else if (trimmed === ":prompt" || trimmed.startsWith(":prompt ")) {
@@ -1360,6 +1363,22 @@ export class InteractiveTui {
     }
     for (const template of result.templates) {
       this.write(`${template.name}\t${template.description}\t${template.argumentHint ?? ""}\n`);
+    }
+  }
+
+  private showResourceDiagnostics(): void {
+    const diagnostics = loadCandyResourceDiagnostics(
+      this.#appDataRoot,
+      this.activeSecretsSnapshot(),
+    );
+    if (diagnostics.length === 0) {
+      this.write("Candy resources: no diagnostics\n");
+      return;
+    }
+    for (const diagnostic of diagnostics) {
+      this.write(
+        `${diagnostic.category} resource ${diagnostic.type}: ${diagnostic.message} (${diagnostic.path})\n`,
+      );
     }
   }
 

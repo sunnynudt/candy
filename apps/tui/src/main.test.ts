@@ -951,6 +951,51 @@ test("interactive TUI continues the current task and :new starts a different tas
   }
 });
 
+test("interactive TUI reports malformed and conflicting Candy resource diagnostics", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-resource-diagnostics-"));
+  const terminal = new FakeTerminal();
+  try {
+    await mkdir(path.join(root, "skills", "broken"), { recursive: true });
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(
+      path.join(root, "skills", "broken", "SKILL.md"),
+      "---\nname: broken\n---\nThis skill is malformed.\n",
+    );
+    await writeFile(
+      path.join(root, "prompts", "first.md"),
+      "---\nname: duplicate\n---\nFirst prompt\n",
+    );
+    await writeFile(
+      path.join(root, "prompts", "second.md"),
+      "---\nname: duplicate\n---\nSecond prompt\n",
+    );
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":resources");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /prompt resource collision/u);
+    assert.match(
+      output,
+      /skill resource error: Candy skill requires frontmatter name and description/u,
+    );
+    assert.match(output, /prompt resource collision: prompt name "duplicate" collision/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI lists and invokes Candy-owned prompt templates", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-prompt-template-"));
   const terminal = new FakeTerminal();

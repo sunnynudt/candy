@@ -35,6 +35,10 @@ export interface CandyPromptDiagnosticInfo {
   readonly path: string;
 }
 
+export interface CandyResourceDiagnosticInfo extends CandyPromptDiagnosticInfo {
+  readonly category: "skill" | "prompt";
+}
+
 /**
  * Read the user-invokable Candy prompt templates without exposing Pi's
  * unrestricted resource discovery surface.
@@ -65,6 +69,30 @@ export function loadCandyPromptTemplates(
       path: diagnostic.path ?? "<candy-resource>",
     })),
   };
+}
+
+/**
+ * Read only diagnostics for Candy-owned skills and prompt templates. Resource
+ * contents stay behind the restricted loader boundary.
+ */
+export function loadCandyResourceDiagnostics(
+  candyRoot: string,
+  activeSecrets: readonly string[] = [],
+): readonly CandyResourceDiagnosticInfo[] {
+  const loader = new CandyRestrictedResourceLoader(candyRoot, undefined, activeSecrets, candyRoot);
+  const skills = loader.getSkills().diagnostics.map((diagnostic) => ({
+    category: "skill" as const,
+    type: diagnostic.type,
+    message: diagnostic.message,
+    path: diagnostic.path ?? "<candy-resource>",
+  }));
+  const prompts = loader.getPrompts().diagnostics.map((diagnostic) => ({
+    category: "prompt" as const,
+    type: diagnostic.type,
+    message: diagnostic.message,
+    path: diagnostic.path ?? "<candy-resource>",
+  }));
+  return [...skills, ...prompts];
 }
 
 export type CandyProvider = "deepseek" | "minimax-cn";
