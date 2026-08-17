@@ -1,4 +1,12 @@
-import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import { redactCredentialMaterial } from "@candy/platform";
@@ -25,6 +33,7 @@ interface RestrictedResourceFileStats {
 interface RestrictedResourceFileSystem {
   lstat(filePath: string): RestrictedResourceFileStats;
   readFile(filePath: string): Buffer;
+  readFileNoFollow?(filePath: string): Buffer;
   realpath(filePath: string): string;
   readdir?(directory: string): readonly RestrictedResourceDirectoryEntry[];
 }
@@ -39,6 +48,15 @@ interface RestrictedResourceDirectoryEntry {
 const DEFAULT_FILE_SYSTEM: RestrictedResourceFileSystem = {
   lstat: (filePath) => lstatSync(filePath),
   readFile: (filePath) => readFileSync(filePath),
+  readFileNoFollow: (filePath) => {
+    const noFollow = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
+    const descriptor = openSync(filePath, fsConstants.O_RDONLY | noFollow);
+    try {
+      return readFileSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  },
   realpath: (filePath) => realpathSync(filePath),
   readdir: (directory) => readdirSync(directory, { withFileTypes: true }),
 };
@@ -325,7 +343,7 @@ function readCandyFile(
     const realPath = fileSystem.realpath(filePath);
     const realRoot = fileSystem.realpath(root);
     if (!isWithinRoot(realRoot, realPath)) return undefined;
-    const content = decodeUtf8(fileSystem.readFile(filePath));
+    const content = readStableResource(filePath, realPath, stats, fileSystem);
     return content === undefined
       ? undefined
       : { path: realPath, content: redactCredentialMaterial(content, activeSecrets) };
@@ -382,13 +400,32 @@ function readApprovedContextFile(
     const contextRealPath = fileSystem.realpath(contextPath);
     if (!isWithinRoot(workspaceRealPath, contextRealPath)) return [];
 
-    const content = decodeUtf8(fileSystem.readFile(contextPath));
+    const content = readStableResource(contextPath, contextRealPath, contextStats, fileSystem);
     if (content === undefined) return [];
 
     return [{ path: contextRealPath, content: redactCredentialMaterial(content, activeSecrets) }];
   } catch {
     return [];
   }
+}
+
+function readStableResource(
+  filePath: string,
+  expectedRealPath: string,
+  expectedStats: RestrictedResourceFileStats,
+  fileSystem: RestrictedResourceFileSystem,
+): string | undefined {
+  const bytes = fileSystem.readFileNoFollow?.(filePath) ?? fileSystem.readFile(filePath);
+  const afterStats = fileSystem.lstat(filePath);
+  const afterRealPath = fileSystem.realpath(filePath);
+  if (
+    !afterStats.isFile() ||
+    afterStats.isSymbolicLink() ||
+    afterStats.size !== expectedStats.size ||
+    afterRealPath !== expectedRealPath
+  )
+    return undefined;
+  return decodeUtf8(bytes);
 }
 
 function isWithinRoot(root: string, candidate: string): boolean {

@@ -1128,6 +1128,28 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
   }
 });
 
+test("Candy restricted context loader rejects a resource that changes during the read", () => {
+  const root = "/workspace";
+  const outside = "/outside/AGENTS.md";
+  let swapped = false;
+  const loader = new CandyRestrictedResourceLoader(root, {
+    lstat: (filePath) => ({
+      size: 19,
+      isFile: () => !swapped && filePath === path.join(root, "AGENTS.md"),
+      isSymbolicLink: () => swapped && filePath === path.join(root, "AGENTS.md"),
+    }),
+    readFile: () => {
+      swapped = true;
+      return Buffer.from("workspace guidance\n");
+    },
+    realpath: (filePath) => {
+      if (filePath === root) return root;
+      return swapped ? outside : path.join(root, "AGENTS.md");
+    },
+  });
+  assert.deepEqual(loader.getAgentsFiles(), { agentsFiles: [] });
+});
+
 test("Candy restricted resource loader exposes only Candy-owned instructions, skills, and prompts", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-resource-workspace-"));
   const candyRoot = await mkdtemp(path.join(tmpdir(), "candy-resource-root-"));

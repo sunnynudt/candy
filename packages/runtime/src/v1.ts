@@ -1,10 +1,22 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { cleanChildEnvironment, containsCredentialMaterial } from "@candy/platform";
 
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
+const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const NON_GIT_IGNORED_DIRECTORIES = new Set([
@@ -703,6 +715,7 @@ export interface ApplyChangesInput {
 /** Platform path operations; the Node `path` module satisfies this shape on any host. */
 export interface PathSeam {
   readonly resolve: (...paths: string[]) => string;
+  readonly dirname: (value: string) => string;
   readonly relative: (from: string, to: string) => string;
   readonly normalize: (value: string) => string;
   readonly isAbsolute: (value: string) => boolean;
@@ -713,6 +726,7 @@ export interface PathSeam {
 
 const nativeGitPathSeam: PathSeam = {
   resolve: (...paths) => path.resolve(...paths),
+  dirname: (value) => path.dirname(value),
   relative: (from, to) => path.relative(from, to),
   normalize: (value) => path.normalize(value),
   isAbsolute: (value) => path.isAbsolute(value),
@@ -991,13 +1005,14 @@ export class GitWorktreeManager {
   }
 
   public async create(plan: GitWorktreePlan): Promise<void> {
-    this.assertWorktreePath(plan.worktreePath);
-    await mkdir(path.dirname(path.resolve(plan.worktreePath)), { recursive: true });
+    await this.assertWorktreePath(plan.worktreePath);
+    await mkdir(this.#path.dirname(this.#path.resolve(plan.worktreePath)), { recursive: true });
     await this.#runner.run(plan.createArgs, plan.repository);
     await this.inspect(plan);
   }
 
   public async inspect(plan: GitWorktreePlan): Promise<string> {
+    await this.assertWorktreePath(plan.worktreePath);
     const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
     const expectedPath = await canonicalGitWorktreePath(plan.worktreePath, this.#path);
     let associated = false;
@@ -1013,10 +1028,12 @@ export class GitWorktreeManager {
   }
 
   public async unlock(plan: GitWorktreePlan): Promise<void> {
+    await this.assertWorktreePath(plan.worktreePath);
     await this.#runner.run(plan.unlockArgs, plan.repository);
   }
 
   public async removeClean(plan: GitWorktreePlan): Promise<void> {
+    await this.assertWorktreePath(plan.worktreePath);
     const status = await this.#runner.run(["status", "--porcelain=v1", "-z"], plan.worktreePath);
     if (status.length > 0) throw new Error("Dirty worktrees cannot be removed automatically.");
     await this.#runner.run(plan.removeArgs, plan.repository);
@@ -1034,6 +1051,7 @@ export class GitWorktreeManager {
   public async changes(
     plan: GitWorktreePlan,
   ): Promise<GitChangeManifest & { readonly patchText: string }> {
+    await this.assertWorktreePath(plan.worktreePath);
     const tracked = splitNull(
       await this.#runner.run(
         ["diff", "--name-only", "--no-ext-diff", "-z", plan.baseCommit, "--"],
@@ -1053,7 +1071,7 @@ export class GitWorktreeManager {
     return { tracked, untracked, patchText };
   }
 
-  private assertWorktreePath(worktreePath: string): void {
+  private async assertWorktreePath(worktreePath: string): Promise<void> {
     const root = this.#path.resolve(this.worktreeRoot);
     const candidate = this.#path.resolve(worktreePath);
     const relative = this.#path.relative(root, candidate);
@@ -1063,6 +1081,21 @@ export class GitWorktreeManager {
       this.#path.isAbsolute(relative)
     )
       throw new Error("Task worktree is outside Candy's worktree root.");
+    if (this.#path.canonicalize === undefined) return;
+    const canonicalRoot = this.#path.normalize(await this.#path.canonicalize(root));
+    const canonicalParent = this.#path.normalize(
+      await this.#path.canonicalize(this.#path.dirname(candidate)),
+    );
+    const canonicalCandidate = this.#path.normalize(await this.#path.canonicalize(candidate));
+    for (const checked of [canonicalParent, canonicalCandidate]) {
+      const canonicalRelative = this.#path.relative(canonicalRoot, checked);
+      if (
+        canonicalRelative === ".." ||
+        canonicalRelative.startsWith(`..${this.#path.sep}`) ||
+        this.#path.isAbsolute(canonicalRelative)
+      )
+        throw new Error("Task worktree canonical path escaped Candy's worktree root.");
+    }
   }
 }
 
@@ -1132,8 +1165,7 @@ export class ApplyChangesService {
       }
       if (!explicitUntrackedPaths) untrackedPaths.push(requested);
       await assertSafePath(source, requested, true);
-      const sourcePath = path.resolve(source, requested);
-      const content = await readFile(sourcePath);
+      const content = await readApplyFile(source, requested);
       if (
         input.activeSecrets.some(
           (secret) => secret.length > 0 && content.includes(Buffer.from(secret)),
@@ -1192,10 +1224,11 @@ export class ApplyChangesService {
     for (const requested of untrackedPaths) {
       if (sameRoot) continue;
       const targetPath = path.resolve(targetRoot, requested);
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      const content =
-        untrackedContents.get(requested) ?? (await readFile(path.resolve(source, requested)));
+      await ensureSafeDirectory(targetRoot, path.dirname(targetPath));
+      await assertSafePath(targetRoot, requested, true);
+      const content = untrackedContents.get(requested) ?? (await readApplyFile(source, requested));
       await writeFile(targetPath, content, { flag: "wx" });
+      await assertSafePath(targetRoot, requested, false);
     }
     return "applied";
   }
@@ -1380,5 +1413,43 @@ async function assertSafePath(
         throw new ApplyChangesBlockedError("Apply Changes source path is missing.");
       throw error;
     }
+  }
+}
+
+async function readApplyFile(root: string, requested: string): Promise<Buffer> {
+  await assertSafePath(root, requested, false);
+  const absolute = path.resolve(root, requested);
+  const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile())
+      throw new ApplyChangesBlockedError("Apply Changes requires a regular file.");
+    await assertSafePath(root, requested, false);
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function ensureSafeDirectory(root: string, directory: string): Promise<void> {
+  const absoluteRoot = path.resolve(root);
+  const absoluteDirectory = path.resolve(directory);
+  const relative = path.relative(absoluteRoot, absoluteDirectory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    throw new ApplyChangesBlockedError("Apply Changes directory escaped its target workspace.");
+  let current = absoluteRoot;
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, segment);
+    try {
+      const existing = await lstat(current);
+      if (existing.isSymbolicLink() || !existing.isDirectory())
+        throw new ApplyChangesBlockedError("Symlinked Apply Changes directories are blocked.");
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      await mkdir(current);
+    }
+    const checked = await lstat(current);
+    if (checked.isSymbolicLink() || !checked.isDirectory())
+      throw new ApplyChangesBlockedError("Apply Changes directory changed while it was created.");
   }
 }

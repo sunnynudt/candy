@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -587,6 +596,34 @@ test("Git worktree inspection resolves the macOS /var and /private/var aliases",
   }
 });
 
+test("Git worktree manager rejects a symlinked parent outside its Candy root", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-worktree-boundary-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  const outside = path.join(root, "outside");
+  await mkdir(worktreeRoot);
+  await mkdir(outside);
+  await symlink(outside, path.join(worktreeRoot, "linked"), "dir");
+  const calls: string[][] = [];
+  const plan = planGitWorktree(
+    path.join(root, "repo"),
+    path.join(worktreeRoot, "linked", "task-boundary"),
+    "task-boundary",
+    "0123456789abcdef",
+  );
+  const manager = new GitWorktreeManager(worktreeRoot, {
+    run: async (args) => {
+      calls.push([...args]);
+      return "";
+    },
+  });
+  try {
+    await assert.rejects(manager.create(plan), /canonical path escaped/u);
+    assert.deepEqual(calls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {
   const root = mkdtempSync(path.join(tmpdir(), "candy-git-fixture-"));
   const repository = path.join(root, "repo");
@@ -761,6 +798,42 @@ test("Apply Changes service stops on dirty target, changed base, conflict, and u
     assert.equal(existsSync(path.join(target, "new.txt")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Apply Changes creates missing untracked parent directories one component at a time", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-apply-parent-"));
+  const source = path.join(root, "source");
+  const target = path.join(root, "target");
+  await mkdir(source);
+  await mkdir(target);
+  await mkdir(path.join(source, "nested"));
+  await writeFileSync(path.join(source, "nested", "new.txt"), "nested untracked\n");
+  const runner = {
+    run: async (args: readonly string[]) => {
+      if (args[0] === "rev-parse") return "base\n";
+      if (args[0] === "status") return "";
+      if (args[0] === "ls-files") return "nested/new.txt\n";
+      throw new Error(`unexpected git command: ${args.join(" ")}`);
+    },
+  };
+  try {
+    await new ApplyChangesService(target, runner).apply(source, {
+      targetIsGit: true,
+      targetClean: true,
+      expectedBase: "base",
+      actualBase: "base",
+      paths: ["nested/new.txt"],
+      untrackedPaths: ["nested/new.txt"],
+      patchText: "",
+      activeSecrets: [],
+    });
+    assert.equal(
+      await readFile(path.join(target, "nested", "new.txt"), "utf8"),
+      "nested untracked\n",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
