@@ -2,7 +2,12 @@
 
 Updated: 2026-08-17
 
-Post-`b672d5a` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; the deterministic `npm run check` passes **213/213**. The checkpoint extends workspace containment to逐级安全创建目录、父目录 canonical containment and symlink/junction write rejection. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**, both bound to `b672d5a` and emitting sanitized reports. The exact `26.5.2` command is correctly blocked by preflight on this `26.6.1` host; Windows 11 remains unavailable. The current security scan revalidation is preserved as `incomplete` because this session could not verify the delegated-worker capacity required by the scan preflight; its target is older than `b672d5a` and it is not counted as a current-HEAD scan. `.omo/` remains user-owned and untracked.
+Post-`0e216e9` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; its embedded deterministic `npm run check` passes **217/217**. Checkpoints `59e818a` and `0e216e9` cover active-secret path redaction, bounded resource traversal, delete-approval redaction, provider SSE byte limits, and bounded Git subprocess output. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**, all bound to `0e216e9` and emitting sanitized reports. The exact `26.5.2` command is correctly blocked by preflight on this `26.6.1` host; Windows 11 remains unavailable. A fresh standard security scan for `0e216e9` is required; pathname check/use races remain open. `.omo/` remains user-owned and untracked.
+
+## 2026-08-17 Issue #4 final current-host checkpoint
+
+- `0e216e9` is the published canonical-branch HEAD. Current macOS Tahoe `26.6.1` arm64 acceptance passes **14/14**, embedded `npm run check` passes **217/217**, and both live provider gates pass: DeepSeek **7/7** at `https://api.deepseek.com`, domestic MiniMax **8/8** at `https://api.minimaxi.com`.
+- The current evidence is macOS-only and does not prove Windows 11, exact macOS `26.5.2`, signed release, or independent Trusted Shell/G2 approval. Desktop and Browser remain V2.
 
 Current Issue #4 security boundary: credential/provider/publication and the reviewed path categories above have source-backed fixes and regressions. These are implementation results, not independent G2 approval; residual OS-level containment, platform-specific reparse/race evidence, and the incomplete delegated security scan remain open.
 

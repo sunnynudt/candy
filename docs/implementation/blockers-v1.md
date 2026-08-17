@@ -2,7 +2,7 @@
 
 Updated: 2026-08-17
 
-Post-`b672d5a` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64, and its embedded deterministic `npm run check` passes **213/213**. Published security checkpoints include `d517729`, `2172da5`, `6c06118`, `89b261f`, and `b672d5a`; the latest extends workspace directory creation and parent containment with symlink/junction regressions. Live DeepSeek is **7/7** and domestic MiniMax **8/8**, both bound to `b672d5a`. The fresh standard security revalidation remains `incomplete` at preflight because delegated-worker capacity was not verifiable; its snapshot is bound to the prior revision and no current-HEAD full-scan Pass is claimed. The exact macOS `26.5.2` command is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`0e216e9` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **217/217** on Node `22.23.2`/npm `10.9.8`. Published security checkpoints include `59e818a` and `0e216e9`; the latest adds delete-approval and Candy resource path redaction, provider SSE byte limits, and bounded Git subprocess output. Live DeepSeek and domestic MiniMax pass **7/7** and **8/8**, respectively, all bound to `0e216e9`. A fresh standard security scan for `0e216e9` is required; pathname check/use races remain open and no current-HEAD full-scan Pass is claimed. The exact macOS `26.5.2` command is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
@@ -22,7 +22,12 @@ Post-native-containment-revalidation evidence: current source revision `38775e2`
 
 Post-clean-install evidence: pinned `npm ci --ignore-scripts` completed with an unchanged lockfile, 0 vulnerabilities, successful toolchain assertion, and successful build.
 
-Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `b672d5a` extends workspace directory creation and parent containment with symlink/junction regressions. The separately bound current macOS acceptance is 14/14 on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`, deterministic check 213/213, and the TUI-only responsiveness/terminal gates passing. Live DeepSeek 7/7 and domestic MiniMax 8/8 are current-HEAD evidence. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate and the incomplete independent security scan remains open.
+Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `0e216e9` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 217/217; live DeepSeek and domestic MiniMax pass 7/7 and 8/8. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate and the fresh current-HEAD security scan's residual pathname-race review.
+
+## 2026-08-17 Issue #4 final current-host checkpoint
+
+- `0e216e9` is the published canonical-branch HEAD. Current macOS acceptance passes **14/14**, `npm run check` passes **217/217**, and live DeepSeek/MiniMax pass **7/7** and **8/8**. Remaining blockers are platform/security evidence boundaries.
+- Remaining blockers are evidence boundaries, not an observed current-host test failure: Windows 11 execution, exact macOS `26.5.2`, signed release, independent Trusted Shell/G2 approval, and the fresh current-HEAD security scan. The pathname check/use race remains explicitly open pending that scan's sealed result.
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
