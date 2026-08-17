@@ -2,7 +2,7 @@
 
 Updated: 2026-08-17
 
-Post-`bd8428b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **229/229** on Node `22.23.2`/npm `10.9.8`. The checkpoint adds stale-owner fencing, app-data/workspace overlap rejection, bounded direct workspace reads/writes, and bounded attachment retrieval. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. The sealed standard scan `0c6364e9-6b74-4e1a-adb6-25ec357553a3` reports **8 open findings (6 medium, 2 low)** against the preceding `1783e64` snapshot; a fresh scan for `bd8428b` remains required. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`bd8428b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **229/229** on Node `22.23.2`/npm `10.9.8`. The checkpoint adds stale-owner fencing, app-data/workspace overlap rejection, bounded direct workspace reads/writes, and bounded attachment retrieval. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. Fresh scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` completed against `2911fcd` with **9 open findings (5 medium, 4 low)**; it is not a security clearance. Checkpoint `5f3b727` makes the normal macOS and Windows Trusted Shell gates fail closed until independent G2 approval and raises deterministic checks to **231/231**. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
@@ -26,7 +26,12 @@ Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macO
 
 ## 2026-08-17 Issue #4 `bd8428b` checkpoint blockers
 
-- A fresh whole-repository security scan must be run against `bd8428b`; the completed scan is bound to `1783e64` because the working tree changed while it was running.
+## 2026-08-17 Issue #4 Trusted Shell gate correction
+
+- Checkpoint `5f3b727c4e1b576321c5dcf217cd1784019637f5` removes the macOS Darwin arm64 host/architecture shortcut from the production Trusted Shell gate. The normal TUI composition root and the shared platform capability now remain fail-closed until independent G2 approval; targeted regressions and `npm run check` **231/231** pass.
+- This closes the source-level premature-enable defect. It does not close the independent G2 decision, nested-interpreter publication policy, descriptor-relative/reparse-safe filesystem races, Windows 11 acceptance, or exact macOS `26.5.2` evidence.
+
+- Fresh whole-repository scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` is complete against `2911fcd`; its 9 findings remain open and the report is not treated as a clearance for the later `5f3b727` source-gate correction.
 - Native descriptor-relative/no-reparse remediation is still required for workspace, attachment, session, non-Git snapshot, Apply, and Worktree TOCTOU paths. The current TypeScript checks reduce ordinary path escapes but do not prove OS-level race safety.
 - macOS Trusted Shell nested-interpreter publication policy remains unresolved. Windows Trusted Shell remains fail-closed until its native gate is independently accepted.
 - Windows 11 TUI acceptance, exact macOS `26.5.2` regression, signed release, independent G2 approval, and final V1 acceptance remain unavailable or open.
