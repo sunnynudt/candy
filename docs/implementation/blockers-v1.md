@@ -4,6 +4,8 @@ Updated: 2026-08-17
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
+Post-`961537a` current-host revalidation: `npm run acceptance:macos` passes **14/14** at source revision `961537af4b90350c95910342c41c7f947830a9e3`, with deterministic `npm run check` at **201/201**. The earlier 199/199 figure in the checkpoint note below is historical evidence.
+
 Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Implementation checkpoint `819d8a7` wires the Windows 11 toolchain gate and a Windows-only core TUI journey covering Auto Worktree, Apply, and restart no-replay; `c632f74` adds platform OS-store TUI credential lifecycle smoke with presence-only output; `456bab2` adds a real PiAgentEngine-backed deterministic TUI journey covering the approved DeepSeek endpoint, Candy-owned task/session persistence, and session credential exclusion; `737d7d7` adds a Pi-backed `candy_write` tool-loop journey covering workspace mutation and post-tool provider completion; `34ae949` adds credential revocation evidence covering delete, next-turn `needs_credentials`, no follow-up provider request, preserved history, and credential-free session data; `a36aac4` persists bounded workspace review metadata and adds real Pi coding review/restart/Apply evidence; `54b54c1` adds real Pi provider-stream cancellation with abort propagation and no false completion. The separately bound current macOS acceptance is 14/14 on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`, deterministic check 199/199, the TUI-only ten-run responsiveness gate passing, and bounded, credential-redacted TUI tool arguments and output covered by tests. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
@@ -35,6 +37,12 @@ Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macO
 - Checkpoint `54b54c1` adds `smoke:tui:pi:cancellation`, which uses the production `PiAgentEngine`, real TUI cancellation, and a deterministic DeepSeek SSE stream. It sends partial output, issues `:cancel`, observes provider abort, and verifies the task is cancelled without false completion.
 - The smoke preserves partial assistant transcript evidence, limits the run to one approved domestic DeepSeek request, and scans the Candy-owned session for credentials. Current macOS Tahoe `26.6.1` arm64 acceptance passes **14/14** with Node `22.23.2`/npm `10.9.8` and `npm run check` at **199/199**.
 - This closes only the current-host TUI cancellation evidence. Windows 11, exact macOS `26.5.2`, platform Trusted Shell G2, live-provider acceptance, signed release, and final V1 acceptance remain open.
+
+## 2026-08-17 Issue #4 Candy prompt invocation checkpoint
+
+- Checkpoint `961537a` adds `:prompts` and `:prompt <name> [args]` to the Interactive TUI. It reads only Candy-owned app-data `prompts/*.md` through the restricted loader, supports quoted arguments and `$1..$99`/`$ARGUMENTS`/`$@` expansion, and rejects malformed, oversized, control-character, empty, unknown, or credential-bearing invocations.
+- `npm run check` passes **201/201** on Node `22.23.2`/npm `10.9.8`; the new regression covers listing, quoted expansion, secret redaction, unknown-template rejection, and the argument bound.
+- This closes the deterministic implementation gap for Issue #4 user story #27 only. It does not close Windows 11, exact macOS `26.5.2`, live-provider revalidation on this revision, G2, signing, or final V1 acceptance.
 
 ## 2026-08-17 Issue #4 current-HEAD live provider checkpoint
 
