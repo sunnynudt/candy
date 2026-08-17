@@ -428,6 +428,52 @@ test("interactive TUI projects retry and compaction until the turn settles", asy
   }
 });
 
+test("interactive TUI cancels a turn while compaction is in progress", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-compaction-cancel-"));
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input, signal) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "started",
+          reason: "overflow",
+        };
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            signal.removeEventListener("abort", onAbort);
+            reject(new Error("compaction cancelled"));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+          void resolve;
+        });
+      },
+    };
+    const runPromise = new InteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("recover during compaction");
+    terminal.emitInput("\r");
+    const compactionOutput = await waitForOutput(terminal, /context compaction: overflow/u);
+    const taskId = compactionOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    const cancelledOutput = await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    assert.match(cancelledOutput, /context compaction: overflow/u);
+    assert.doesNotMatch(cancelledOutput, /context compaction settled|turn settled| completed/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI enables Trusted Shell Auto in the accepted macOS composition root", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
