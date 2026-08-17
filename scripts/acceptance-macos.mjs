@@ -59,6 +59,7 @@ const steps = [
   "measure:tui:responsiveness",
   "smoke:tui:launcher",
   "smoke:tui:credentials",
+  "smoke:tui:credential-revocation",
   "smoke:tui:pi",
   "smoke:tui:pi:tool",
   "smoke:tui-task",
