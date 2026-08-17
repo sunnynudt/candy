@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline";
 import path from "node:path";
 import { stat, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -17,7 +16,7 @@ import {
 import { PiAgentEngine, type PiAgentEngineInput, type PiAgentObservation } from "@candy/pi-adapter";
 import {
   CommandLedger,
-  decodeJsonLine,
+  decodeJsonLines,
   encodeJsonLine,
   validateProtocolMessage,
   type CommandEnvelope,
@@ -37,6 +36,8 @@ import {
   GitWorkspaceChangeTracker,
   LongRunningControlError,
   LongRunningTaskRunner,
+  MAX_TASK_ATTACHMENT_BYTES,
+  MAX_TASK_ATTACHMENT_COUNT,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   WorkspaceHandoff,
@@ -584,13 +585,13 @@ export class AppServerController {
       const prompt =
         this.#prompts.get(taskId) ?? (await this.#engine.recoverPrompt?.(taskId, executionPath));
       if (prompt === undefined) throw new Error("Task prompt is unavailable after restart.");
+      if (current.attachmentIds.length > MAX_TASK_ATTACHMENT_COUNT)
+        throw new Error("Task attachment count exceeds Candy's limit.");
       const images =
         current.attachmentIds.length === 0
           ? undefined
           : this.#attachments
-            ? await Promise.all(
-                current.attachmentIds.map((id) => this.#attachments!.getImagePayload(id)),
-              )
+            ? await loadTaskAttachments(this.#attachments, current.attachmentIds)
             : (() => {
                 throw new Error("Attachment storage is unavailable after restart.");
               })();
@@ -1318,15 +1319,14 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
           },
         }),
   });
-  const lines = createInterface({ input: stdin, crlfDelay: Infinity });
   const write = (message: ProtocolMessage): void => {
     stdout.write(encodeJsonLine(message));
   };
   void (async () => {
     try {
-      for await (const line of lines) {
+      for await (const message of decodeJsonLines(stdin)) {
         try {
-          const responses = await controller.dispatch(decodeJsonLine(line), write);
+          const responses = await controller.dispatch(message, write);
           responses.forEach(write);
         } catch {
           stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
@@ -1347,6 +1347,22 @@ function resolveActiveProviderSecrets(): readonly string[] {
     lease.release();
   }
   return secrets;
+}
+
+async function loadTaskAttachments(
+  store: AttachmentStore,
+  ids: readonly string[],
+): Promise<Awaited<ReturnType<AttachmentStore["getImagePayload"]>>[]> {
+  const images: Awaited<ReturnType<AttachmentStore["getImagePayload"]>>[] = [];
+  let totalBytes = 0;
+  for (const id of ids) {
+    const image = await store.getImagePayload(id);
+    totalBytes += Buffer.byteLength(image.data, "base64");
+    if (totalBytes > MAX_TASK_ATTACHMENT_BYTES)
+      throw new Error("Task attachments exceed Candy's aggregate byte limit.");
+    images.push(image);
+  }
+  return images;
 }
 
 function containsActiveProviderSecret(

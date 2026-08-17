@@ -1,6 +1,7 @@
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_JSONL_BYTES = 1024 * 1024;
 export const MAX_TASK_ID_LENGTH = 128;
+export const MAX_ATTACHMENT_IDS = 32;
 
 export function isSafeTaskId(value: unknown): value is string {
   return (
@@ -612,6 +613,7 @@ function assertRelativePaths(value: unknown, name: string): asserts value is rea
 function assertAttachmentIds(value: unknown): asserts value is readonly string[] {
   if (
     !Array.isArray(value) ||
+    value.length > MAX_ATTACHMENT_IDS ||
     value.some((id) => typeof id !== "string" || !/^att_[a-f0-9]{64}$/u.test(id))
   ) {
     throw new ProtocolValidationError("invalid_message", "attachmentIds are invalid.");
@@ -689,6 +691,39 @@ export function decodeJsonLine(line: string): ProtocolMessage {
     throw new ProtocolValidationError("invalid_message", "Protocol line is not valid JSON.");
   }
   return validateProtocolMessage(parsed);
+}
+
+/**
+ * Decode a byte stream without allowing the underlying line reader to
+ * materialize an unbounded unterminated JSONL frame first.
+ */
+export async function* decodeJsonLines(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncGenerator<ProtocolMessage> {
+  let pending = Buffer.alloc(0);
+  for await (const chunk of chunks) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let start = 0;
+    for (let index = 0; index < bytes.length; index += 1) {
+      if (bytes[index] !== 0x0a) continue;
+      const segment = bytes.subarray(start, index);
+      const line = pending.length === 0 ? segment : Buffer.concat([pending, segment]);
+      if (line.length > MAX_JSONL_BYTES) {
+        throw new ProtocolValidationError("line_too_large", "Protocol line is too large.");
+      }
+      yield decodeJsonLine(line.toString("utf8"));
+      pending = Buffer.alloc(0);
+      start = index + 1;
+    }
+    const tail = bytes.subarray(start);
+    if (tail.length > 0) {
+      if (pending.length + tail.length > MAX_JSONL_BYTES) {
+        throw new ProtocolValidationError("line_too_large", "Protocol line is too large.");
+      }
+      pending = pending.length === 0 ? Buffer.from(tail) : Buffer.concat([pending, tail]);
+    }
+  }
+  if (pending.length > 0) yield decodeJsonLine(pending.toString("utf8"));
 }
 
 export class CommandLedger {

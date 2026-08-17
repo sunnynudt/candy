@@ -94,16 +94,63 @@ fn main() {
     }
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => break,
+    let mut input = stdin.lock();
+    loop {
+        let line = match read_bounded_line(&mut input) {
+            Ok(Some(value)) => value,
+            Ok(None) => break,
+            Err(BoundedLineError::TooLarge) => {
+                if writeln!(stdout, "{}", error_response("line_too_large")).is_err() {
+                    break;
+                }
+                let _ = stdout.flush();
+                break;
+            }
+            Err(BoundedLineError::InvalidUtf8 | BoundedLineError::Io) => break,
         };
         let response = response_for_line(&line);
         if writeln!(stdout, "{}", response).is_err() {
             break;
         }
         let _ = stdout.flush();
+    }
+}
+
+#[derive(Debug)]
+enum BoundedLineError {
+    Io,
+    InvalidUtf8,
+    TooLarge,
+}
+
+fn read_bounded_line(reader: &mut impl BufRead) -> Result<Option<String>, BoundedLineError> {
+    let mut line = Vec::new();
+    loop {
+        let buffer = reader.fill_buf().map_err(|_| BoundedLineError::Io)?;
+        if buffer.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return String::from_utf8(line)
+                .map(Some)
+                .map_err(|_| BoundedLineError::InvalidUtf8);
+        }
+        if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            if line.len() + newline > MAX_LINE_BYTES {
+                return Err(BoundedLineError::TooLarge);
+            }
+            line.extend_from_slice(&buffer[..newline]);
+            reader.consume(newline + 1);
+            return String::from_utf8(line)
+                .map(Some)
+                .map_err(|_| BoundedLineError::InvalidUtf8);
+        }
+        if line.len() + buffer.len() > MAX_LINE_BYTES {
+            return Err(BoundedLineError::TooLarge);
+        }
+        line.extend_from_slice(buffer);
+        let consumed = buffer.len();
+        reader.consume(consumed);
     }
 }
 
@@ -2368,7 +2415,9 @@ fn contains_reparse_tree(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{response_for_line, MAX_LINE_BYTES};
+    use std::io::Cursor;
+
+    use super::{read_bounded_line, response_for_line, BoundedLineError, MAX_LINE_BYTES};
 
     #[test]
     fn distinguishes_task_worktree_ids_from_credential_values() {
@@ -2451,6 +2500,29 @@ mod tests {
     fn rejects_oversized_lines_before_protocol_processing() {
         let line = "x".repeat(MAX_LINE_BYTES + 1);
         assert!(response_for_line(&line).contains("line_too_large"));
+    }
+
+    #[test]
+    fn bounded_reader_rejects_unterminated_oversized_frames() {
+        let mut input = Cursor::new(vec![b'x'; MAX_LINE_BYTES + 1]);
+        assert!(matches!(
+            read_bounded_line(&mut input),
+            Err(BoundedLineError::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn bounded_reader_preserves_split_frames() {
+        let mut input = Cursor::new(b"abc\ndef".to_vec());
+        assert_eq!(
+            read_bounded_line(&mut input).unwrap().as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            read_bounded_line(&mut input).unwrap().as_deref(),
+            Some("def")
+        );
+        assert!(read_bounded_line(&mut input).unwrap().is_none());
     }
 
     #[cfg(windows)]

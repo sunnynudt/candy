@@ -765,7 +765,7 @@ function assertTaskId(taskId: string): void {
 }
 
 function assertAttachmentIds(ids: readonly string[]): void {
-  if (ids.some((id) => !/^att_[a-f0-9]{64}$/u.test(id)))
+  if (ids.length > 32 || ids.some((id) => !/^att_[a-f0-9]{64}$/u.test(id)))
     throw new Error("Attachment id is invalid.");
 }
 

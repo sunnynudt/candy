@@ -34,6 +34,9 @@ import {
   GitWorktreeManager,
   InMemoryBrowserWorkspace,
   LongRunningTaskRunner,
+  MAX_ATTACHMENT_METADATA_BYTES,
+  NonGitWorkspaceSnapshotLimitError,
+  NonGitWorkspaceChangeTracker,
   ProviderConcurrencyGate,
   SerialMutationLane,
   WorkspaceHandoff,
@@ -308,6 +311,38 @@ test("attachment store hashes image bytes, keeps binary outside session, and rej
   assert.equal(await store.cleanupBefore(101), 1);
   assert.equal(readFileSync(outside, "utf8"), "keep");
   rmSync(outside, { force: true });
+});
+
+test("attachment cleanup bounds metadata materialization", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-metadata-limit-"));
+  const id = `att_${"a".repeat(64)}`;
+  try {
+    writeFileSync(
+      path.join(root, `${id}.json`),
+      JSON.stringify({ id, createdAt: 0, padding: "x".repeat(MAX_ATTACHMENT_METADATA_BYTES) }),
+    );
+    const store = new AttachmentStore(root);
+    await assert.rejects(store.cleanupBefore(1), /metadata exceeds/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("non-Git workspace snapshots fail closed at configured aggregate limits", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-limit-"));
+  try {
+    writeFileSync(path.join(root, "one.txt"), "one");
+    writeFileSync(path.join(root, "two.txt"), "two");
+    const tracker = new NonGitWorkspaceChangeTracker({
+      maxDepth: 4,
+      maxEntries: 1,
+      maxFiles: 2,
+      maxBytes: 64,
+    });
+    await assert.rejects(tracker.captureBaseline(root), NonGitWorkspaceSnapshotLimitError);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("attachment store applies a credential guard before persisting bytes", async () => {

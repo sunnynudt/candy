@@ -3,7 +3,6 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path, { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
 import {
   app,
   BrowserWindow,
@@ -26,7 +25,7 @@ import {
 } from "@candy/platform";
 import { AttachmentStore, type BrowserAction, type BrowserTabSnapshot } from "@candy/runtime";
 import {
-  decodeJsonLine,
+  decodeJsonLines,
   encodeJsonLine,
   type CommandEnvelope,
   type EventEnvelope,
@@ -120,25 +119,28 @@ class AppServerClient {
       windowsHide: true,
     });
     this.#child = child;
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    lines.on("line", (line) => {
-      if (browserSmokeMarker !== undefined && line.includes(browserSmokeMarker))
-        this.#browserSmokeMarkerSeen = true;
+    void (async () => {
       try {
-        const message = decodeJsonLine(line);
-        if (message.kind !== "event") return;
-        this.#onEvent(message);
-        if (message.event.type === "snapshot") {
-          const pending = this.#pending.get(message.taskId);
-          if (pending) {
-            this.#pending.delete(message.taskId);
-            pending.resolve(message);
+        for await (const message of decodeJsonLines(child.stdout)) {
+          if (
+            browserSmokeMarker !== undefined &&
+            JSON.stringify(message).includes(browserSmokeMarker)
+          )
+            this.#browserSmokeMarkerSeen = true;
+          if (message.kind !== "event") continue;
+          this.#onEvent(message);
+          if (message.event.type === "snapshot") {
+            const pending = this.#pending.get(message.taskId);
+            if (pending) {
+              this.#pending.delete(message.taskId);
+              pending.resolve(message);
+            }
           }
         }
       } catch {
-        // Malformed child output is a local runtime failure; never forward it to the renderer.
+        // Malformed or oversized child output is a local runtime failure; never forward it.
       }
-    });
+    })();
     child.once("exit", () => {
       if (this.#child !== child) return;
       this.#child = undefined;

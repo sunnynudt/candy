@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   CommandLedger,
+  decodeJsonLines,
   decodeJsonLine,
   encodeJsonLine,
   EventLedger,
@@ -61,6 +62,32 @@ test("invalid versions and malformed input fail closed", () => {
   );
 });
 
+test("bounded JSONL decoding rejects an oversized unterminated frame before materialization", async () => {
+  async function* oversized(): AsyncGenerator<Uint8Array> {
+    yield Buffer.alloc(MAX_JSONL_BYTES + 1, 0x78);
+  }
+  await assert.rejects(
+    async () => {
+      for await (const _message of decodeJsonLines(oversized())) {
+        void _message;
+      }
+    },
+    (error: unknown) => error instanceof ProtocolValidationError && error.code === "line_too_large",
+  );
+});
+
+test("bounded JSONL decoding handles frames split across byte chunks", async () => {
+  async function* chunks(): AsyncGenerator<Uint8Array> {
+    const encoded = Buffer.from(encodeJsonLine(snapshotCommandFixture));
+    yield encoded.subarray(0, 3);
+    yield encoded.subarray(3, 17);
+    yield encoded.subarray(17);
+  }
+  const messages = [];
+  for await (const message of decodeJsonLines(chunks())) messages.push(message);
+  assert.deepEqual(messages, [snapshotCommandFixture]);
+});
+
 test("task ids are path-safe at the protocol boundary", () => {
   assert.doesNotThrow(() =>
     validateProtocolMessage({ ...snapshotCommandFixture, taskId: "task_ok-1" }),
@@ -72,6 +99,27 @@ test("task ids are path-safe at the protocol boundary", () => {
   assert.throws(
     () => validateProtocolMessage({ ...snapshotCommandFixture, taskId: "nested/task" }),
     /taskId is invalid/u,
+  );
+});
+
+test("attachment lists have a bounded fan-out at the protocol boundary", () => {
+  const attachmentIds = Array.from(
+    { length: 33 },
+    (_, index) => `att_${index.toString(16).padStart(64, "0")}`,
+  );
+  assert.throws(
+    () =>
+      validateProtocolMessage({
+        ...snapshotCommandFixture,
+        command: {
+          type: "task.create",
+          prompt: "inspect",
+          approvalProfile: "read-only",
+          workspacePath: process.cwd(),
+          attachmentIds,
+        },
+      }),
+    /attachmentIds are invalid/u,
   );
 });
 

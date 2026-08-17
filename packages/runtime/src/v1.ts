@@ -5,8 +5,8 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readFile,
-  readdir,
   realpath,
   rm,
   stat,
@@ -19,6 +19,14 @@ const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
 export const MAX_UNTRACKED_FILE_BYTES = 1_048_576;
 const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_TASK_ATTACHMENT_COUNT = 32;
+export const MAX_TASK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_ATTACHMENT_CLEANUP_ENTRIES = 4_096;
+export const MAX_ATTACHMENT_METADATA_BYTES = 64 * 1024;
+export const MAX_NON_GIT_SNAPSHOT_DEPTH = 64;
+export const MAX_NON_GIT_SNAPSHOT_ENTRIES = 20_000;
+export const MAX_NON_GIT_SNAPSHOT_FILES = 10_000;
+export const MAX_NON_GIT_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const NON_GIT_IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -228,16 +236,29 @@ export class AttachmentStore {
 
   public async cleanupBefore(cutoff: number): Promise<number> {
     let removed = 0;
-    for (const entry of await readdir(this.root).catch(() => [] as string[])) {
-      if (!entry.endsWith(".json")) continue;
-      const metadataPath = path.join(this.root, entry);
-      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as AttachmentMetadata;
-      if (!/^att_[a-f0-9]{64}$/u.test(metadata.id)) continue;
-      if (metadata.createdAt < cutoff) {
-        await rm(path.join(this.root, `${metadata.id}.json`), { force: true });
-        await rm(path.join(this.root, `${metadata.id}.bin`), { force: true });
-        removed += 1;
+    const directory = await opendir(this.root).catch(() => undefined);
+    if (directory === undefined) return 0;
+    let entries = 0;
+    try {
+      for await (const entry of directory) {
+        entries += 1;
+        if (entries > MAX_ATTACHMENT_CLEANUP_ENTRIES)
+          throw new Error("Attachment cleanup exceeded its entry limit.");
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const metadataPath = path.join(this.root, entry.name);
+        const metadataStat = await stat(metadataPath);
+        if (metadataStat.size > MAX_ATTACHMENT_METADATA_BYTES)
+          throw new Error("Attachment metadata exceeds its size limit.");
+        const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as AttachmentMetadata;
+        if (!/^att_[a-f0-9]{64}$/u.test(metadata.id)) continue;
+        if (metadata.createdAt < cutoff) {
+          await rm(path.join(this.root, `${metadata.id}.json`), { force: true });
+          await rm(path.join(this.root, `${metadata.id}.bin`), { force: true });
+          removed += 1;
+        }
       }
+    } finally {
+      await directory.close().catch(() => undefined);
     }
     return removed;
   }
@@ -939,8 +960,17 @@ interface NonGitFileState {
 export class NonGitWorkspaceChangeTracker implements WorkspaceChangeTracker {
   readonly #baselines = new Map<string, Map<string, NonGitFileState>>();
 
+  public constructor(
+    private readonly limits: NonGitWorkspaceSnapshotLimits = {
+      maxDepth: MAX_NON_GIT_SNAPSHOT_DEPTH,
+      maxEntries: MAX_NON_GIT_SNAPSHOT_ENTRIES,
+      maxFiles: MAX_NON_GIT_SNAPSHOT_FILES,
+      maxBytes: MAX_NON_GIT_SNAPSHOT_BYTES,
+    },
+  ) {}
+
   public async captureBaseline(workspace: string): Promise<string | undefined> {
-    this.#baselines.set(workspace, await snapshotNonGitTree(workspace));
+    this.#baselines.set(workspace, await snapshotNonGitTree(workspace, this.limits));
     return undefined;
   }
 
@@ -951,7 +981,7 @@ export class NonGitWorkspaceChangeTracker implements WorkspaceChangeTracker {
   ): Promise<WorkspaceChangeSnapshot> {
     const baseline = this.#baselines.get(workspace);
     if (baseline === undefined) return emptyWorkspaceChanges();
-    const current = await snapshotNonGitTree(workspace);
+    const current = await snapshotNonGitTree(workspace, this.limits);
     const changed: string[] = [];
     const added: string[] = [];
     const removed: string[] = [];
@@ -979,28 +1009,72 @@ export class NonGitWorkspaceChangeTracker implements WorkspaceChangeTracker {
   }
 }
 
-async function snapshotNonGitTree(root: string): Promise<Map<string, NonGitFileState>> {
+export interface NonGitWorkspaceSnapshotLimits {
+  readonly maxDepth: number;
+  readonly maxEntries: number;
+  readonly maxFiles: number;
+  readonly maxBytes: number;
+}
+
+export class NonGitWorkspaceSnapshotLimitError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "NonGitWorkspaceSnapshotLimitError";
+  }
+}
+
+async function snapshotNonGitTree(
+  root: string,
+  limits: NonGitWorkspaceSnapshotLimits,
+): Promise<Map<string, NonGitFileState>> {
   const snapshot = new Map<string, NonGitFileState>();
-  async function visit(directory: string, prefix: string): Promise<void> {
-    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const absolute = path.join(directory, entry.name);
-      const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (NON_GIT_IGNORED_DIRECTORIES.has(entry.name)) continue;
-        await visit(absolute, relative);
-        continue;
+  let entriesSeen = 0;
+  let filesSeen = 0;
+  let bytesSeen = 0;
+  async function visit(directory: string, prefix: string, depth: number): Promise<void> {
+    if (depth > limits.maxDepth)
+      throw new NonGitWorkspaceSnapshotLimitError(
+        "Non-Git workspace snapshot exceeded its depth limit.",
+      );
+    const handle = await opendir(directory).catch(() => undefined);
+    if (handle === undefined) return;
+    try {
+      for await (const entry of handle) {
+        entriesSeen += 1;
+        if (entriesSeen > limits.maxEntries)
+          throw new NonGitWorkspaceSnapshotLimitError(
+            "Non-Git workspace snapshot exceeded its entry limit.",
+          );
+        const absolute = path.join(directory, entry.name);
+        const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (NON_GIT_IGNORED_DIRECTORIES.has(entry.name)) continue;
+          await visit(absolute, relative, depth + 1);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const metadata = await stat(absolute).catch(() => undefined);
+        if (metadata === undefined) continue;
+        filesSeen += 1;
+        if (filesSeen > limits.maxFiles)
+          throw new NonGitWorkspaceSnapshotLimitError(
+            "Non-Git workspace snapshot exceeded its file limit.",
+          );
+        bytesSeen += metadata.size;
+        if (bytesSeen > limits.maxBytes)
+          throw new NonGitWorkspaceSnapshotLimitError(
+            "Non-Git workspace snapshot exceeded its byte limit.",
+          );
+        snapshot.set(relative, {
+          size: metadata.size,
+          modifiedMs: Math.trunc(metadata.mtimeMs),
+        });
       }
-      if (!entry.isFile()) continue;
-      const metadata = await stat(absolute).catch(() => undefined);
-      if (metadata === undefined) continue;
-      snapshot.set(relative, {
-        size: metadata.size,
-        modifiedMs: Math.trunc(metadata.mtimeMs),
-      });
+    } finally {
+      await handle.close().catch(() => undefined);
     }
   }
-  await visit(root, "");
+  await visit(root, "", 0);
   return snapshot;
 }
 
