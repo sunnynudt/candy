@@ -2,7 +2,7 @@
 
 Updated: 2026-08-17
 
-Post-`bd8428b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **229/229** on Node `22.23.2`/npm `10.9.8`. The checkpoint adds stale-owner fencing, app-data/workspace overlap rejection, bounded direct workspace reads/writes, and bounded attachment retrieval. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. Fresh scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` completed against `2911fcd` with **9 open findings (5 medium, 4 low)**; it is not a security clearance. Checkpoint `5f3b727` makes the normal macOS and Windows Trusted Shell gates fail closed until independent G2 approval and raises deterministic checks to **231/231**. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`c6eb334` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **232/232** on Node `22.23.2`/npm `10.9.8`. The code line includes stale-owner fencing, app-data/workspace overlap rejection, bounded workspace/attachment operations, fail-closed Trusted Shell gates pending G2, and exclusive/no-follow attachment metadata creation. Current-source DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. Fresh scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` completed against `2911fcd` with **9 open findings (5 medium, 4 low)**; it is not a security clearance. The attachment metadata symlink finding is addressed by `c6eb334`; descriptor-relative/reparse-safe races and platform gates remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
@@ -24,7 +24,10 @@ Post-clean-install evidence: pinned `npm ci --ignore-scripts` completed with an 
 
 Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `bd8428b` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 229/229; DeepSeek passes 7/7 and domestic MiniMax passes 8/8. The sealed scan reports eight findings for the prior `1783e64` snapshot, including descriptor-relative TOCTOU, nested-interpreter publication indirection, and session/attachment races; it is not evidence that `bd8428b` is clean. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
 
-## 2026-08-17 Issue #4 `bd8428b` checkpoint blockers
+## 2026-08-17 Issue #4 `c6eb334` checkpoint blockers
+
+- Code checkpoint `c6eb334d6578d5db5d76a672339a05d12b3b3cf5` adds exclusive/no-follow attachment metadata creation, regular-file validation on metadata reads, duplicate-put compatibility, and a pre-existing metadata-symlink regression. Current macOS `26.6.1` arm64 acceptance passes **14/14** with embedded `npm run check` **232/232**; current-source DeepSeek passes **7/7** and domestic MiniMax passes **8/8**.
+- The current reports are source-bound to `c6eb334`. The attachment metadata symlink finding from scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` is addressed; descriptor-relative/reparse-safe filesystem races, nested-interpreter publication indirection, Windows 11, exact macOS `26.5.2`, independent G2, and final V1 acceptance remain open.
 
 ## 2026-08-17 Issue #4 Trusted Shell gate correction
 
