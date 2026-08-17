@@ -22,6 +22,7 @@ const lockfileDigest = createHash("sha256")
 const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
 const steps = [
   "check:toolchain",
+  "check:windows-toolchain",
   "check",
   "check:native",
   "measure:tui:responsiveness",
