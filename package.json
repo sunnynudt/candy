@@ -56,6 +56,7 @@
     "smoke:tui:pi": "npm run build && node scripts/smoke-tui-pi-journey.mjs",
     "smoke:tui:pi:tool": "npm run build && node scripts/smoke-tui-pi-tool-journey.mjs",
     "smoke:tui:pi:coding": "npm run build && node scripts/smoke-tui-pi-coding-journey.mjs",
+    "smoke:tui:pi:cancellation": "npm run build && node scripts/smoke-tui-pi-cancellation.mjs",
     "smoke:tui:journey:macos": "npm run build && node scripts/smoke-tui-journey-macos.mjs",
     "smoke:tui:journey:windows": "npm run build && node scripts/smoke-tui-journey-windows.mjs",
     "smoke:tui:terminal:macos": "npm run build && node scripts/smoke-tui-terminal-matrix-macos.mjs",

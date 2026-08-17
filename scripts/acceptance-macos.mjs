@@ -63,6 +63,7 @@ const steps = [
   "smoke:tui:pi",
   "smoke:tui:pi:tool",
   "smoke:tui:pi:coding",
+  "smoke:tui:pi:cancellation",
   "smoke:tui-task",
   "smoke:tui:journey:macos",
   "smoke:tui:terminal:macos",
