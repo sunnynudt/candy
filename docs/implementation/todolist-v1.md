@@ -40,6 +40,12 @@
 - 该 smoke 同时断言 partial assistant transcript 保留、仅有一次 approved domestic DeepSeek request，且 Candy-owned session 不含凭据。当前 macOS Tahoe `26.6.1` arm64 acceptance 通过 **14/14**，Node `22.23.2`/npm `10.9.8`，`npm run check` 通过 **199/199**。
 - 该证据只代表当前 macOS 主机 TUI。Windows 11、精确 macOS `26.5.2`、平台 Trusted Shell G2、live-provider 完整门禁、签名发布和最终 V1 acceptance 仍未完成；不得用 macOS 结果替代 Windows 或 exact baseline。
 
+## 2026-08-17 Issue #4 current-HEAD live provider checkpoint
+
+- source revision `b23383a` 的 Candy-owned DeepSeek live gate 通过 **7/7**，使用批准的 `https://api.deepseek.com`，覆盖 streaming、tool/replay、cancellation、受控错误合同、session 无凭据扫描和 lease release。
+- 同一 revision 的国内 MiniMax live gate 通过 **8/8**，使用 `https://api.minimaxi.com`，覆盖 text、image、thinking/tool replay、cancellation、受控错误合同、`LIVE-MM-05` 产品策略、session 无凭据扫描和 lease release。
+- 脱敏报告保留在 `out/acceptance/live/`，不含 credential value、fingerprint、header、prompt 或 raw provider payload。该 checkpoint 只关闭当前主机 provider-path evidence；Windows 11、精确 macOS `26.5.2`、平台 Trusted Shell G2、签名发布和最终 V1 acceptance 仍未完成。
+
 当前接力规则：白天在 MacBook Pro 上优先实现、测试和记录当前 macOS Tahoe `26.x` Apple Silicon 能力；只有在声明精确兼容性时才运行 macOS `26.5.2` 回归基线。晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
 ## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
