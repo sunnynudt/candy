@@ -287,10 +287,25 @@ export class DeepSeekClient {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
+    let totalBytes = 0;
     try {
       for (;;) {
         const chunk = await reader.read();
-        pending += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        const decoded = decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        totalBytes += Buffer.byteLength(decoded, "utf8");
+        if (totalBytes > MAX_PROVIDER_SSE_TOTAL_BYTES) {
+          throw new ProviderContractError(
+            "DeepSeek response exceeded the size limit.",
+            "provider_error",
+          );
+        }
+        pending += decoded;
+        if (Buffer.byteLength(pending, "utf8") > MAX_PROVIDER_SSE_PENDING_BYTES) {
+          throw new ProviderContractError(
+            "DeepSeek response event exceeded the size limit.",
+            "provider_error",
+          );
+        }
         const lines = pending.split(/\r?\n/u);
         pending = lines.pop() ?? "";
         for (const line of lines) {
@@ -370,10 +385,25 @@ export class MiniMaxClient {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
+    let totalBytes = 0;
     try {
       for (;;) {
         const chunk = await reader.read();
-        pending += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        const decoded = decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        totalBytes += Buffer.byteLength(decoded, "utf8");
+        if (totalBytes > MAX_PROVIDER_SSE_TOTAL_BYTES) {
+          throw new ProviderContractError(
+            "MiniMax response exceeded the size limit.",
+            "provider_error",
+          );
+        }
+        pending += decoded;
+        if (Buffer.byteLength(pending, "utf8") > MAX_PROVIDER_SSE_PENDING_BYTES) {
+          throw new ProviderContractError(
+            "MiniMax response event exceeded the size limit.",
+            "provider_error",
+          );
+        }
         const lines = pending.split(/\r?\n/u);
         pending = lines.pop() ?? "";
         for (const line of lines) {
@@ -1127,6 +1157,8 @@ const MAX_SEARCH_FILES = 1_000;
 const MAX_SEARCH_MATCHES = 200;
 const MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_SEARCH_LINE_CHARS = 2_048;
+const MAX_PROVIDER_SSE_PENDING_BYTES = 1 * 1024 * 1024;
+const MAX_PROVIDER_SSE_TOTAL_BYTES = 16 * 1024 * 1024;
 const IGNORED_BROWSE_DIRECTORIES = new Set([
   ".cache",
   ".candy",

@@ -373,7 +373,10 @@ function readCandyFile(
     const content = readStableResource(filePath, realPath, stats, fileSystem);
     return content === undefined
       ? undefined
-      : { path: realPath, content: redactCredentialMaterial(content, activeSecrets) };
+      : {
+          path: redactCredentialMaterial(realPath, activeSecrets),
+          content: redactCredentialMaterial(content, activeSecrets),
+        };
   } catch {
     return undefined;
   }
@@ -430,7 +433,12 @@ function readApprovedContextFile(
     const content = readStableResource(contextPath, contextRealPath, contextStats, fileSystem);
     if (content === undefined) return [];
 
-    return [{ path: contextRealPath, content: redactCredentialMaterial(content, activeSecrets) }];
+    return [
+      {
+        path: redactCredentialMaterial(contextRealPath, activeSecrets),
+        content: redactCredentialMaterial(content, activeSecrets),
+      },
+    ];
   } catch {
     return [];
   }

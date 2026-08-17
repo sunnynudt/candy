@@ -834,13 +834,25 @@ class NodeGitCommandRunner implements GitCommandRunner {
       });
       let stdout = "";
       let stderr = "";
+      let outputBytes = 0;
+      let outputLimitExceeded = false;
+      const appendOutput = (current: string, chunk: string): string => {
+        outputBytes += Buffer.byteLength(chunk, "utf8");
+        if (outputBytes > MAX_WORKSPACE_PATCH_BYTES) {
+          outputLimitExceeded = true;
+          child.kill();
+          return current;
+        }
+        return current + chunk;
+      };
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => (stdout += chunk));
-      child.stderr.on("data", (chunk: string) => (stderr += chunk));
+      child.stdout.on("data", (chunk: string) => (stdout = appendOutput(stdout, chunk)));
+      child.stderr.on("data", (chunk: string) => (stderr = appendOutput(stderr, chunk)));
       child.once("error", reject);
       child.once("close", (code) => {
-        if (code === 0) resolve(stdout);
+        if (outputLimitExceeded) reject(new Error("git output exceeded Candy's size limit."));
+        else if (code === 0) resolve(stdout);
         else reject(new Error(`git ${args[0] ?? "command"} failed: ${stderr.trim()}`));
       });
       child.stdin.end(input);

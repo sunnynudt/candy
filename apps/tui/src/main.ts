@@ -1476,7 +1476,7 @@ export class InteractiveTui {
             ...(taskSnapshot.approvalProfile === "auto"
               ? {
                   fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
-                    this.requestFileDeleteApproval(taskId, request, signal),
+                    this.requestFileDeleteApproval(taskId, request, signal, activeSecrets),
                 }
               : {}),
             ...(taskSnapshot.trustedShell
@@ -1847,6 +1847,7 @@ export class InteractiveTui {
     taskId: string,
     request: FileDeleteApprovalRequest,
     signal: AbortSignal,
+    activeSecrets: readonly string[],
   ): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     const approvalId = `delete-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
@@ -1862,8 +1863,9 @@ export class InteractiveTui {
       const denyOnAbort = (): void => settle(false);
       this.#deleteApprovals.set(approvalId, { taskId, settle });
       signal.addEventListener("abort", denyOnAbort, { once: true });
+      const safePath = redactSensitive(request.path, activeSecrets);
       this.write(
-        `\napproval required: delete ${request.path}\n:approve ${approvalId} or :deny ${approvalId}\n`,
+        `\napproval required: delete ${safePath}\n:approve ${approvalId} or :deny ${approvalId}\n`,
       );
     });
   }

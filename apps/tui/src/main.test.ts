@@ -240,11 +240,15 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
   const terminal: FakeTerminal = new FakeTerminal();
   let observedProfile: "read-only" | "auto" | undefined;
   let deleteApproved: boolean | undefined;
+  const activeSecret = "fixture-delete-secret";
   const engine: TuiAgentEngine = {
     async *runTurn(input, signal) {
       observedProfile = input.approvalProfile;
       yield { type: "turn.started", taskId: input.taskId };
-      deleteApproved = await input.fileDeleteApproval?.({ path: "obsolete.ts" }, signal);
+      deleteApproved = await input.fileDeleteApproval?.(
+        { path: `obsolete-${activeSecret}.ts` },
+        signal,
+      );
       yield {
         type: "tool.completed",
         taskId: input.taskId,
@@ -259,6 +263,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
       appDataRoot: root,
       engine,
       terminal,
+      activeSecrets: () => [activeSecret],
     }).run();
     await new Promise<void>((resolve: () => void): void => {
       setImmediate(resolve);
@@ -269,7 +274,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     const approvalOutput = await waitForOutput(
       terminal,
-      /approval required: delete obsolete\.ts[\s\S]*:approve delete-[a-z0-9]+/u,
+      /approval required: delete obsolete-\[REDACTED\]\.ts[\s\S]*:approve delete-[a-z0-9]+/u,
       5_000,
     );
     const approvalId = approvalOutput.match(/:approve (delete-[a-z0-9]+)/u)?.[1];
@@ -283,6 +288,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     assert.equal(observedProfile, "auto");
     assert.equal(deleteApproved, true);
     assert.match(completedOutput, /\[tool candy_delete\]/u);
+    assert.doesNotMatch(completedOutput, new RegExp(activeSecret, "u"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

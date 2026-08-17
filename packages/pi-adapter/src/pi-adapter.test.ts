@@ -480,6 +480,31 @@ test("DeepSeek client uses only the approved endpoint and releases a secret leas
   assert.equal(released, true);
 });
 
+test("provider SSE streams reject oversized events before unbounded buffering", async () => {
+  const client = new DeepSeekClient(
+    async () => ({ secret: "fixture-secret", release: () => undefined }),
+    async () =>
+      new Response(`data: ${"x".repeat(1_048_577)}`, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+  );
+  await assert.rejects(
+    async () => {
+      for await (const _chunk of client.stream(
+        { model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], stream: true },
+        new AbortController().signal,
+      )) {
+        void _chunk;
+      }
+    },
+    (error: unknown) =>
+      error instanceof ProviderContractError &&
+      error.code === "provider_error" &&
+      /size limit/u.test(error.message),
+  );
+});
+
 test("DeepSeek controlled provider failures expose only sanitized reasons", async () => {
   const cases = [
     {
@@ -1256,6 +1281,31 @@ test("Candy restricted resource loader bounds resource directory depth", async (
   } finally {
     await rm(workspace, { recursive: true, force: true });
     await rm(candyRoot, { recursive: true, force: true });
+  }
+});
+
+test("Candy restricted resource loader redacts active secrets from model-visible paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-resource-path-secret-"));
+  const activeSecret = "fixture-resource-secret";
+  const secretRoot = path.join(root, activeSecret);
+  await mkdir(path.join(secretRoot, "skills"), { recursive: true });
+  await writeFile(
+    path.join(secretRoot, "skills", "SKILL.md"),
+    "---\nname: secret-path\ndescription: path fixture\n---\ncontent\n",
+  );
+  try {
+    const loader = new CandyRestrictedResourceLoader(
+      secretRoot,
+      undefined,
+      [activeSecret],
+      secretRoot,
+    );
+    const skill = loader.getSkills().skills[0];
+    assert.equal(skill?.filePath.includes(activeSecret), false);
+    assert.equal(skill?.sourceInfo.path.includes(activeSecret), false);
+    assert.equal(skill?.filePath.includes("[REDACTED]"), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
