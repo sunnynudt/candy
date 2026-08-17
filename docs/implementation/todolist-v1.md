@@ -12,6 +12,8 @@
 
 `a28606c` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **203/203**；新增 retry 成功投影、compaction 到 settled 顺序和已取消 turn 不启动 provider 的证据。
 
+`236b2f2` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，`npm run check` 为 **204/204**；TUI 新增 `:resources`，可报告 Candy-owned skill/prompt 的 malformed/collision diagnostics，且不显示资源内容。
+
 当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。实现 checkpoint `819d8a7` 已接入 Windows 11 toolchain gate 及仅在 Windows 11 x64 执行的核心 TUI journey，`c632f74` 已接入仅在支持平台执行的 OS-store TUI credential lifecycle smoke，`456bab2` 已接入真实 PiAgentEngine 驱动的确定性 TUI journey，覆盖批准的 DeepSeek endpoint、Candy-owned session persistence 和 session credential exclusion，`737d7d7` 已接入 Pi-backed `candy_write` tool-loop workspace mutation，`34ae949` 已接入 credential revocation evidence，证明删除凭据后下一次真实 Pi 操作返回 `needs_credentials` 且不再发起 provider request、历史保留、session 无凭据，`a36aac4` 已接入 bounded workspace review metadata persistence 和真实 Pi coding journey，覆盖 review、restart、transcript/tool evidence、显式 Apply 且不改变 HEAD/index，`54b54c1` 已接入真实 Pi provider stream cancellation，观察 abort 且无 false completion；当前 macOS TUI-only acceptance 报告单独绑定最终 HEAD，为 14/14（macOS `26.6.1` arm64，Node `22.23.2`/npm `10.9.8`），确定性检查为 199/199，并覆盖有界、凭据脱敏的工具参数及增量/完成输出、presence-only credential evidence、revocation、Pi-backed projection/persistence/workspace mutation/review-restart-apply/cancellation 和 TUI-only 十轮响应性门槛；Windows 仍待目标主机执行，精确 `26.5.2` 在当前主机 preflight blocked。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
@@ -55,6 +57,12 @@
 - `a28606c` 补齐 TUI 的 provider retry 成功状态；retry 开始、成功/失败、compaction 开始/完成、`turn settled` 和最终完成现在按顺序可见。
 - Pi Adapter 对已取消的 turn 在获取 credential lease 和发起 provider/session 之前 fail closed；新增 TUI/adapter 回归后固定工具链下 `npm run check` 为 **203/203**，当前 macOS acceptance 为 **14/14**。
 - 该 checkpoint 是确定性实现证据，不替代 Windows 11、精确 macOS `26.5.2`、新 revision live-provider、G2、签名或最终 V1 acceptance。
+
+## 2026-08-17 Issue #4 resource diagnostics checkpoint
+
+- `236b2f2` 新增 TUI `:resources`，只输出 Candy-owned skills/prompts 的 bounded diagnostics（类别、类型、消息、路径），不输出资源正文或凭据。
+- 回归覆盖 malformed skill frontmatter 和 duplicate prompt name；固定工具链下 `npm run check` 为 **204/204**，当前 macOS acceptance 为 **14/14**。
+- 该 checkpoint 只补齐个人资源的用户侧诊断证据；Windows 11、精确 macOS `26.5.2`、新 revision live-provider、G2、签名和最终 V1 acceptance 仍未完成。
 
 ## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
 
