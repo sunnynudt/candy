@@ -2,7 +2,13 @@
 
 Updated: 2026-08-17
 
-Post-`1bcdd9f` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **237/237** on Node `22.23.2`/npm `10.9.8`. Non-Git snapshot enumeration now rejects symlink and non-regular entries before descent or recording. Current-HEAD scan `e268e95b-fb60-482f-84e2-38659a98c411` completed against `2e77fb4` with parent-thread fallback and reported **6 open findings (4 medium, 2 low)**; it is not a security clearance. Its attachment-source finding is addressed by `7489139`, and the ordinary symlink-follow route in non-Git snapshots is covered by `1bcdd9f`; descriptor-relative/reparse-safe workspace/apply/worktree/session and residual non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`e6170b6` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **238/238** on Node `22.23.2`/npm `10.9.8`. Candy-owned Pi session roots/task directories reject symlinks, and selected existing session files are validated and read through no-follow handles. Current-HEAD scan `e268e95b-fb60-482f-84e2-38659a98c411` completed against `2e77fb4` with parent-thread fallback and reported **6 open findings (4 medium, 2 low)**; it is not a security clearance. Its attachment-source finding is addressed by `7489139`, the ordinary non-Git symlink route by `1bcdd9f`, and the session symlink route by `e6170b6`; descriptor-relative/reparse-safe workspace/apply/worktree and residual session/non-Git races, plus nested-interpreter Trusted Shell publication policy, remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `e6170b6` Pi session-root checkpoint
+
+- Code checkpoint `e6170b6782908aa29b8a43337b3e6cffa67d1f38` is pushed and matches `origin/codex/candy-v1-foundation`. Session root/task directories reject symlinks, and reload/recovery/selected existing sessions validate regular files and use no-follow handles; the new regression covers a symlinked task directory in both the store and Pi engine paths.
+- Focused Pi adapter tests pass **47/47**, full `npm run check` passes **238/238**, and post-push macOS acceptance passes **14/14** at source revision `e6170b6782908aa29b8a43337b3e6cffa67d1f38`.
+- This is narrow symlink-route hardening, not proof of full descriptor-relative or OS-level replacement-race safety. Remaining blockers include workspace/apply/worktree and residual session/non-Git races, nested-interpreter Trusted Shell publication policy, Windows 11, exact macOS `26.5.2`, independent G2, signed release, and final V1 acceptance. `.omo/` remains user-owned, untracked, and preserved.
 
 ## 2026-08-17 Issue #4 `1bcdd9f` non-Git snapshot checkpoint
 
