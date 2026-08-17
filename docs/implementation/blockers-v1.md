@@ -4,6 +4,11 @@ Updated: 2026-08-17
 
 Post-`b0a5e30` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`, and the current strict macOS containment matrix passes. The checkpoint also fixes the smoke fixture to provide the Candy-approved Git common directory; production Trusted Shell validation remains fail-closed. Live gates source-bound to `a523aa2` pass DeepSeek **7/7** and domestic MiniMax **8/8** with sanitized evidence. Standard scan `721c4ab5-ccdf-4052-9a28-b695323b3b70` remains bound to production code checkpoint `50074c2`, completed with parent validation fallback, and reports **4 open medium findings**; the later fixture-only change is not a security clearance. Remaining personal macOS blockers are descriptor-relative/reparse-safe workspace intermediate operations, worktree path-check/use races, residual session-manager path races, conditional Trusted Shell descendant-publication policy, macOS G2, signing, and final personal acceptance. Windows execution is deferred for this work packet.
 
+## 2026-08-17 Issue #4 Windows real DeepSeek TUI journey checkpoint
+
+- `smoke:tui:real-journey:windows` drives the production TUI composition root through the ConPTY bridge with the real Windows Credential Manager DeepSeek credential. The real provider turn mutates the workspace through `candy_write`, completes the task, and leaves the fixture tree credential-free at source revision `83d9887` on Windows 11 Pro x64.
+- This closes the Windows live ACC-03 core coding journey evidence. The MiniMax Windows live Gate, the existing-account Credential Manager lifecycle, the Developer-Mode reparse matrix, independent G2 review, and final acceptance remain open.
+
 ## 2026-08-17 Issue #4 Windows ConPTY terminal matrix checkpoint
 
 - `npm run acceptance:windows` passes **17/17** on Windows 11 Pro x64 with `npm run check` at **239/239 and 2 explicit skips**. The new `smoke:tui:terminal:windows` runs the TUI in a real Windows pseudo console (ConPTY via `scripts/pty-host.ps1`, no third-party dependency) and verifies Chinese input, bracketed paste, Ctrl+C, runtime-failure recovery, startup-failure safety, and credential-free evidence.

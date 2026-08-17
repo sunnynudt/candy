@@ -120,6 +120,9 @@
 
 ## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
 
+- ☑️ 2026-08-17 Windows 真实 DeepSeek TUI 核心编码旅程：新增 `smoke:tui:real-journey:windows`，通过 ConPTY 桥驱动生产 `createDefaultInteractiveTui`（真实 Windows Credential Manager DeepSeek 凭据，presence-only），真实 provider turn 使用 `candy_write` 修改 `src/value.ts`，验证 workspace 变更、任务完成与凭据自由证据。
+  证据：source revision `83d9887`，Windows 11 Pro x64，`realProvider=deepseek`，`realPty=true`；报告与临时 fixture 均脱敏清理。
+
 - ☑️ 2026-08-17 Windows 真实 ConPTY 终端矩阵：新增 `smoke:tui:terminal:windows`，通过 `scripts/pty-host.ps1`（PowerShell Add-Type P/Invoke 创建 Windows 官方 ConPTY，零第三方依赖，与 Windows Terminal 同机制）驱动真实伪终端下的 TUI，覆盖中文 UTF-8 输入、bracketed paste、`:new`、Ctrl+C 取消、运行时失败恢复、启动失败安全退出与 `:quit`，并验证任务状态与凭据自由证据。
   证据：当前 HEAD `npm run acceptance:windows` **17/17**，`npm run check` **239/239 + 2 skip**；报告为 `out/acceptance/windows/latest.md`（脱敏，gitignored）。
 
