@@ -120,6 +120,9 @@
 
 ## Windows 11 夜间接力（暂缓，必须在 Windows PC 上执行）
 
+- ☑️ 2026-08-17 Windows 跨驱动器 containment 修复与 16/16 验收：修复 `path.relative` 跨驱动器返回绝对路径被误判为“在内部”的缺陷（TUI app-data overlap、restricted resource loader、Pi session-file 三处 containment 检查）；目录链接 fixture 在 Windows 普通会话改用 junction，文件 symlink 断言在无 Developer Mode 时显式 skip（2 个），不把 EPERM 当 Pass。
+  证据：当前 HEAD `npm run acceptance:windows` **16/16**，`npm run check` **239/239 + 2 skip**；报告为 `out/acceptance/windows/latest.md`（脱敏，gitignored）。真实 DeepSeek/MiniMax Windows 旅程、MiniMax Windows live Gate、真实账户 Credential Manager 生命周期、Developer Mode reparse 矩阵、独立 G2 与最终验收仍待完成。
+
 执行顺序：在 Windows PC 上先恢复本机确定性/原生检查和路径防逃逸，再完成 Windows 本地可用链路；需要凭据、Developer Mode、签名身份或外部服务时记录阻塞，继续推进其他 Windows 项。不得在 macOS 上执行或以 macOS 结果更新本节证据。
 
 - ☑️ 修复平台路径适配：应用数据根路径根据传入的目标平台选择 `path.win32` 或 `path.posix` 语义，并覆盖跨宿主的 macOS/Windows 模拟测试。
