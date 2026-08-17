@@ -222,6 +222,7 @@ interface TuiCompleteDiff {
 
 const MAX_TUI_DIFF_BYTES = 64 * 1024;
 const MAX_TUI_TRANSCRIPT_BYTES = 64 * 1024;
+const MAX_TUI_TURN_MESSAGE_CHARS = 4_096;
 const DEFAULT_VALIDATOR_TIMEOUT_MS = 30_000;
 
 export class InteractiveTui {
@@ -1539,6 +1540,14 @@ export class InteractiveTui {
   private async queueActiveTurnMessage(mode: "steer" | "followUp", text: string): Promise<void> {
     if (text.length === 0) {
       this.write(`:${mode === "steer" ? "steer" : "follow-up"} requires text\n`);
+      return;
+    }
+    if (text.length > MAX_TUI_TURN_MESSAGE_CHARS) {
+      this.write(`turn message rejected: text exceeds ${MAX_TUI_TURN_MESSAGE_CHARS} characters\n`);
+      return;
+    }
+    if (containsControlCharacter(text)) {
+      this.write("turn message rejected: control characters are forbidden\n");
       return;
     }
     if (containsCredentialMaterial(text) || this.hasActiveProviderSecret(text)) {

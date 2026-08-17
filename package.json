@@ -41,6 +41,7 @@
     "acceptance:windows": "npm run build && node scripts/acceptance-windows.mjs",
     "acceptance:macos": "npm run build && node scripts/acceptance-macos.mjs",
     "acceptance:macos:baseline": "npm run build && node scripts/acceptance-macos.mjs --baseline",
+    "measure:tui:responsiveness": "npm run build && node scripts/measure-tui-responsiveness.mjs",
     "gate:live:deepseek": "node scripts/live-provider-gate.mjs --provider deepseek --confirm-live",
     "gate:live:minimax": "node scripts/live-provider-gate.mjs --provider minimax-cn --confirm-live",
     "dev:import:opencode:deepseek": "npm run build && node scripts/import-opencode-deepseek.mjs",

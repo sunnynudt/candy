@@ -360,6 +360,9 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     terminal.emitInput(":follow-up report only after validation");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /follow-up queued/u);
+    terminal.emitInput(`:steer ${"x".repeat(4_097)}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn message rejected: text exceeds 4096 characters/u);
     terminal.emitInput(`:cancel ${taskId}`);
     terminal.emitInput("\r");
     await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
