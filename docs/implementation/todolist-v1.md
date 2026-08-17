@@ -4,7 +4,7 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 HEAD `50074c2` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 workspace write ordering checkpoint：`50074c2` 让 `candy_write` 先验证 opened regular-file handle 与 workspace binding，再通过该 handle truncate/write；最新标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 绑定当前 HEAD，报告 **4 个开放 finding（全部 medium）**，此前的 low file-metadata finding 已处理，且本次局部写入修复只降低风险、不构成 security clearance。该扫描使用 parent validation fallback。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11、独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 checkpoint `50074c2` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 workspace write ordering checkpoint：`50074c2` 让 `candy_write` 先验证 opened regular-file handle 与 workspace binding，再通过该 handle truncate/write；最新标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 绑定该代码 checkpoint，报告 **4 个开放 finding（全部 medium）**，此前的 low file-metadata finding 已处理，且本次局部写入修复只降低风险、不构成 security clearance。该扫描使用 parent validation fallback；之后的提交仅更新证据文档。本工作包按用户指示暂不执行 Windows 11；精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，macOS 独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
