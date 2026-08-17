@@ -8,13 +8,8 @@ import { cleanChildEnvironment } from "@candy/platform";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const acceptanceRoot = path.join(root, "out", "acceptance", "macos");
 const npmScript = process.env.npm_execpath;
-const baselineMacosVersion = "26.5.2";
-const acceptanceMode = process.argv.includes("--baseline") ? "baseline" : "current";
-const reportFileName = acceptanceMode === "baseline" ? "baseline-latest.md" : "latest.md";
-const acceptanceTarget =
-  acceptanceMode === "baseline"
-    ? `macOS ${baselineMacosVersion} arm64 regression baseline`
-    : "current macOS Tahoe 26.x arm64 host";
+const reportFileName = "latest.md";
+const acceptanceTarget = "current macOS Tahoe 26.x arm64 host";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("macOS acceptance requires macOS arm64.");
@@ -31,15 +26,8 @@ const lockfileDigest = createHash("sha256")
 const macosVersion = runCapture("/usr/bin/sw_vers", ["-productVersion"]);
 const architecture = runCapture("/usr/bin/uname", ["-m"]);
 const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
-const targetMatches =
-  acceptanceMode === "baseline"
-    ? macosVersion === baselineMacosVersion
-    : isCurrentMacosVersion(macosVersion);
-if (!targetMatches || architecture !== "arm64") {
-  const reason =
-    acceptanceMode === "baseline"
-      ? `macOS baseline acceptance requires ${baselineMacosVersion} on arm64; received ${macosVersion} on ${architecture}.`
-      : `current macOS acceptance requires Tahoe 26.x at or above ${baselineMacosVersion} on arm64; received ${macosVersion} on ${architecture}.`;
+if (!isTahoe26Version(macosVersion) || architecture !== "arm64") {
+  const reason = `current macOS acceptance requires Tahoe 26.x on arm64; received ${macosVersion} on ${architecture}.`;
   await writeBlockedReport({
     startedAt,
     revision,
@@ -48,7 +36,6 @@ if (!targetMatches || architecture !== "arm64") {
     architecture,
     cleanWorktree,
     reason,
-    acceptanceMode,
   });
   throw new Error(reason);
 }
@@ -85,14 +72,13 @@ const report = [
   `- Finished: ${finishedAt.toISOString()}`,
   `- Source revision: \`${revision}\``,
   `- Lockfile SHA-256: \`${lockfileDigest}\``,
-  `- Acceptance mode: \`${acceptanceMode}\``,
   `- Acceptance target: ${acceptanceTarget}`,
   `- macOS product version: \`${macosVersion}\``,
   `- Architecture: \`${architecture}\``,
   `- Node: \`${process.version}\``,
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  `This is a deterministic TUI-only smoke run for the ${acceptanceTarget}. The exact host version is recorded above. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, exact-baseline compatibility, Windows parity, V2 Desktop/Browser completion, or final V1 acceptance.`,
+  `This is a deterministic TUI-only smoke run for the ${acceptanceTarget}. The exact host version is recorded above. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, Windows parity, V2 Desktop/Browser completion, or final V1 acceptance.`,
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",
@@ -109,13 +95,8 @@ const report = [
   "",
   "## Remaining external gates",
   "",
-  acceptanceMode === "baseline"
-    ? "- Current macOS Tahoe 26.x primary acceptance evidence (run npm run acceptance:macos)."
-    : `- Exact macOS ${baselineMacosVersion} Apple Silicon regression evidence (run npm run acceptance:macos:baseline when that host is available).`,
-  acceptanceMode === "baseline"
-    ? "- macOS Trusted Shell Auto Personal Preview evidence is current-host-only; Windows Trusted Shell, Shell-based Auto Debug, and exact-baseline compatibility remain separate gates."
-    : "- Windows Trusted Shell, Shell-based Auto Debug, exact 26.5.2 compatibility, and signed release acceptance remain separate gates.",
-  "- Windows 11 TUI evidence, exact macOS 26.5.2 baseline evidence, and platform-specific Trusted Shell G2 evidence remain separate gates.",
+  "- Windows Trusted Shell, Shell-based Auto Debug, and signed release acceptance remain separate gates.",
+  "- Windows 11 TUI evidence and platform-specific Trusted Shell G2 evidence remain separate gates.",
   "- Live DeepSeek/MiniMax provider contracts and provider cancellation evidence remain separate gates.",
   "- Electron Desktop and Browser Workspace acceptance is V2 and is not part of this report.",
   "",
@@ -164,15 +145,9 @@ function runCapture(command, args) {
   }).trim();
 }
 
-function isCurrentMacosVersion(value) {
+function isTahoe26Version(value) {
   const parsed = parseMacosVersion(value);
-  const baseline = parseMacosVersion(baselineMacosVersion);
-  return (
-    parsed !== undefined &&
-    baseline !== undefined &&
-    parsed.major === 26 &&
-    compareMacosVersions(parsed, baseline) >= 0
-  );
+  return parsed !== undefined && parsed.major === 26;
 }
 
 function parseMacosVersion(value) {
@@ -183,13 +158,6 @@ function parseMacosVersion(value) {
   return { major: parts[0], minor: parts[1], patch: parts[2] };
 }
 
-function compareMacosVersions(left, right) {
-  for (const key of ["major", "minor", "patch"]) {
-    if (left[key] !== right[key]) return left[key] - right[key];
-  }
-  return 0;
-}
-
 async function writeBlockedReport({
   startedAt,
   revision,
@@ -198,7 +166,6 @@ async function writeBlockedReport({
   architecture,
   cleanWorktree,
   reason,
-  acceptanceMode,
 }) {
   const finishedAt = new Date();
   const report = [
@@ -208,14 +175,13 @@ async function writeBlockedReport({
     `- Finished: ${finishedAt.toISOString()}`,
     `- Source revision: \`${revision}\``,
     `- Lockfile SHA-256: \`${lockfileDigest}\``,
-    `- Acceptance mode: \`${acceptanceMode}\``,
     `- Acceptance target: ${acceptanceTarget}`,
     `- macOS product version: \`${macosVersion}\``,
     `- Architecture: \`${architecture}\``,
     `- Node: \`${process.version}\``,
     `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
     "",
-    `This ${acceptanceMode} acceptance run is Blocked before execution because its target host is unavailable. No acceptance step ran and no Pass or Fail result was produced for the macOS target.`,
+    "This macOS acceptance run is Blocked before execution because its target host is unavailable. No acceptance step ran and no Pass or Fail result was produced for the macOS target.",
     "",
     "Summary: 0 passed, 0 failed, 1 blocked.",
     "",

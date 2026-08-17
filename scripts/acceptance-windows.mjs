@@ -71,7 +71,7 @@ const report = [
   "",
   "- Windows Trusted Shell G2/native security evidence and independent security review; Shell remains fail-closed until that gate passes.",
   "- Live DeepSeek/MiniMax provider contracts and real provider cancellation evidence.",
-  "- Exact macOS 26.5.2 regression evidence and current macOS TUI parity.",
+  "- Current macOS TUI parity evidence.",
   "- Electron Desktop and Browser Workspace acceptance is V2 and is not part of this report.",
   "",
 ].join("\n");

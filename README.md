@@ -1,6 +1,6 @@
 # Candy
 
-Candy is a standalone, DeepSeek-first coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary macOS host is `26.6.1`; macOS `26.5.2` remains an explicit compatibility regression baseline.
+Candy is a standalone, DeepSeek-first coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary macOS host is `26.6.1`.
 
 ## Development baseline
 
@@ -36,7 +36,7 @@ Windows development-machine setup, native prerequisites, and executable audit in
 
 Product scope is defined in `docs/product/candy-v1.md`. Implementation order and evidence requirements are defined in `docs/architecture/implementation-plan-v1.md` and `docs/product/acceptance-v1.md`.
 
-Run `npm run acceptance:macos` for the current Tahoe 26.x primary host. Run `npm run acceptance:macos:baseline` only on an exact macOS 26.5.2 Apple Silicon host for the compatibility regression matrix.
+Run `npm run acceptance:macos` for the current Tahoe 26.x primary host.
 
 Development machine setup:
 

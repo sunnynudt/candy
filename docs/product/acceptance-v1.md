@@ -6,7 +6,7 @@ This document defines when the Candy V1 TUI is complete. Product scope comes fro
 
 ## Acceptance policy
 
-- The primary macOS platform is the current stable Tahoe `26.x` Apple Silicon release (currently `26.6.1`). Windows 11 x64 is the second required platform. Exact macOS `26.5.2` is a separate compatibility regression baseline.
+- The primary macOS platform is the current stable Tahoe `26.x` Apple Silicon release (currently `26.6.1`). Windows 11 x64 is the second required platform.
 - Every deterministic test must pass. A retry does not convert a failure into a pass.
 - Every enabled provider's required live contract must pass with real credentials through the same Pi Adapter and provider path used by the TUI.
 - A provider or network failure may produce a controlled, actionable result; it must never cause silent fallback, state corruption, uncertain side-effect replay, or secret exposure.
@@ -30,10 +30,9 @@ V1 requires zero open P0/P1 defects. P2 items require explicit product-owner acc
 | ID | Environment | Required V1 scope |
 | --- | --- | --- |
 | ENV-MAC | Current macOS Tahoe `26.x` Apple Silicon, currently `26.6.1` | TUI, app-data, Keychain, workspace, session, native adapter where enabled |
-| ENV-MAC-BASELINE | Exact macOS `26.5.2` Apple Silicon | TUI compatibility regression only |
 | ENV-WIN | Current supported Windows 11 x64 | TUI, app-data, Credential Manager, workspace, session, native adapter where enabled |
 
-No current macOS run proves Windows or exact `26.5.2` behavior. Unsupported operating systems must fail clearly rather than partially execute.
+No current macOS run proves Windows behavior. Unsupported operating systems must fail clearly rather than partially execute.
 
 ## TUI acceptance gates
 
@@ -118,7 +117,6 @@ Evidence: hostile-resource fixture, source-boundary assertion, diagnostics, and 
 Required outcomes:
 
 - ACC-TUI-01 through ACC-TUI-06 pass on ENV-MAC and ENV-WIN for the capabilities enabled on each platform.
-- The exact ENV-MAC-BASELINE matrix is run separately before claiming `26.5.2` compatibility.
 - Platform-specific path, credential-store, process, lock, cancellation, and native-runner behavior uses the narrow adapter rather than POSIX assumptions.
 - Windows evidence is produced on Windows 11; macOS evidence does not substitute for it.
 
@@ -154,4 +152,4 @@ Each candidate produces a local reviewable package containing the source revisio
 
 The package must not contain provider credentials, reversible credential fingerprints, unrelated source, unneeded prompts or sessions, browser authentication data, or full process environments.
 
-Candy V1 is accepted only when ACC-TUI-01 through ACC-TUI-08 pass on both required platforms, required live contracts pass for enabled providers, no P0/P1 defects remain, the exact `26.5.2` claim is made only with its separate baseline evidence, and the product owner approves the evidence package.
+Candy V1 is accepted only when ACC-TUI-01 through ACC-TUI-08 pass on both required platforms, required live contracts pass for enabled providers, no P0/P1 defects remain, and the product owner approves the evidence package.

@@ -4,7 +4,7 @@
 
 Candy V1 is a standalone, DeepSeek-first coding product delivered as a terminal UI (TUI). It provides a Codex-class local coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. The TUI runs one agent per task and may run independent tasks concurrently within a bounded limit.
 
-V1 targets the current macOS Tahoe `26.x` Apple Silicon host and Windows 11. The primary macOS host is currently `26.6.1`; exact macOS `26.5.2` compatibility remains a separately tracked regression baseline.
+V1 targets the current macOS Tahoe `26.x` Apple Silicon host (currently `26.6.1`) and Windows 11.
 
 The Electron Desktop client and Browser Workspace are explicitly V2 scope. Their source, adapters, and historical design notes must not be used as evidence that V1 is implemented or accepted.
 
@@ -103,7 +103,7 @@ Candy V1 has no remote telemetry or automatic crash upload.
 
 ## Acceptance
 
-[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is authoritative for the TUI V1 release decision. It defines separate evidence for the current macOS Tahoe `26.x` Apple Silicon host, Windows 11, and the exact macOS `26.5.2` regression baseline. Current-host macOS evidence does not prove Windows behavior or the `26.5.2` compatibility claim.
+[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is authoritative for the TUI V1 release decision. It defines separate evidence for the current macOS Tahoe `26.x` Apple Silicon host and Windows 11. Current-host macOS evidence does not prove Windows behavior.
 
 V1 release requires the TUI acceptance gates to pass on both required platforms, all required live provider contracts to be verified for enabled providers, no open P0/P1 defect, and explicit product-owner approval. Desktop and Browser acceptance is deferred to V2.
 

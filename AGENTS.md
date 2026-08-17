@@ -10,7 +10,7 @@ Read `docs/product/acceptance-v1.md` before claiming an implementation slice or 
 ## V1 constraints
 
 - Use TypeScript for product and control-plane code. A narrowly scoped Rust native helper is permitted only for OS command sandboxing and Windows Job Object process ownership; it must not contain model, task, approval, provider, workspace-policy, or UI logic.
-- Support the current macOS Tahoe `26.x` Apple Silicon primary acceptance host (currently `26.6.1`) and Windows 11; retain an explicit `26.5.2` compatibility regression baseline.
+- Support the current macOS Tahoe `26.x` Apple Silicon primary acceptance host (currently `26.6.1`) and Windows 11.
 - Integrate Pi through a narrow adapter.
 - Do not fork Pi or rewrite its agent loop.
 - Run the TUI runtime in-process.
@@ -57,7 +57,7 @@ V1 does not include:
 - Keep platform-specific credential, process, path, and lock behavior behind narrow adapters.
 - Desktop app-server communication uses typed JSONL over stdio.
 - Communication with the native Sandbox Runner uses a separate versioned typed JSONL protocol over stdio. It must never carry provider credentials.
-- Verify relevant behavior on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before claiming cross-platform support. Run the exact `26.5.2` regression matrix separately when claiming compatibility with that baseline.
+- Verify relevant behavior on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before claiming cross-platform support.
 
 ## Development rules
 

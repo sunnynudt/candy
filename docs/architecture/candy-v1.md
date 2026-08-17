@@ -91,7 +91,7 @@ The Task Engine emits only normalized Candy events. Pi messages, tool types, ses
 
 The Pi Adapter is the only implementation allowed to import Pi packages. It translates between Candy inputs/events and Pi's public agent, model, tool, and session contracts. It does not expose Pi types to clients or other packages, fork Pi, run Pi interactive mode, or reimplement the agent loop.
 
-Pi version changes require adapter contract tests and current macOS Tahoe `26.x` Apple Silicon/Windows 11 session compatibility tests before the lockfile changes; exact `26.5.2` regression coverage remains separately tracked.
+Pi version changes require adapter contract tests and current macOS Tahoe `26.x` Apple Silicon/Windows 11 session compatibility tests before the lockfile changes.
 
 ### Provider Module
 
@@ -250,7 +250,7 @@ The logical names are stable; exact filenames and platform paths are implementat
 6. **Browser Workspace**: add the visible browser, persistent profile, site permissions, observation/actions, takeover, screenshots, and browser validation.
 7. **Long-running tasks**: add explicit completion criteria, pause/resume/steering, validators, stall detection, optional budgets, and Auto Debug.
 
-Each slice must pass on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before the next slice can claim cross-platform support. Exact `26.5.2` compatibility remains a separate regression claim.
+Each slice must pass on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before the next slice can claim cross-platform support.
 
 ## Required compatibility spikes
 

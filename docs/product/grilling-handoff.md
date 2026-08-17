@@ -10,7 +10,7 @@ Scope note (2026-08-17): this is a historical handoff snapshot. The current V1 c
 
 ### Product foundation
 
-- Candy is a standalone, local-first coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary host is `26.6.1`; `26.5.2` remains an explicit compatibility regression baseline. Product and control-plane code is TypeScript, with one audited Rust native-helper exception for OS command containment and Windows process-tree ownership.
+- Candy is a standalone, local-first coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary host is `26.6.1`. Product and control-plane code is TypeScript, with one audited Rust native-helper exception for OS command containment and Windows process-tree ownership.
 - Candy is DeepSeek-first: DeepSeek V4 Flash is the default Primary Model, with DeepSeek V4 Pro and MiniMax M3 selectable per task.
 - MiniMax M3 is a native multimodal Primary Model in V1, not a secondary vision-only service.
 - Browser Workspace and Auto Debug are required V1 capabilities.
@@ -80,7 +80,7 @@ Detailed evidence and pass conditions are in [Compatibility Gate 0](../research/
 4. The first read-only fixture is a Candy-owned TypeScript workspace under `fixtures/read-only-workspace`. The allowed root is that fixture directory; an in-root read requires no approval, while traversal, symlink/reparse escape, mutation, and Shell are rejected rather than escalated.
 5. Cross-platform session loading means reopening Candy-owned session data after an explicit workspace remap; absolute paths are not portable. Windows and macOS execute the same fixture and compare normalized session events rather than native path strings.
 6. Credential backend selected conditionally as `@napi-rs/keyring@1.3.0`; signed current macOS Tahoe `26.x` Apple Silicon/Windows 11 package loading and secret non-propagation remain to be proved.
-7. The current macOS Tahoe `26.x` Apple Silicon host is the primary target, with exact `26.5.2` compatibility as a separate regression baseline. The narrow Rust Sandbox Runner path and explicit Browser takeover fallback are accepted in ADR-0005, ADR-0006, and ADR-0009.
+7. The current macOS Tahoe `26.x` Apple Silicon host is the primary target. The narrow Rust Sandbox Runner path and explicit Browser takeover fallback are accepted in ADR-0005, ADR-0006, and ADR-0009.
 
 ### Task, workspace, and recovery architecture
 

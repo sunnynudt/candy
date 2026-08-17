@@ -273,7 +273,7 @@ Live provider tests are never required on untrusted pull requests and never prin
 ## Compatibility gates
 
 - **G0 Model and Pi contract — conditional**: exact public Pi exports and static provider contracts are verified; npm installation, real DeepSeek/MiniMax credentials, streaming/tool/thinking replay, cancellation, and two-OS smoke tests remain open. MiniMax provider-console entitlement confirmation is not a Gate.
-- **G1 Persistence — conditional**: Node 22 `node:sqlite` is selected, but TUI/app-server import, concurrent fencing, WAL recovery, migration, protocol-only Electron access, and packaged current macOS Tahoe `26.x`/Windows 11 tests remain open; exact `26.5.2` regression evidence is separate.
+- **G1 Persistence — conditional**: Node 22 `node:sqlite` is selected, but TUI/app-server import, concurrent fencing, WAL recovery, migration, protocol-only Electron access, and packaged current macOS Tahoe `26.x`/Windows 11 tests remain open.
 - **G2 Local control — implementation direction accepted, verification blocked**: the Rust Sandbox Runner exception and Windows Job Object ownership are accepted. Exact native backends, escape/no-network enforcement, process inheritance, cancellation, packaging, and security review remain open. Approval plus a Workspace Guard is not a strong sandbox.
 - **G3 Browser — fallback accepted, verification conditional**: `WebContentsView` plus Electron Session/debugger is selected. Automatic takeover is preferred; explicit Take Control is the accepted fallback. Debugger detach, profile isolation, action cancellation, and browser-credential non-observability remain to be proved.
 - **G4 Workspace transfer**: worktree creation and reviewed, binary-safe, index-safe Apply Changes pass conflict and recovery fixtures on both operating systems.
@@ -283,6 +283,6 @@ An unresolved gate is reported as a blocker in the implementation plan. It is no
 
 ## Accepted Gate 0 implementation decisions
 
-- Candy V1 targets the current macOS Tahoe `26.x` on Apple Silicon; exact `26.5.2` compatibility is a separate regression baseline, and Electron 43 remains the Gate baseline.
+- Candy V1 targets the current macOS Tahoe `26.x` on Apple Silicon; Electron 43 remains the Gate baseline.
 - Product and control-plane code remains TypeScript; one audited Rust Sandbox Runner is allowed for native containment and process-tree ownership.
 - Automatic Browser takeover remains preferred, with a visible Take Control action as the accepted deterministic fallback.

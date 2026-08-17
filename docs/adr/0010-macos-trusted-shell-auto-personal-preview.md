@@ -26,6 +26,6 @@ This ADR changes only the platform enablement consequence in ADR-0005. The
 macOS arm64 G2 source review completed at revision
 `9c5afadb74895de9c688445b4889773de873d34a` with zero reportable findings;
 current-host real-terminal/provider evidence is recorded in the Issue #3
-implementation checkpoint. Exact `26.5.2` regression, Windows parity,
+implementation checkpoint. Windows parity,
 packaging, and product-owner acceptance remain separate. This Personal Preview
 is not a release capability. Shell-based Auto Debug remains separately gated.

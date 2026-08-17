@@ -31,7 +31,7 @@ Deliverables:
 5. Select the command-sandbox adapter from first-party evidence. Browser Workspace selection is V2 planning material.
 6. Record OS credential, process cancellation, lease, app-data, and Git worktree strategies.
 7. Convert every unresolved item into a named blocker with an owner and validation procedure.
-8. Record the current macOS Tahoe `26.x` Apple Silicon primary host; retain exact `26.5.2` as a separate regression baseline. Electron compatibility is V2 planning material.
+8. Record the current macOS Tahoe `26.x` Apple Silicon primary host. Electron compatibility is V2 planning material.
 9. Specify the accepted Rust Sandbox Runner protocol and macOS/Windows backend security contract; obtain security review before it can enable Shell.
 10. Defer Browser takeover validation to the V2 Browser acceptance contract.
 
@@ -203,7 +203,7 @@ Exit criteria:
 
 Work packets:
 
-1. Run the TUI current macOS Tahoe `26.x` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, workspaces, and the stable command; run the exact `26.5.2` TUI regression matrix separately when that compatibility claim is required.
+1. Run the TUI current macOS Tahoe `26.x` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, workspaces, and the stable command.
 2. Add migration fixtures for protocol, metadata, and session schema versions.
 3. Produce dependency licenses, SBOM, exact lockfile verification, lifecycle-script allowlist, and packaged-artifact smoke tests.
 4. Verify install, upgrade, rollback, app-data retention, credential deletion, and uninstall behavior for the TUI source distribution.

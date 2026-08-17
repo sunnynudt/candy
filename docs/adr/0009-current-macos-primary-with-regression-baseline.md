@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded
 supersedes: ADR-0008
+superseded_by: ADR-0012
 ---
 
 # Use the current macOS host as primary and retain an explicit regression baseline
