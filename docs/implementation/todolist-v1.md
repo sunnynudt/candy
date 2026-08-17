@@ -8,7 +8,7 @@
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。
 
-当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。实现 checkpoint `819d8a7` 已接入 Windows 11 toolchain gate 及仅在 Windows 11 x64 执行的核心 TUI journey，`c632f74` 已接入仅在支持平台执行的 OS-store TUI credential lifecycle smoke，`456bab2` 已接入真实 PiAgentEngine 驱动的确定性 TUI journey，覆盖批准的 DeepSeek endpoint、Candy-owned session persistence 和 session credential exclusion，`737d7d7` 已接入 Pi-backed `candy_write` tool-loop workspace mutation，`34ae949` 已接入 credential revocation evidence，证明删除凭据后下一次真实 Pi 操作返回 `needs_credentials` 且不再发起 provider request、历史保留、session 无凭据；当前 macOS TUI-only acceptance 报告单独绑定最终 HEAD，为 12/12（macOS `26.6.1` arm64），确定性检查为 197/197，并覆盖有界、凭据脱敏的工具参数及增量/完成输出、presence-only credential evidence、revocation、Pi-backed projection/persistence/workspace mutation 和 TUI-only 十轮响应性门槛；Windows 仍待目标主机执行，精确 `26.5.2` 在当前主机 preflight blocked。
+当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。实现 checkpoint `819d8a7` 已接入 Windows 11 toolchain gate 及仅在 Windows 11 x64 执行的核心 TUI journey，`c632f74` 已接入仅在支持平台执行的 OS-store TUI credential lifecycle smoke，`456bab2` 已接入真实 PiAgentEngine 驱动的确定性 TUI journey，覆盖批准的 DeepSeek endpoint、Candy-owned session persistence 和 session credential exclusion，`737d7d7` 已接入 Pi-backed `candy_write` tool-loop workspace mutation，`34ae949` 已接入 credential revocation evidence，证明删除凭据后下一次真实 Pi 操作返回 `needs_credentials` 且不再发起 provider request、历史保留、session 无凭据，`a36aac4` 已接入 bounded workspace review metadata persistence 和真实 Pi coding journey，覆盖 review、restart、transcript/tool evidence、显式 Apply 且不改变 HEAD/index；当前 macOS TUI-only acceptance 报告单独绑定最终 HEAD，为 13/13（macOS `26.6.1` arm64），确定性检查为 199/199，并覆盖有界、凭据脱敏的工具参数及增量/完成输出、presence-only credential evidence、revocation、Pi-backed projection/persistence/workspace mutation/review-restart-apply 和 TUI-only 十轮响应性门槛；Windows 仍待目标主机执行，精确 `26.5.2` 在当前主机 preflight blocked。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
@@ -27,6 +27,12 @@
 - `34ae949` 新增 `smoke:tui:credential-revocation`：使用 Candy in-memory credential store、生产 `PiAgentEngine`、真实 TUI 控制环和确定性 mock DeepSeek SSE，不修改用户 Keychain；初始 provider turn 完成后执行 TUI delete，下一次 provider operation 返回 `needs_credentials`，且没有第二次 provider request。
 - 该 smoke 同时断言历史 transcript 保留、Candy-owned session 不含 fixture credential。当前 macOS Tahoe `26.6.1` arm64 acceptance 通过 **12/12**，`npm run check` 通过 **197/197**。
 - 该检查点只关闭当前主机 TUI credential revocation evidence；Windows 11 x64、精确 macOS `26.5.2` regression、平台 Trusted Shell G2、live provider cancellation、签名发布和最终 V1 acceptance 仍未完成。
+
+## 2026-08-17 Issue #4 Pi coding review/restart checkpoint
+
+- `a36aac4` 新增 bounded、sanitized workspace review metadata 的 Candy-owned SQLite 持久化；TUI 重启后可恢复 review 状态并继续显式 Apply，新 continuation 会清除旧 review 状态。
+- `smoke:tui:pi:coding` 使用生产 `PiAgentEngine` 驱动 `candy_write`，执行 `:changes`、`:diff`、退出重启、`:transcript` 和 `:apply`；断言两个 approved DeepSeek request、task/transcript/tool evidence、workspace mutation、Git HEAD/index 不变和 session 无凭据。
+- 当前 macOS Tahoe `26.6.1` arm64 acceptance 通过 **13/13**，`npm run check` 通过 **199/199**。Windows 11、精确 macOS `26.5.2` regression、平台 Trusted Shell G2、live provider cancellation、签名发布和最终 V1 acceptance 仍未完成。
 
 当前接力规则：白天在 MacBook Pro 上优先实现、测试和记录当前 macOS Tahoe `26.x` Apple Silicon 能力；只有在声明精确兼容性时才运行 macOS `26.5.2` 回归基线。晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
