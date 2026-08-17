@@ -1284,6 +1284,32 @@ test("Candy restricted resource loader bounds resource directory depth", async (
   }
 });
 
+test("Candy restricted resource loader rejects oversized directory entry streams", () => {
+  const root = path.join(tmpdir(), "candy-resource-entry-budget");
+  const entries = Array.from({ length: 2_049 }, (_, index) => ({
+    name: `entry-${index}`,
+    isFile: () => false,
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+  }));
+  const loader = new CandyRestrictedResourceLoader(
+    root,
+    {
+      lstat: () => ({ size: 0, isFile: () => false, isSymbolicLink: () => false }),
+      readFile: () => Buffer.alloc(0),
+      realpath: (filePath) => filePath,
+      readDirectory: (_directory, visit) => {
+        for (const entry of entries) {
+          if (!visit(entry)) break;
+        }
+      },
+    },
+    [],
+    root,
+  );
+  assert.deepEqual(loader.getSkills(), { skills: [], diagnostics: [] });
+});
+
 test("Candy restricted resource loader redacts active secrets from model-visible paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-resource-path-secret-"));
   const activeSecret = "fixture-resource-secret";

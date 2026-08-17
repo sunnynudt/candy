@@ -3,8 +3,8 @@ import {
   constants as fsConstants,
   lstatSync,
   openSync,
+  opendirSync,
   readFileSync,
-  readdirSync,
   realpathSync,
 } from "node:fs";
 import path from "node:path";
@@ -23,6 +23,7 @@ const MAX_CANDY_RESOURCE_BYTES = 64 * 1024;
 const MAX_CANDY_RESOURCE_DEPTH = 32;
 const MAX_CANDY_RESOURCE_DIRECTORIES = 2_048;
 const MAX_CANDY_RESOURCE_FILES = 2_048;
+const MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES = 2_048;
 const MAX_CANDY_RESOURCE_TOTAL_BYTES = 8 * 1024 * 1024;
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const DEFAULT_CANDY_SYSTEM_PROMPT =
@@ -39,6 +40,10 @@ interface RestrictedResourceFileSystem {
   readFile(filePath: string): Buffer;
   readFileNoFollow?(filePath: string): Buffer;
   realpath(filePath: string): string;
+  readDirectory?(
+    directory: string,
+    visit: (entry: RestrictedResourceDirectoryEntry) => boolean,
+  ): void;
   readdir?(directory: string): readonly RestrictedResourceDirectoryEntry[];
 }
 
@@ -62,7 +67,22 @@ const DEFAULT_FILE_SYSTEM: RestrictedResourceFileSystem = {
     }
   },
   realpath: (filePath) => realpathSync(filePath),
-  readdir: (directory) => readdirSync(directory, { withFileTypes: true }),
+  readDirectory: (directory, visit) => {
+    const handle = opendirSync(directory);
+    try {
+      for (;;) {
+        const entry = handle.readSync();
+        if (entry === null) break;
+        if (!visit(entry)) break;
+      }
+    } finally {
+      try {
+        handle.closeSync();
+      } catch {
+        // The iterator may have already closed the directory.
+      }
+    }
+  },
 };
 
 /**
@@ -326,33 +346,61 @@ function listCandyFiles(directory: string, fileSystem: RestrictedResourceFileSys
     if (current === undefined) break;
     directoryCount += 1;
     if (directoryCount > MAX_CANDY_RESOURCE_DIRECTORIES) return [];
-    let entries: readonly RestrictedResourceDirectoryEntry[] | undefined;
-    try {
-      entries = fileSystem.readdir?.(current.directory);
-    } catch {
-      continue;
-    }
-    if (entries === undefined) continue;
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
+    let exceededDirectoryBudget = false;
+    const visit = (entry: RestrictedResourceDirectoryEntry): boolean => {
+      if (entry.isSymbolicLink()) return true;
       const filePath = path.join(current.directory, entry.name);
       if (entry.isFile()) {
         let stats: RestrictedResourceFileStats;
         try {
           stats = fileSystem.lstat(filePath);
         } catch {
-          continue;
+          return true;
         }
-        if (!stats.isFile() || stats.isSymbolicLink()) continue;
-        if (files.length >= MAX_CANDY_RESOURCE_FILES) return [];
+        if (!stats.isFile() || stats.isSymbolicLink()) return true;
+        if (files.length >= MAX_CANDY_RESOURCE_FILES) {
+          exceededDirectoryBudget = true;
+          return false;
+        }
         totalBytes += Math.min(stats.size, MAX_CANDY_RESOURCE_BYTES);
-        if (totalBytes > MAX_CANDY_RESOURCE_TOTAL_BYTES) return [];
+        if (totalBytes > MAX_CANDY_RESOURCE_TOTAL_BYTES) {
+          exceededDirectoryBudget = true;
+          return false;
+        }
         files.push(filePath);
-      } else if (entry.isDirectory()) {
-        if (current.depth >= MAX_CANDY_RESOURCE_DEPTH) return [];
+        return true;
+      }
+      if (entry.isDirectory()) {
+        if (current.depth >= MAX_CANDY_RESOURCE_DEPTH) {
+          exceededDirectoryBudget = true;
+          return false;
+        }
         pending.push({ directory: filePath, depth: current.depth + 1 });
       }
+      return true;
+    };
+    try {
+      if (fileSystem.readDirectory !== undefined) {
+        let entryCount = 0;
+        fileSystem.readDirectory(current.directory, (entry) => {
+          entryCount += 1;
+          if (entryCount > MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES) {
+            exceededDirectoryBudget = true;
+            return false;
+          }
+          return visit(entry);
+        });
+      } else {
+        const entries = fileSystem.readdir?.(current.directory) ?? [];
+        if (entries.length > MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES) return [];
+        for (const entry of entries) {
+          if (!visit(entry)) break;
+        }
+      }
+    } catch {
+      continue;
     }
+    if (exceededDirectoryBudget) return [];
   }
   return files.sort();
 }

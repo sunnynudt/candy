@@ -6,7 +6,8 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { access, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
+import { access, lstat, mkdir, open, opendir, readFile, realpath, unlink } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
 import {
@@ -1157,6 +1158,9 @@ const MAX_SEARCH_FILES = 1_000;
 const MAX_SEARCH_MATCHES = 200;
 const MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_SEARCH_LINE_CHARS = 2_048;
+const MAX_LIST_DIRECTORY_ENTRIES = MAX_LIST_ENTRIES + 1;
+const MAX_SEARCH_DIRECTORY_ENTRIES = 2_048;
+const MAX_SEARCH_PENDING_ENTRIES = 4_096;
 const MAX_PROVIDER_SSE_PENDING_BYTES = 1 * 1024 * 1024;
 const MAX_PROVIDER_SSE_TOTAL_BYTES = 16 * 1024 * 1024;
 const IGNORED_BROWSE_DIRECTORIES = new Set([
@@ -1230,8 +1234,12 @@ function createCandyWorkspaceBrowseTools(
       const directory = await lstat(absolutePath);
       if (!directory.isDirectory()) throw new Error("candy_list requires a workspace directory.");
       const entries: CandyBrowseEntry[] = [];
-      let truncated = false;
-      const children = (await readdir(absolutePath, { withFileTypes: true })).sort((left, right) =>
+      const boundedChildren = await readBoundedDirectoryEntries(
+        absolutePath,
+        MAX_LIST_DIRECTORY_ENTRIES,
+      );
+      let truncated = boundedChildren.truncated;
+      const children = boundedChildren.entries.sort((left, right) =>
         left.name.localeCompare(right.name),
       );
       for (const child of children) {
@@ -1292,8 +1300,13 @@ function createCandyWorkspaceBrowseTools(
             truncated = true;
             break;
           }
-          const children = (await readdir(current.absolutePath, { withFileTypes: true })).sort(
-            (left, right) => left.name.localeCompare(right.name),
+          const boundedChildren = await readBoundedDirectoryEntries(
+            current.absolutePath,
+            MAX_SEARCH_DIRECTORY_ENTRIES,
+          );
+          if (boundedChildren.truncated) truncated = true;
+          const children = boundedChildren.entries.sort((left, right) =>
+            left.name.localeCompare(right.name),
           );
           for (const child of children) {
             throwIfToolAborted(signal);
@@ -1303,6 +1316,10 @@ function createCandyWorkspaceBrowseTools(
             const childPath = path.join(current.absolutePath, child.name);
             const childStats = await lstat(childPath);
             if (!childStats.isDirectory() && !childStats.isFile()) continue;
+            if (pending.length >= MAX_SEARCH_PENDING_ENTRIES) {
+              truncated = true;
+              break;
+            }
             pending.push({
               absolutePath: childPath,
               relativePath: relativeBrowsePath(root, childPath, activeSecrets),
@@ -1363,6 +1380,27 @@ function createCandyWorkspaceBrowseTools(
 
 function isIgnoredBrowseDirectory(name: string): boolean {
   return IGNORED_BROWSE_DIRECTORIES.has(name) || IGNORED_BROWSE_DIRECTORIES.has(name.toLowerCase());
+}
+
+async function readBoundedDirectoryEntries(
+  directory: string,
+  limit: number,
+): Promise<{ readonly entries: Dirent[]; readonly truncated: boolean }> {
+  const handle = await opendir(directory);
+  const entries: Dirent[] = [];
+  let truncated = false;
+  try {
+    for await (const entry of handle) {
+      if (entries.length >= limit) {
+        truncated = true;
+        break;
+      }
+      entries.push(entry);
+    }
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+  return { entries, truncated };
 }
 
 function isSafeFilesystemText(value: string): boolean {
