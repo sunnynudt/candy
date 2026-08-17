@@ -9,6 +9,8 @@ import {
   PiAgentEngine,
   ProviderContractError,
   type CandyNetworkApprovalRequest,
+  type CandyPromptTemplateInfo,
+  loadCandyPromptTemplates,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
@@ -352,7 +354,7 @@ export class InteractiveTui {
     });
     this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
+      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :prompts, :prompt <name> [args], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
     );
     this.write(
       "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
@@ -404,6 +406,10 @@ export class InteractiveTui {
       });
     } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
       this.showTranscript(trimmed.slice(11).trim());
+    } else if (trimmed === ":prompts") {
+      this.listPromptTemplates();
+    } else if (trimmed === ":prompt" || trimmed.startsWith(":prompt ")) {
+      this.invokePromptTemplate(trimmed.slice(7).trim());
     } else if (trimmed === ":credentials" || trimmed === ":credential") {
       this.showCredentials();
     } else if (trimmed.startsWith(":credential ")) {
@@ -1343,6 +1349,57 @@ export class InteractiveTui {
     );
   }
 
+  private listPromptTemplates(): void {
+    const result = loadCandyPromptTemplates(this.#appDataRoot, this.activeSecretsSnapshot());
+    for (const diagnostic of result.diagnostics) {
+      this.write(`prompt resource ${diagnostic.type}: ${diagnostic.message}\n`);
+    }
+    if (result.templates.length === 0) {
+      this.write("no Candy prompt templates found\n");
+      return;
+    }
+    for (const template of result.templates) {
+      this.write(`${template.name}\t${template.description}\t${template.argumentHint ?? ""}\n`);
+    }
+  }
+
+  private invokePromptTemplate(value: string): void {
+    const separator = value.search(/[\s]/u);
+    const name = separator < 0 ? value : value.slice(0, separator);
+    const argumentText = separator < 0 ? "" : value.slice(separator).trim();
+    if (name.length === 0) {
+      this.write("usage: :prompt <name> [arguments]\n");
+      return;
+    }
+    if (
+      argumentText.length > MAX_TUI_TURN_MESSAGE_CHARS ||
+      containsControlCharacter(argumentText)
+    ) {
+      this.write("prompt arguments rejected: text is outside the allowed bounds\n");
+      return;
+    }
+    const args = parseTuiPromptArguments(argumentText);
+    if (args === undefined) {
+      this.write("prompt arguments rejected: unmatched quote\n");
+      return;
+    }
+    const result = loadCandyPromptTemplates(this.#appDataRoot, this.activeSecretsSnapshot());
+    for (const diagnostic of result.diagnostics) {
+      this.write(`prompt resource ${diagnostic.type}: ${diagnostic.message}\n`);
+    }
+    const template = result.templates.find((candidate) => candidate.name === name);
+    if (template === undefined) {
+      this.write(`prompt template not found: ${name}\n`);
+      return;
+    }
+    const prompt = expandTuiPromptTemplate(template, args);
+    if (prompt.trim().length === 0) {
+      this.write(`prompt template is empty: ${name}\n`);
+      return;
+    }
+    this.submitPrompt(prompt);
+  }
+
   private async runTask(
     task: TaskController,
     abort: AbortController,
@@ -2177,6 +2234,49 @@ function containsControlCharacter(value: string): boolean {
     const code = character.codePointAt(0) ?? 0;
     return code <= 31 || code === 127;
   });
+}
+
+function parseTuiPromptArguments(value: string): string[] | undefined {
+  if (value.length === 0) return [];
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      else current += character;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (/\s/u.test(character)) {
+      if (current.length > 0) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += character;
+    }
+  }
+  if (quote !== undefined || escaped) return undefined;
+  if (current.length > 0) args.push(current);
+  return args;
+}
+
+function expandTuiPromptTemplate(
+  template: CandyPromptTemplateInfo,
+  args: readonly string[],
+): string {
+  const allArguments = args.join(" ");
+  return template.content
+    .replace(/\$(\d{1,2})(?!\d)/gu, (_match: string, number: string) => {
+      return args[Number(number) - 1] ?? "";
+    })
+    .replace(/\$(?:ARGUMENTS|@)/gu, allArguments);
 }
 
 function redactSensitive(value: string, activeSecrets: readonly string[]): string {

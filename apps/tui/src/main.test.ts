@@ -898,6 +898,71 @@ test("interactive TUI continues the current task and :new starts a different tas
   }
 });
 
+test("interactive TUI lists and invokes Candy-owned prompt templates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-prompt-template-"));
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      prompts.push(input.prompt);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "assistant.delta", taskId: input.taskId, text: "prompt invoked" };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(
+      path.join(root, "prompts", "review.md"),
+      "---\nname: review\ndescription: Review a change\nargument-hint: <path>\n---\nReview $1\nKeep fixture-secret private.\n",
+    );
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      activeSecrets: () => ["fixture-secret"],
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":prompts");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /review\tReview a change\t<path>/u);
+    terminal.emitInput(':prompt review "src/file with spaces.ts"');
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt invoked/u);
+    assert.deepEqual(prompts, ["Review src/file with spaces.ts\nKeep [REDACTED] private.\n"]);
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects unknown or unsafe prompt template invocations", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-prompt-template-reject-"));
+  const terminal = new FakeTerminal();
+  try {
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(path.join(root, "prompts", "review.md"), "Review $1\n");
+    const runPromise = new InteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":prompt missing value");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt template not found: missing/u);
+    terminal.emitInput(`:prompt review ${"x".repeat(4_097)}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt arguments rejected/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI selects an existing workspace for new tasks", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-command-app-"));
   const firstWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace command-first-"));

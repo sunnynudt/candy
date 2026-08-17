@@ -22,6 +22,51 @@ export function listPiPublicExports(): readonly string[] {
   return Object.keys(piSdk).sort();
 }
 
+export interface CandyPromptTemplateInfo {
+  readonly name: string;
+  readonly description: string;
+  readonly argumentHint?: string;
+  readonly content: string;
+}
+
+export interface CandyPromptDiagnosticInfo {
+  readonly type: string;
+  readonly message: string;
+  readonly path: string;
+}
+
+/**
+ * Read the user-invokable Candy prompt templates without exposing Pi's
+ * unrestricted resource discovery surface.
+ */
+export function loadCandyPromptTemplates(
+  candyRoot: string,
+  activeSecrets: readonly string[] = [],
+): {
+  readonly templates: readonly CandyPromptTemplateInfo[];
+  readonly diagnostics: readonly CandyPromptDiagnosticInfo[];
+} {
+  const result = new CandyRestrictedResourceLoader(
+    candyRoot,
+    undefined,
+    activeSecrets,
+    candyRoot,
+  ).getPrompts();
+  return {
+    templates: result.prompts.map((prompt) => ({
+      name: prompt.name,
+      description: prompt.description,
+      ...(prompt.argumentHint === undefined ? {} : { argumentHint: prompt.argumentHint }),
+      content: prompt.content,
+    })),
+    diagnostics: result.diagnostics.map((diagnostic) => ({
+      type: diagnostic.type,
+      message: diagnostic.message,
+      path: diagnostic.path ?? "<candy-resource>",
+    })),
+  };
+}
+
 export type CandyProvider = "deepseek" | "minimax-cn";
 
 export interface ModelCatalogEntry {
