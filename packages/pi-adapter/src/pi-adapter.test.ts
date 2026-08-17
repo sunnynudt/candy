@@ -23,6 +23,7 @@ import {
   DeepSeekClient,
   MiniMaxClient,
   MiniMaxPiAgentEngine,
+  MAX_WORKSPACE_FILE_BYTES,
   MODEL_CATALOG,
   PI_COMPATIBILITY_VERSION,
   listPiPublicExports,
@@ -1411,6 +1412,22 @@ test("Candy workspace operations keep Pi edit/write inside the selected director
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy workspace operations bound direct file reads and writes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-size-"));
+  const operations = createCandyWorkspaceOperations(root);
+  const oversized = "x".repeat(MAX_WORKSPACE_FILE_BYTES + 1);
+  try {
+    await writeFile(path.join(root, "oversized.txt"), oversized);
+    await assert.rejects(operations.readFile(path.join(root, "oversized.txt")), /limited to/u);
+    await assert.rejects(
+      operations.writeFile(path.join(root, "written.txt"), oversized),
+      /limited to/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

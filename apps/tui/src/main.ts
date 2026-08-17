@@ -279,6 +279,8 @@ export class InteractiveTui {
   public constructor(options: InteractiveTuiOptions = {}) {
     this.#appDataRoot = options.appDataRoot ?? resolveDefaultAppDataRoot();
     this.#workspacePath = path.resolve(options.workspacePath ?? process.cwd());
+    if (pathsOverlap(this.#workspacePath, this.#appDataRoot))
+      throw new Error("The selected workspace cannot overlap Candy application data.");
     this.#terminal = options.terminal;
     const paths = resolveAppPaths(this.#appDataRoot);
     this.#store = new SQLiteTaskStore(path.join(paths.state, "tasks.sqlite"));
@@ -688,7 +690,11 @@ export class InteractiveTui {
     if (workspace === undefined || !workspace.isDirectory()) {
       throw new Error("Workspace path must be an existing directory.");
     }
-    this.#workspacePath = await realpath(candidate);
+    const canonicalWorkspace = await realpath(candidate);
+    const canonicalAppData = await realpath(this.#appDataRoot).catch(() => this.#appDataRoot);
+    if (pathsOverlap(canonicalWorkspace, canonicalAppData))
+      throw new Error("The selected workspace cannot overlap Candy application data.");
+    this.#workspacePath = canonicalWorkspace;
     this.write(`workspace selected: ${this.#workspacePath}\n`);
   }
 
@@ -2115,6 +2121,10 @@ function isPathInside(root: string, candidate: string): boolean {
     process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
   const relative = path.relative(normalize(root), normalize(candidate));
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  return isPathInside(first, second) || isPathInside(second, first);
 }
 
 function formatPaths(paths: readonly string[]): string {

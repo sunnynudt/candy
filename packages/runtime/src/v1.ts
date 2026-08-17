@@ -201,9 +201,17 @@ export class AttachmentStore {
   ): Promise<{ readonly metadata: AttachmentMetadata; readonly content: Uint8Array }> {
     if (!/^att_[a-f0-9]{64}$/u.test(id)) throw new Error("Invalid attachment id.");
     const metadata = JSON.parse(
-      await readFile(path.join(this.root, `${id}.json`), "utf8"),
+      (
+        await readBoundedFile(path.join(this.root, `${id}.json`), MAX_ATTACHMENT_METADATA_BYTES)
+      ).toString("utf8"),
     ) as AttachmentMetadata;
-    const content = await readFile(path.join(this.root, `${id}.bin`));
+    if (
+      !Number.isSafeInteger(metadata.bytes) ||
+      metadata.bytes < 0 ||
+      metadata.bytes > MAX_ATTACHMENT_BYTES
+    )
+      throw new Error("Attachment integrity check failed.");
+    const content = await readBoundedFile(path.join(this.root, `${id}.bin`), MAX_ATTACHMENT_BYTES);
     if (
       metadata.id !== id ||
       metadata.kind !== "image" ||
@@ -261,6 +269,18 @@ export class AttachmentStore {
       await directory.close().catch(() => undefined);
     }
     return removed;
+  }
+}
+
+async function readBoundedFile(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await open(filePath, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    const file = await handle.stat();
+    if (!file.isFile() || file.size > maxBytes)
+      throw new Error("Attachment exceeds its size limit.");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
   }
 }
 

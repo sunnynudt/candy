@@ -935,6 +935,134 @@ test("app-server marks an uncertain active run as crash-interrupted before expli
   }
 });
 
+test("app-server fences a stale execution owner after recovery", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-stale-owner-"));
+  const workspace = path.join(root, "workspace");
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  mkdirSync(workspace);
+  let resolveFirstTurn!: () => void;
+  let firstTurnStarted!: () => void;
+  const firstStarted = new Promise<void>((resolve) => {
+    firstTurnStarted = resolve;
+  });
+  const firstTurnReleased = new Promise<void>((resolve) => {
+    resolveFirstTurn = resolve;
+  });
+  const firstEvents: ProtocolMessage[] = [];
+  const first = new AppServerController({
+    databasePath,
+    ownerId: "owner-1",
+    engine: {
+      async *runTurn(input: AgentTurnInput) {
+        firstTurnStarted();
+        await firstTurnReleased;
+        yield { type: "assistant.delta" as const, text: "stale output" };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+    changeTracker: {
+      async captureBaseline() {
+        return undefined;
+      },
+      async inspect() {
+        return {
+          available: false,
+          tracked: [],
+          untracked: [],
+          patchText: "",
+          patchTruncated: false,
+        };
+      },
+    },
+  });
+  const secondEvents: ProtocolMessage[] = [];
+  let second: AppServerController | undefined;
+  try {
+    await first.dispatch(
+      command("task-stale-owner", "create-stale-owner", 0, {
+        type: "task.create",
+        prompt: "run once",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+      }),
+    );
+    await first.dispatch(
+      command("task-stale-owner", "run-stale-owner", 0, { type: "task.run" }),
+      (message) => firstEvents.push(message),
+    );
+    await firstStarted;
+
+    second = new AppServerController({
+      databasePath,
+      ownerId: "owner-2",
+      engine: {
+        async *runTurn(input: AgentTurnInput) {
+          yield { type: "assistant.delta" as const, text: "current output" };
+          yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+        },
+        async recoverPrompt() {
+          return "run once";
+        },
+      },
+      changeTracker: {
+        async captureBaseline() {
+          return undefined;
+        },
+        async inspect() {
+          return {
+            available: false,
+            tracked: [],
+            untracked: [],
+            patchText: "",
+            patchTruncated: false,
+          };
+        },
+      },
+    });
+
+    const recovered = await second.dispatch(
+      command("task-stale-owner", "snapshot-recovered-owner", 2, { type: "snapshot" }),
+    );
+    const recoveredSnapshot = recovered.at(-1);
+    assert.ok(recoveredSnapshot?.kind === "event" && recoveredSnapshot.event.type === "snapshot");
+    if (recoveredSnapshot?.kind === "event" && recoveredSnapshot.event.type === "snapshot")
+      assert.equal(recoveredSnapshot.event.snapshot.state, "interrupted");
+
+    await second.dispatch(
+      command("task-stale-owner", "resume-current-owner", 2, { type: "task.resume" }),
+      (message) => secondEvents.push(message),
+    );
+    await waitForCompletion(secondEvents, "task-stale-owner");
+    resolveFirstTurn();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(
+      firstEvents.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "assistant.delta" &&
+          message.event.text === "stale output",
+      ),
+      false,
+    );
+    assert.equal(
+      secondEvents.some(
+        (message) =>
+          message.kind === "event" &&
+          message.event.type === "assistant.delta" &&
+          message.event.text === "current output",
+      ),
+      true,
+    );
+  } finally {
+    resolveFirstTurn();
+    first.close();
+    second?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server publishes the reviewed workspace changes before task completion", async () => {
   const observed: Array<{ readonly workspace: string; readonly baseCommit?: string }> = [];
   const controller = new AppServerController({

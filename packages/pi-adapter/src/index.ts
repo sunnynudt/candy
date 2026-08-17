@@ -20,6 +20,7 @@ import { Type } from "typebox";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
+export const MAX_WORKSPACE_FILE_BYTES = 16 * 1024 * 1024;
 
 const SAFE_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
@@ -1714,6 +1715,8 @@ async function readWorkspaceFile(root: string, absolutePath: string): Promise<Bu
   try {
     const opened = await handle.stat();
     if (!opened.isFile()) throw new Error("Workspace reads require a regular file.");
+    if (opened.size > MAX_WORKSPACE_FILE_BYTES)
+      throw new Error(`Workspace reads are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
     const current = await lstat(absolutePath);
     if (!sameFileSnapshot(opened, current))
       throw new Error("Workspace file changed while it was being opened.");
@@ -1728,6 +1731,8 @@ async function writeWorkspaceFile(
   absolutePath: string,
   content: string,
 ): Promise<void> {
+  if (Buffer.byteLength(content, "utf8") > MAX_WORKSPACE_FILE_BYTES)
+    throw new Error(`Workspace writes are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
   await assertWorkspacePath(root, path.dirname(absolutePath), false);
   const handle = await open(
     absolutePath,

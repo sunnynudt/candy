@@ -579,6 +579,7 @@ export class AppServerController {
     try {
       const current = this.#store.get(taskId);
       if (!current) throw new Error("Task metadata is unavailable.");
+      if (!this.ownsExecution(current)) throw new LongRunningControlError("ownership_lost");
       if (!path.isAbsolute(current.workspacePath))
         throw new Error("Task workspace is unavailable after restart.");
       const executionPath = current.worktreePath ?? current.workspacePath;
@@ -625,7 +626,8 @@ export class AppServerController {
                 ? signal.reason
                 : new LongRunningControlError("cancelled");
             const afterTurn = this.#store.get(taskId);
-            if (afterTurn?.state === "running") emit(await this.workspaceChanges(afterTurn));
+            if (this.ownsExecution(afterTurn)) emit(await this.workspaceChanges(afterTurn));
+            else throw new LongRunningControlError("ownership_lost");
           },
           {
             run: (signal) => {
@@ -638,15 +640,16 @@ export class AppServerController {
           {
             store: {
               record: (progress) => {
+                if (!this.ownsExecution(this.#store.get(taskId))) return;
                 this.#store.recordRun({ taskId, ...progress });
                 const metadata = this.#store.get(taskId);
-                if (metadata !== undefined && !this.#closed) emit(this.snapshot(metadata));
+                if (this.ownsExecution(metadata) && !this.#closed) emit(this.snapshot(metadata));
               },
             },
           },
         );
         const metadata = this.#store.get(taskId);
-        if (metadata?.state !== "running") return;
+        if (!this.ownsExecution(metadata)) return;
         if (result.completed) {
           const completed = this.#store.transition(taskId, metadata.revision, "completed");
           emit(this.stateChanged(completed, "validator"));
@@ -668,7 +671,7 @@ export class AppServerController {
 
       await runTurn();
       const metadata = this.#store.get(taskId);
-      if (metadata?.state === "running") {
+      if (this.ownsExecution(metadata)) {
         emit(await this.workspaceChanges(metadata));
         if (metadata.validator !== undefined) {
           const result = await this.runValidator(
@@ -687,7 +690,7 @@ export class AppServerController {
     } catch (error) {
       if (this.#closed) return;
       const metadata = this.#store.get(taskId);
-      if (metadata?.state === "running") {
+      if (this.ownsExecution(metadata)) {
         const nextState =
           active.requestedStop ?? (active.abort.signal.aborted ? "interrupted" : "interrupted");
         const interrupted = this.#store.transition(taskId, metadata.revision, nextState);
@@ -753,7 +756,7 @@ export class AppServerController {
       signal,
     )) {
       const current = this.#store.get(taskId);
-      if (!current || current.state !== "running") break;
+      if (!this.ownsExecution(current)) throw new LongRunningControlError("ownership_lost");
       const rawEvent = observationToEvent(taskId, current.revision, observation);
       const event =
         rawEvent?.type === "assistant.delta" || rawEvent?.type === "assistant.thinking.delta"
@@ -763,7 +766,7 @@ export class AppServerController {
             }
           : rawEvent;
       if (event) {
-        if (event.type === "assistant.delta")
+        if (event.type === "assistant.delta" && this.ownsExecution(this.#store.get(taskId)))
           this.#store.appendTranscript(taskId, [{ role: "assistant", text: event.text }]);
         emit(this.event(taskId, current.revision, event));
       }
@@ -778,7 +781,7 @@ export class AppServerController {
   ): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     const current = this.#store.get(taskId);
-    if (!current || current.state !== "running" || current.worktreePath === undefined)
+    if (!this.ownsExecution(current) || current.worktreePath === undefined)
       return Promise.resolve(false);
     if (path.resolve(request.cwd) !== path.resolve(current.worktreePath))
       throw new Error("Trusted Shell approval cwd must be the Task Worktree.");
@@ -851,11 +854,15 @@ export class AppServerController {
       throw signal.reason instanceof Error
         ? signal.reason
         : new LongRunningControlError("cancelled");
+    if (!this.ownsExecution(this.#store.get(taskId)))
+      throw new LongRunningControlError("ownership_lost");
     if (metadata.validator === undefined) throw new Error("Task validator is unavailable.");
     if (this.#validatorRunner === undefined)
       throw new Error("Validator execution is unavailable on this installation.");
     emit(this.event(taskId, metadata.revision, { type: "tool.started", tool: "validator" }));
     const result = await this.#validatorRunner.run(metadata.validator, executionPath, signal);
+    if (!this.ownsExecution(this.#store.get(taskId)))
+      throw new LongRunningControlError("ownership_lost");
     this.#store.appendTranscript(taskId, [
       { role: "tool", text: `validator: ${result.ok ? "ok" : "error"}` },
     ]);
@@ -935,6 +942,14 @@ export class AppServerController {
     if (queued === undefined || queued.length === 0) return undefined;
     this.#steering.delete(taskId);
     return queued.join("\n\n");
+  }
+
+  private ownsExecution(metadata: TaskMetadata | undefined): metadata is TaskMetadata {
+    return (
+      metadata !== undefined &&
+      metadata.ownerId === this.#ownerId &&
+      (metadata.state === "running" || metadata.state === "waiting_approval")
+    );
   }
 
   private closeStore(): void {

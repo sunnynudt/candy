@@ -328,6 +328,27 @@ test("attachment cleanup bounds metadata materialization", async () => {
   }
 });
 
+test("attachment retrieval bounds metadata and binary materialization", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-get-limit-"));
+  const id = `att_${"b".repeat(64)}`;
+  try {
+    writeFileSync(
+      path.join(root, `${id}.json`),
+      JSON.stringify({
+        id,
+        kind: "image",
+        mimeType: "image/png",
+        bytes: 1,
+        padding: "x".repeat(MAX_ATTACHMENT_METADATA_BYTES),
+      }),
+    );
+    const store = new AttachmentStore(root);
+    await assert.rejects(store.get(id), /size limit/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("non-Git workspace snapshots fail closed at configured aggregate limits", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-limit-"));
   try {

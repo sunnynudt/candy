@@ -1193,6 +1193,29 @@ test("interactive TUI selects an existing workspace for new tasks", async () => 
   }
 });
 
+test("interactive TUI rejects workspaces overlapping Candy application data", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-overlap-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-overlap-safe-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(`:workspace ${root}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /cannot overlap Candy application data/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI restores a task and its transcript before continuing after restart", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-restart-"));
   const firstTerminal: FakeTerminal = new FakeTerminal();
