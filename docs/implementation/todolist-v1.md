@@ -22,6 +22,8 @@
 
 新增当前 revision provider 证据：`7f2d967` 的 Candy-owned DeepSeek live Gate 通过 **7/7**，国内 MiniMax live Gate 通过 **8/8**；报告仅保留脱敏摘要。
 
+新增 current-HEAD 原生 containment 证据：`38775e2` 的 macOS strict Sandbox Runner matrix 通过 workspace/symlink、Git metadata/ref/reflog、默认网络、后代取消和 parent-exit cleanup 检查；该结果不等于独立 G2 通过。
+
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
 - `456bab2` 新增 `smoke:tui:pi`：使用 Candy 生产 `PiAgentEngine` 和真实 Candy TUI 控制环，以 mock DeepSeek SSE 保持确定性；断言只访问 `https://api.deepseek.com/chat/completions`，Pi 响应投影到 TUI，任务/transcript 写入 Candy-owned SQLite/session storage，并扫描 session 内容确认 fixture credential 未进入持久化数据。
@@ -85,6 +87,11 @@
 - source revision `b23383a` 的 Candy-owned DeepSeek live gate 通过 **7/7**，使用批准的 `https://api.deepseek.com`，覆盖 streaming、tool/replay、cancellation、受控错误合同、session 无凭据扫描和 lease release。
 - 同一 revision 的国内 MiniMax live gate 通过 **8/8**，使用 `https://api.minimaxi.com`，覆盖 text、image、thinking/tool replay、cancellation、受控错误合同、`LIVE-MM-05` 产品策略、session 无凭据扫描和 lease release。
 - 脱敏报告保留在 `out/acceptance/live/`，不含 credential value、fingerprint、header、prompt 或 raw provider payload。该 checkpoint 只关闭当前主机 provider-path evidence；Windows 11、精确 macOS `26.5.2`、平台 Trusted Shell G2、签名发布和最终 V1 acceptance 仍未完成。
+
+## 2026-08-17 Issue #4 current macOS native containment revalidation checkpoint (source `38775e2`)
+
+- `npm run smoke:sandbox:macos` 通过 strict matrix：workspace guard 和 native runner 均拒绝外部/symlink/symlink-swap 读写、Git metadata/ref/reflog 写入及默认 loopback 网络；普通、脱离和 parent-exit 后代清理均通过，显式 network capability 单独可用。
+- 这是当前主机 native implementation evidence，不是独立 G2 approval；Windows 11、精确 macOS `26.5.2`、签名发布和最终 V1 acceptance 仍未完成。
 
 当前接力规则：白天在 MacBook Pro 上优先实现、测试和记录当前 macOS Tahoe `26.x` Apple Silicon 能力；只有在声明精确兼容性时才运行 macOS `26.5.2` 回归基线。晚上在 Windows 11 PC 上只实现、测试和记录 Windows 专属能力。共享 TypeScript 改动先以当日 macOS 验证为准，Windows 兼容性改动留在晚间 Windows 清单中。任何一侧的结果都不得代替另一侧的验收证据。
 
