@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getWindowsTrustedShellCapabilityStatus,
+  isTrustedShellAutoAvailable,
   isWindowsTrustedShellAutoAvailable,
 } from "./trusted-shell-capability.js";
 
@@ -39,4 +40,8 @@ test("Windows Trusted Shell requires Git Bash and an accepted native containment
 
 test("the production Windows gate cannot be enabled by host environment state", () => {
   assert.equal(isWindowsTrustedShellAutoAvailable(), false);
+});
+
+test("the production Trusted Shell gate stays closed until independent G2 approval", () => {
+  assert.equal(isTrustedShellAutoAvailable(), false);
 });

@@ -526,6 +526,10 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
   }
 });
 
+test("macOS Trusted Shell Auto remains fail-closed until independent G2 approval", () => {
+  assert.equal(isMacosTrustedShellAutoAvailable(), false);
+});
+
 test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-"));

@@ -146,7 +146,10 @@ export interface InteractiveTuiOptions {
 }
 
 const MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION = Object.freeze({
-  approved: true,
+  // The implementation and current-host evidence do not constitute the
+  // independent macOS G2 approval required to expose this side-effectful
+  // capability from the normal TUI composition root.
+  approved: false,
   platform: "darwin",
   architecture: "arm64",
   nativeBackend: "seatbelt-v1",

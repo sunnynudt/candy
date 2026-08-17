@@ -86,8 +86,9 @@ export function isWindowsTrustedShellAutoAvailable(): boolean {
 }
 
 export function isTrustedShellAutoAvailable(): boolean {
-  return (
-    isWindowsTrustedShellAutoAvailable() ||
-    (process.platform === "darwin" && process.arch === "arm64")
-  );
+  // macOS has an implementation path, but its independent G2 decision is
+  // still open. Keep the normal composition-root capability fail-closed until
+  // that gate is accepted; host platform and architecture alone are not an
+  // attestation.
+  return isWindowsTrustedShellAutoAvailable();
 }
