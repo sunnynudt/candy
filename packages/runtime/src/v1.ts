@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { cleanChildEnvironment } from "@candy/platform";
+import { cleanChildEnvironment, containsCredentialMaterial } from "@candy/platform";
 
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -131,12 +131,6 @@ export interface ImageAttachmentPayload {
 }
 
 export type AttachmentContentGuard = (content: Uint8Array) => boolean;
-
-function containsCredentialMaterial(value: string): boolean {
-  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
-    value,
-  );
-}
 
 export class AttachmentStore {
   public constructor(

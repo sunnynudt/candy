@@ -22,11 +22,33 @@ import {
   SQLiteTaskStore,
   StaleLeaseError,
   cleanChildEnvironment,
+  containsCredentialMaterial,
   parseOpenCodeDeepSeekCredential,
+  redactCredentialMaterial,
   resolveAppPaths,
   resolveDefaultAppDataRoot,
   type TaskReviewMetadata,
 } from "./index.js";
+
+test("credential guard detects and redacts common credential forms", () => {
+  const fixtures = [
+    "https://user:password-value@example.test/repository",
+    "Authorization: Bearer fixture-token-value-123456",
+    "github_pat_fixture-token-value-1234567890",
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "private_key: -----BEGIN PRIVATE KEY-----secret-material-----END PRIVATE KEY-----",
+    "api_key=fixture-api-key-value",
+  ];
+  for (const fixture of fixtures) {
+    assert.equal(containsCredentialMaterial(fixture), true, fixture);
+    assert.doesNotMatch(redactCredentialMaterial(fixture), /fixture-token|password-value|AKIAIOS/u);
+  }
+  assert.equal(containsCredentialMaterial("ordinary source code token: value"), false);
+  assert.doesNotMatch(
+    redactCredentialMaterial("fixture-secret", ["fixture-secret"]),
+    /fixture-secret/u,
+  );
+});
 
 test("manual clock advances deterministically", () => {
   const clock = new ManualClock(100);

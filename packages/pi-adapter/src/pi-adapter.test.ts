@@ -427,6 +427,7 @@ test("DeepSeek client uses only the approved endpoint and releases a secret leas
   ))
     chunks.push(chunk);
   assert.equal(request?.input, "https://api.deepseek.com/chat/completions");
+  assert.equal(request?.init.redirect, "error");
   assert.match(
     String(request?.init.headers && (request.init.headers as Record<string, string>).authorization),
     /^Bearer /u,
@@ -520,6 +521,7 @@ test("MiniMax parser and client remain domestic-only and release the secret leas
   ))
     chunks.push(chunk);
   assert.equal(request?.input, "https://api.minimaxi.com/anthropic/v1/messages");
+  assert.equal(request?.init.redirect, "error");
   assert.deepEqual(chunks, [{ text: "ok", done: false }, { done: true }]);
   assert.equal(released, true);
 });
@@ -1525,6 +1527,43 @@ test("Candy Trusted Shell rejects publication commands before approval or spawn"
   );
   assert.equal(approved, false);
   assert.equal(runnerCalled, false);
+
+  await assert.rejects(
+    operations.exec("git \\\npush origin HEAD", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /publication/iu,
+  );
+  await assert.rejects(
+    operations.exec("git -c alias.p=push p origin HEAD", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /publication/iu,
+  );
+  await assert.rejects(
+    operations.exec("git -C repo p origin HEAD", "C:\\task-worktree", {
+      onData: () => undefined,
+    }),
+    /publication/iu,
+  );
+
+  let safeRunnerCalled = false;
+  const safeOperations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async () => true,
+    runner: {
+      run: async () => {
+        safeRunnerCalled = true;
+        return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+      },
+    },
+  });
+  await safeOperations.exec("git -C repo status --short", "C:\\task-worktree", {
+    onData: () => undefined,
+  });
+  assert.equal(safeRunnerCalled, true);
 });
 
 test("Candy Bash operations abort the native runner on timeout", async () => {

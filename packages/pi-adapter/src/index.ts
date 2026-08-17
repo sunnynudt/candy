@@ -12,7 +12,12 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
-import { cleanChildEnvironment, type NativeProcessResult } from "@candy/platform";
+import {
+  cleanChildEnvironment,
+  containsCredentialMaterial,
+  redactCredentialMaterial,
+  type NativeProcessResult,
+} from "@candy/platform";
 import { Type } from "typebox";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
@@ -246,6 +251,7 @@ export class DeepSeekClient {
     try {
       response = await this.transport(model.endpoint, {
         method: "POST",
+        redirect: "error",
         headers: {
           accept: "text/event-stream",
           "content-type": "application/json",
@@ -329,6 +335,7 @@ export class MiniMaxClient {
     try {
       response = await this.transport("https://api.minimaxi.com/anthropic/v1/messages", {
         method: "POST",
+        redirect: "error",
         headers: {
           accept: "text/event-stream",
           "content-type": "application/json",
@@ -451,12 +458,6 @@ function uniqueNonEmptySecrets(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
 }
 
-function containsCredentialMaterial(value: string): boolean {
-  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
-    value,
-  );
-}
-
 function containsActiveSecretBytes(value: Uint8Array, activeSecrets: readonly string[]): boolean {
   const bytes = Buffer.from(value);
   return activeSecrets.some(
@@ -469,43 +470,93 @@ function containsShellPublicationAction(command: string): boolean {
   // variables, command substitution, or nested interpreters. Reject those
   // forms before approval so they cannot bypass the fail-closed policy.
   if (
+    /[\r\n]/u.test(command) ||
     /[`$]/u.test(command) ||
     /(?:^|[;&|\s])(eval|source)\b/u.test(command) ||
     /(?:^|[;&|\s])(ba?sh|zsh)\s+-c\b/u.test(command)
   )
     return true;
+  const safeGitCommands = new Set([
+    "add",
+    "branch",
+    "checkout",
+    "clean",
+    "diff",
+    "fetch",
+    "log",
+    "ls-files",
+    "merge",
+    "pull",
+    "rebase",
+    "remote",
+    "reset",
+    "restore",
+    "rev-parse",
+    "show",
+    "status",
+    "switch",
+    "tag",
+  ]);
   for (const segment of command.split(/[;&|()\n]+/u)) {
     const tokens = segment
       .trim()
       .split(/\s+/u)
-      .map((token) => token.replace(/^["']|["']$/gu, "").toLowerCase())
+      .map((token) => token.replace(/^["']|["']$/gu, ""))
       .filter((token) => token.length > 0);
-    if (
-      tokens.some((token, index) => {
-        const executable = token.split(/[\\/]/u).at(-1);
-        return (
-          executable === "git" &&
-          tokens
-            .slice(index + 1)
-            .some((subcommand) => subcommand === "commit" || subcommand === "push")
-        );
-      })
-    )
+    const normalizedTokens = tokens.map((token) => token.toLowerCase());
+    for (const [index, token] of normalizedTokens.entries()) {
+      const executable = token.split(/[\\/]/u).at(-1)?.toLowerCase();
+      if (executable !== "git") continue;
+      const argumentsAfterGit = tokens.slice(index + 1);
+      if (
+        argumentsAfterGit.some((argument) => {
+          const normalized = argument.toLowerCase();
+          return (
+            normalized === "commit" ||
+            normalized === "push" ||
+            argument === "-c" ||
+            argument.startsWith("-c=") ||
+            normalized.startsWith("--config")
+          );
+        })
+      )
+        return true;
+      const subcommand = findGitSubcommand(argumentsAfterGit);
+      if (subcommand === undefined || !safeGitCommands.has(subcommand)) return true;
+    }
+    if (normalizedTokens.some((token) => ["publish", "release", "deploy"].includes(token)))
       return true;
-    if (tokens.some((token) => ["publish", "release", "deploy"].includes(token))) return true;
     if (
-      tokens.some(
+      normalizedTokens.some(
         (token, index) =>
           ["npm", "pnpm", "yarn", "cargo", "docker"].includes(token) &&
-          ["publish", "push"].includes(tokens[index + 1] ?? ""),
+          ["publish", "push"].includes(normalizedTokens[index + 1] ?? ""),
       ) ||
-      tokens.some(
-        (token, index) => token === "gh" && ["release", "pr"].includes(tokens[index + 1] ?? ""),
+      normalizedTokens.some(
+        (token, index) =>
+          token === "gh" && ["release", "pr"].includes(normalizedTokens[index + 1] ?? ""),
       )
     )
       return true;
   }
   return false;
+}
+
+function findGitSubcommand(argumentsAfterGit: readonly string[]): string | undefined {
+  const optionsWithArguments = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
+  for (let index = 0; index < argumentsAfterGit.length; index += 1) {
+    const argument = argumentsAfterGit[index] ?? "";
+    const normalized = argument.toLowerCase();
+    if (normalized === "--") return argumentsAfterGit[index + 1]?.toLowerCase();
+    if (optionsWithArguments.has(argument) || optionsWithArguments.has(normalized)) {
+      index += 1;
+      continue;
+    }
+    if (normalized.startsWith("--git-dir=") || normalized.startsWith("--work-tree=")) continue;
+    if (normalized.startsWith("-")) continue;
+    return normalized;
+  }
+  return undefined;
 }
 
 export interface CandyWorkspaceToolOperations {
@@ -831,15 +882,7 @@ export function createCandyNetworkToolDefinition(
 }
 
 function redactBashOutput(value: string, activeSecrets: readonly string[]): string {
-  return activeSecrets
-    .reduce(
-      (result, secret) => (secret.length === 0 ? result : result.split(secret).join("[REDACTED]")),
-      value,
-    )
-    .replace(
-      /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/gu,
-      "[REDACTED]",
-    );
+  return redactCredentialMaterial(value, activeSecrets);
 }
 
 function wrapCandyShellCommand(command: string): string {

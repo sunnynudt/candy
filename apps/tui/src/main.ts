@@ -18,6 +18,7 @@ import {
 } from "@candy/pi-adapter";
 import {
   type CandyModelId,
+  containsCredentialMaterial,
   type CredentialName,
   type CredentialStore,
   CANDY_CREDENTIAL_ENV_KEYS,
@@ -30,6 +31,7 @@ import {
   resolveCredential,
   resolveDefaultAppDataRoot,
   resolveNativeProcessRunnerPath,
+  redactCredentialMaterial,
   SQLiteTaskStore,
   SystemClock,
   type TaskMetadata,
@@ -2365,12 +2367,6 @@ function safeProviderError(error: ProviderContractError): string {
   }
 }
 
-function containsCredentialMaterial(value: string): boolean {
-  return /(?:Bearer\s+[A-Za-z0-9._~+/=-]{16,}|(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,})/u.test(
-    value,
-  );
-}
-
 function parseCredentialName(value: string | undefined): CredentialName | undefined {
   if (value === "deepseek") return "deepseek";
   if (value === "minimax" || value === "minimax-cn") return "minimax-cn";
@@ -2435,9 +2431,7 @@ function isProcessAlive(pid: number): boolean {
 }
 
 function redactTuiOutput(value: string): string {
-  return value
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1[REDACTED]`)
-    .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, "[REDACTED]");
+  return redactCredentialMaterial(value);
 }
 
 function formatApprovalField(value: string): string {

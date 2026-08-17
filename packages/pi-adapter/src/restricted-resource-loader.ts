@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
+import { redactCredentialMaterial } from "@candy/platform";
 import type {
   LoadExtensionsResult,
   PromptTemplate,
@@ -12,7 +13,6 @@ import type {
 const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 const MAX_CANDY_RESOURCE_BYTES = 64 * 1024;
 const CONTEXT_FILE_NAME = "AGENTS.md";
-const REDACTED_CREDENTIAL = "[REDACTED]";
 const DEFAULT_CANDY_SYSTEM_PROMPT =
   "Candy is a local-first coding agent. Keep provider credentials, session content, and diagnostics inside Candy's approved boundaries. Use the selected workspace only and report bounded evidence.";
 
@@ -402,19 +402,4 @@ function decodeUtf8(value: Buffer): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function redactCredentialMaterial(value: string, activeSecrets: readonly string[]): string {
-  return activeSecrets
-    .reduce(
-      (result, secret) =>
-        secret.length === 0 ? result : result.split(secret).join(REDACTED_CREDENTIAL),
-      value,
-    )
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/giu, `$1${REDACTED_CREDENTIAL}`)
-    .replace(/\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/gu, REDACTED_CREDENTIAL)
-    .replace(
-      /((?:api[-_ ]?key|authorization|password|private[-_ ]?key|secret|token)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/giu,
-      `$1${REDACTED_CREDENTIAL}`,
-    );
 }

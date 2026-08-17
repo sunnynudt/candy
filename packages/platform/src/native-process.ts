@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { cleanChildEnvironment } from "./index.js";
+import { containsCredentialMaterial } from "./credential-guard.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
 const MAX_PROTOCOL_LINE_BYTES = 1_048_576;
@@ -415,15 +416,9 @@ function assertSafeProcessEnvironment(environment: Readonly<Record<string, strin
   for (const [key, value] of Object.entries(environment)) {
     if (/(?:api[_-]?key|authorization|credential|password|secret|token)/iu.test(key))
       throw new Error("Provider credentials are forbidden in supervised process environments.");
-    if (containsSandboxSecretMaterial(value))
+    if (containsCredentialMaterial(value))
       throw new Error("Secret-shaped content is forbidden in supervised process environments.");
   }
-}
-
-function containsSandboxSecretMaterial(value: string): boolean {
-  return /(?:^|[^A-Za-z0-9])(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/iu.test(
-    value,
-  );
 }
 
 function activeSecretMaterialLocation(
@@ -470,7 +465,7 @@ function credentialShapedMaterialLocation(
     ]),
     ["serialized payload", payload],
   ];
-  return values.find(([, value]) => containsSandboxSecretMaterial(value))?.[0];
+  return values.find(([, value]) => containsCredentialMaterial(value))?.[0];
 }
 
 function environmentEntries(environment: Readonly<Record<string, string | undefined>>): string[] {
