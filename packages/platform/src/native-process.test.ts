@@ -192,6 +192,24 @@ test("native runner rejects oversized raw active secrets before injected spawn",
   assert.equal(spawnCalled, false);
 });
 
+test("native runner rejects an oversized request before spawn or JSON materialization", () => {
+  let spawnCalled = false;
+  assert.throws(
+    () =>
+      new NativeProcessRunner("/opt/candy/candy-sandbox-runner", "darwin", () => {
+        spawnCalled = true;
+        throw new Error("spawn must not be reached");
+      }).run({
+        executable: "/usr/bin/node",
+        args: Array.from({ length: 12 }, () => "x".repeat(100_000)),
+        cwd: "/tmp",
+        workspace: "/tmp",
+      }),
+    /request exceeds the protocol size limit/u,
+  );
+  assert.equal(spawnCalled, false);
+});
+
 test("native runner rejects a nested JSON active secret before execution", async () => {
   if (process.platform !== "darwin") return;
   const runnerPath = path.resolve(

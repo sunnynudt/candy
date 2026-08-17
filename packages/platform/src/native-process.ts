@@ -6,6 +6,7 @@ import { containsCredentialMaterial } from "./credential-guard.js";
 
 const MAX_OUTPUT_BYTES = 1_048_576;
 const MAX_PROTOCOL_LINE_BYTES = 1_048_576;
+const MAX_NATIVE_REQUEST_BYTES = MAX_PROTOCOL_LINE_BYTES - 1;
 // Rust bounds each child stream to MAX_OUTPUT_BYTES before serde_json encoding.
 // A control character can expand to six JSON bytes, so both streams need a
 // larger protocol-frame bound than the raw child-output bound.
@@ -114,6 +115,8 @@ export class NativeProcessRunner {
       { ...process.env, ...request.environment },
       request.activeSecrets ?? [],
     );
+    assertNativeRequestMaterialSafe(request, environment);
+    assertNativeRequestSize(request, requestId, environment);
     const payload = JSON.stringify({
       v: 1,
       kind: "run",
@@ -139,6 +142,8 @@ export class NativeProcessRunner {
       throw new Error(
         `Sandbox Runner ${activeSecretLocation ?? credentialShapedLocation}: provider credentials forbidden.`,
       );
+    if (Buffer.byteLength(payload, "utf8") + 1 > MAX_PROTOCOL_LINE_BYTES)
+      throw new Error("Sandbox process request exceeds the protocol size limit.");
     if (request.signal?.aborted)
       return Promise.resolve({
         code: null,
@@ -419,6 +424,125 @@ function assertSafeProcessEnvironment(environment: Readonly<Record<string, strin
     if (containsCredentialMaterial(value))
       throw new Error("Secret-shaped content is forbidden in supervised process environments.");
   }
+}
+
+function assertNativeRequestSize(
+  request: NativeProcessRequest,
+  requestId: string,
+  environment: NodeJS.ProcessEnv,
+): void {
+  let bytes = 2;
+  let fields = 0;
+  const addField = (name: string, valueBytes: number): void => {
+    bytes += (fields === 0 ? 0 : 1) + jsonStringByteLength(name) + 1 + valueBytes;
+    fields += 1;
+  };
+  addField("v", 1);
+  addField("kind", jsonStringByteLength("run"));
+  addField("requestId", jsonStringByteLength(requestId));
+  addField("executable", jsonStringByteLength(request.executable));
+  addField("args", jsonArrayByteLength(request.args));
+  addField("cwd", jsonStringByteLength(request.cwd));
+  addField("workspace", jsonStringByteLength(request.workspace));
+  addField("network", request.network === true ? 4 : 5);
+  addField("allowProcessExec", request.allowProcessExec === true ? 4 : 5);
+  addField("processExecPaths", jsonArrayByteLength(request.processExecPaths ?? []));
+  addField("readOnlyPaths", jsonArrayByteLength(request.readOnlyPaths ?? []));
+  addField("parentPid", String(process.pid).length);
+  addField("environment", jsonEnvironmentByteLength(environment));
+  if (bytes > MAX_NATIVE_REQUEST_BYTES)
+    throw new Error("Sandbox process request exceeds the protocol size limit.");
+}
+
+function assertNativeRequestMaterialSafe(
+  request: NativeProcessRequest,
+  environment: NodeJS.ProcessEnv,
+): void {
+  const values: readonly (readonly [string, string])[] = [
+    ["executable", request.executable],
+    ...request.args.map((value): readonly [string, string] => ["argument", value]),
+    ["cwd", request.cwd],
+    ["workspace", request.workspace],
+    ...(request.processExecPaths?.map((value): readonly [string, string] => [
+      "process executable path",
+      value,
+    ]) ?? []),
+    ...(request.readOnlyPaths?.map((value): readonly [string, string] => [
+      "read-only path",
+      value,
+    ]) ?? []),
+    ...environmentEntries(request.environment ?? {}).map((value): readonly [string, string] => [
+      "request environment",
+      value,
+    ]),
+    ...environmentEntries(environment).map((value): readonly [string, string] => [
+      "child environment",
+      value,
+    ]),
+  ];
+  const activeSecretLocation = values.find(([, value]) =>
+    containsActiveSecretMaterial(value, request.activeSecrets ?? []),
+  )?.[0];
+  const credentialShapedLocation = values.find(([, value]) =>
+    containsCredentialMaterial(value),
+  )?.[0];
+  if (credentialShapedLocation !== undefined || activeSecretLocation !== undefined)
+    throw new Error(
+      `Sandbox Runner ${activeSecretLocation ?? credentialShapedLocation}: provider credentials forbidden.`,
+    );
+}
+
+function jsonArrayByteLength(values: readonly string[]): number {
+  return (
+    2 +
+    values.reduce((total, value) => total + jsonStringByteLength(value), 0) +
+    Math.max(0, values.length - 1)
+  );
+}
+
+function jsonEnvironmentByteLength(environment: NodeJS.ProcessEnv): number {
+  const entries = Object.entries(environment).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
+  return (
+    2 +
+    entries.reduce(
+      (total, [key, value]) => total + jsonStringByteLength(key) + 1 + jsonStringByteLength(value),
+      0,
+    ) +
+    Math.max(0, entries.length - 1)
+  );
+}
+
+function jsonStringByteLength(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) {
+      bytes += 2;
+    } else if (code < 0x20 || code === 0x2028 || code === 0x2029) {
+      bytes += 6;
+    } else if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
 function activeSecretMaterialLocation(
