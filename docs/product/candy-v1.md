@@ -2,325 +2,117 @@
 
 ## Product statement
 
-Candy is a standalone, DeepSeek-first coding product for the current macOS Tahoe `26.x` Apple Silicon host and Windows 11. The primary macOS host is currently `26.6.1`; exact macOS `26.5.2` compatibility remains a separately tracked regression baseline. Candy uses domestic models to provide a Codex-class core coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each task has one agent, while multiple independent tasks may run concurrently within a bounded limit.
+Candy V1 is a standalone, DeepSeek-first coding product delivered as a terminal UI (TUI). It provides a Codex-class local coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. The TUI runs one agent per task and may run independent tasks concurrently within a bounded limit.
 
-It provides:
+V1 targets the current macOS Tahoe `26.x` Apple Silicon host and Windows 11. The primary macOS host is currently `26.6.1`; exact macOS `26.5.2` compatibility remains a separately tracked regression baseline.
 
-- a terminal UI for direct coding interaction;
-- an Electron desktop client for session management, permissions, tool visibility, changed files, and diff review;
-- a task-bound browser for shared user and agent web interaction;
-- long-running tasks and Auto Debug with explicit verification criteria;
-- a shared TypeScript runtime implemented through a Pi SDK adapter.
-
-Candy V1 validates a useful product slice. It does not attempt complete feature parity with mature coding agents.
+The Electron Desktop client and Browser Workspace are explicitly V2 scope. Their source, adapters, and historical design notes must not be used as evidence that V1 is implemented or accepted.
 
 ## V1 boundaries
 
 Candy V1 is:
 
-- local-first;
-- single-user;
-- single-agent per task;
+- TUI-only and local-first;
+- single-user and single-agent per task;
 - bounded to three concurrent tasks by default and five at most;
-- TypeScript for product and control-plane code, with one audited Rust native-helper exception for OS command sandboxing and Windows process-tree ownership;
-- BYOK for DeepSeek and MiniMax domestic Token Plan;
-- supported on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11; the exact host version is recorded in acceptance evidence.
+- TypeScript for product and control-plane code, with only the narrow Rust native-helper exception for OS command sandboxing and Windows process-tree ownership;
+- BYOK for DeepSeek and MiniMax domestic Token Plan credentials;
+- persistent in Candy-owned application data;
+- usable from a stable local `candy` command on macOS and Windows.
+
+Candy V1 includes the following user journey:
+
+1. configure or inspect provider credential presence without exposing the credential;
+2. select a workspace and create a task;
+3. stream a Pi-backed model turn through Candy's narrow adapter;
+4. inspect bounded, redacted tool activity and task state;
+5. steer, follow up, or cancel an active task when the state permits it;
+6. review changes and explicitly apply or discard them where the selected workspace mode supports it;
+7. restart Candy, inspect persisted evidence, and continue only with a new explicit prompt.
+
+The TUI starts in a safe, fail-closed mode. Shell and other side-effectful capabilities remain unavailable unless their platform-specific security and approval gates pass; a disabled or unverified capability is not V1 acceptance evidence.
 
 Candy V1 does not include:
 
-- a Candy cloud backend;
-- Candy accounts, subscriptions, or model billing;
-- credential synchronization;
-- a system-wide daemon;
-- multi-agent orchestration;
-- detached task execution after Candy quits;
-- remote execution;
-- a plugin marketplace;
-- a general workflow engine;
-- real-time control from multiple clients.
+- an Electron Desktop client or app-server product surface;
+- a Browser Workspace, browser profile, browser automation, or browser screenshots;
+- a Candy cloud backend, account, subscription, telemetry service, or model billing;
+- a system-wide daemon or execution after Candy quits;
+- remote execution, multi-agent orchestration, a plugin marketplace, or a general workflow engine;
+- real-time control from multiple clients or cross-client handoff;
+- a V1 Auto Debug or Desktop tray workflow.
+
+These deferred capabilities may be designed or retained in the repository for V2, but they are not required V1 deliverables and cannot block the TUI V1 acceptance decision.
 
 ## Runtime topology
-
-### TUI
 
 ```text
 Candy TUI
   -> @candy/runtime
   -> Pi SDK adapter
-  -> selected Primary Model
+  -> selected provider
 ```
 
-The TUI runs the runtime in-process. The WP2 vertical slice now uses the exact direct dependency `@earendil-works/pi-tui@0.84.1` only for the editor, transcript widgets, and rendering surface. Candy retains command parsing, task state, scheduling, Runtime calls, and session ownership; it does not run Pi interactive mode or import Pi's client, protocol, plugin, or session-store surfaces. The slice uses `TuiAltScreen` and `ProcessTerminal`, rejects `PI_TUI_WRITE_LOG`, `PI_TUI_DEBUG`, and `PI_DEBUG_REDRAW`, writes to an explicit Candy app-data log directory, and redacts secret-shaped transcript output. Deterministic FakeTerminal coverage is an implementation checkpoint, not macOS/Windows terminal acceptance.
+The TUI runs the runtime in-process. Candy owns command parsing, task state, scheduling, session ownership, approval decisions, workspace policy, and the user-facing transcript. Pi is used through a narrow adapter; Candy does not run Pi interactive mode or import Pi's client, protocol, plugin, or default session-store surfaces.
 
-### Desktop
+TUI and Desktop do not share a V1 client contract. A future Desktop client may use an app-server child process, but that is a V2 architecture and is not part of the V1 runtime topology.
 
-```text
-Electron Renderer
-  -> Electron IPC
-  -> Electron Main
-  -> typed JSONL over stdio
-  -> Candy app-server child process
-  -> bounded task scheduler
-  -> per-task @candy/runtime instance
-  -> Pi SDK adapter
-  -> selected Primary Model
-```
+## Tasks, sessions, and continuation
 
-The app-server is owned by the Desktop application. It must not outlive the application and is not a cloud server or system-wide daemon.
+Each Candy Task has one execution owner and one persistent session. Candy reuses Pi session machinery and format in a Candy-owned application-data directory resolved by a platform adapter. Candy must not write into Pi's default session directory.
 
-## Shared runtime
+The TUI persists completed messages, bounded tool evidence, task state, revision, and change-review metadata. An interrupted or uncertain turn is never silently replayed. Restart recovery displays persisted evidence and requires an explicit continuation prompt. In-flight tool calls are not migrated or replayed.
 
-TUI and Desktop use the same `@candy/runtime` package.
+Independent tasks may execute concurrently within the configured global limit. File mutations and shell commands are sequential within a task by default. A task that loses ownership becomes resumable only through the explicit recovery rules; stale owners must not mutate current task state.
 
-The runtime owns, per task:
+## Workspace and changes
 
-- Pi SDK integration;
-- DeepSeek and MiniMax provider configuration;
-- tool execution policy;
-- permission requests;
-- session loading and saving;
-- normalized runtime events.
+Candy supports a selected Local Workspace and, where the task policy requires isolation, a Candy-owned Task Worktree. Concurrent writable tasks for the same Git repository use separate worktrees. Candy does not silently commit, push, merge, release, deploy, or initialize Git.
 
-Clients own presentation and user interaction.
-
-## Tasks and sessions
-
-Each Candy Task has one agent and one persistent session. V1 reuses Pi session machinery and format in a Candy-owned application-data directory resolved by a platform adapter.
-
-Candy must not write into Pi's default session directory.
-
-TUI and Desktop may view and sequentially resume the same task. They may not simultaneously control one task's active turn. Independent tasks may run concurrently within the global limit.
-
-## Execution ownership
-
-Each task permits only one active execution owner. Candy may hold multiple task execution locks at once, up to the configured concurrency limit.
-
-The execution lock contains:
-
-```json
-{
-  "taskId": "...",
-  "sessionId": "...",
-  "ownerPid": 1234,
-  "ownerType": "tui",
-  "acquiredAt": "..."
-}
-```
-
-A client without a task's lock may inspect that task's saved state but cannot start or continue its execution.
-
-Normal task exit releases its lock. Crash recovery must detect stale locks safely on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11; the exact `26.5.2` regression baseline remains separately tracked.
-
-Cross-client continuation means:
-
-1. stop or finish the current turn;
-2. wait for active tools to stop;
-3. persist completed messages and results;
-4. release the execution lock;
-5. start a new turn from another client.
-
-V1 does not migrate an in-flight tool call between processes.
-
-## Parallel task scheduling
-
-Candy runs three tasks concurrently by default and enforces a V1 hard limit of five. Additional tasks enter a FIFO queue that users may reorder or cancel.
-
-Provider calls use independent global concurrency gates and rate limiters for DeepSeek and MiniMax. Scheduling is fair across tasks. A provider rate limit pauses calls to that provider without blocking unrelated local tools.
-
-Candy exposes two Git workspace environments: Local Workspace for direct foreground work and Task Worktree for parallel or background work. A task may start in either environment and may use Workspace Handoff to move between its Local Workspace and associated Task Worktree. Concurrent writable tasks for the same repository must use separate Task Worktrees.
-
-A Task Worktree stays associated with its task until the user applies or discards it. Applying changes requires diff review and transfers the patch into the Local Workspace as uncommitted changes. Candy does not automatically commit. A dirty Local Workspace or patch conflict stops the handoff for user review.
-
-Non-Git projects run directly in their Local Workspace and support at most one writable task at a time. Candy does not initialize Git without an explicit user request, and non-Git projects do not offer Task Worktrees or Workspace Handoff.
-
-Closing the Desktop window keeps Candy and its app-server running in the tray or menu bar. Explicitly quitting Candy prompts the user and cancels running tasks. V1 does not continue execution after the Candy application exits.
+Change review is explicit. The TUI exposes bounded changed-file and diff evidence; applying changes requires the contracted review and ownership checks. Discard removes only Candy-owned worktree state. Dirty targets, conflicts, path mismatches, symlink or reparse-point risks, and credential matches fail closed.
 
 ## Pi integration
 
-Candy depends on Pi through a narrow adapter.
+Candy depends on Pi through a narrow adapter. V1 does not fork Pi, expose Pi internal types to clients, run Pi interactive mode, rewrite the agent loop, or promise compatibility with the full Pi extension ecosystem.
 
-V1 does not:
+The adapter projects settled, retry, compaction, cancellation, assistant, and tool observations into Candy's bounded event model. Provider error text, credentials, tool arguments, and unbounded tool output are not copied into the TUI transcript. The adapter uses Candy-owned resource loading only; Pi's default `.pi` resources, extensions, packages, skills, prompts, themes, and executable resources are outside the Candy session boundary.
 
-- fork Pi;
-- expose Pi internal types to clients;
-- run Pi interactive mode;
-- rewrite the agent loop;
-- promise compatibility with the full Pi extension ecosystem.
+The complete Pi package family is pinned to exact `0.84.1`. Node remains `22.23.2`, npm remains `10.9.8`, and TypeScript remains `5.9.3`; these compatibility-sensitive versions upgrade together.
 
-The WP1 source boundary is now enforced in the Pi Adapter: `PiAgentEngine` supplies a Candy-owned `CandyRestrictedResourceLoader` and an in-memory `SettingsManager` with `projectTrusted: false`. The loader never discovers or reloads Pi resources, exposes empty extensions/skills/prompts/themes, rejects non-empty resource extension requests, and reads only a bounded, non-symlink root `AGENTS.md` after credential redaction. `.pi` settings, packages, extensions, skills, prompts, themes, and executable resources are outside the Candy session boundary. The deterministic hostile-workspace fixture proves this behavior and is not macOS/Windows platform acceptance or a final release-security Pass.
+## Tools, approvals, and cancellation
 
-WP2 keeps that boundary at the presentation seam: `CandyTuiSurface` is the only TUI module that imports `pi-tui`, and the `InteractiveTui` remains the product control plane. Its injected terminal seam restores input, cursor, and terminal state on normal exit, Ctrl+C, startup failure, and runtime failure. The explicit log path and output redaction protect the TUI surface from the Pi default debug/crash destinations and credential-shaped values; real terminal behavior still requires the supported macOS and Windows acceptance matrices.
+V1 reuses Pi's basic file and model tools behind a thin Candy Tool Host. The host provides permission checks, secret isolation, normalized bounded events, cancellation, file-change tracking, and structured errors.
 
-Pin the complete Pi package family to exact `0.84.1` and verify session behavior on both supported operating systems. Pi is the agent-runtime compatibility anchor: Node stays on Pi's tested Node 22 line, TypeScript matches Pi `5.9.3`, and npm follows the selected Node distribution and Pi's lockfile workflow. Pi and these boundary-sensitive toolchain versions upgrade as one compatibility change, never as independent freshness updates.
+Tool names are bounded and redacted. Tool arguments, output, provider errors, and credentials are not exposed merely to make a status line informative. Side-effect-free reads and searches may execute in parallel within one task; file mutations and shell commands execute sequentially by default.
 
-## Tool boundary
+The default profile permits only the contracted workspace operations. Read-only rejects mutations. Sensitive actions require explicit approval. Native command containment, process-tree ownership, and network policy are platform adapters; a platform without completed G2 evidence remains fail-closed.
 
-V1 reuses Pi's basic tool implementations behind a thin Candy Tool Host.
+## Candy-owned instructions and resources
 
-The Tool Host provides:
+Candy may load global instructions, prompt templates, and declarative Markdown skills only from its Candy-owned application-data resource root. Resource files are bounded, non-symlinked, validated, and redacted before entering Pi context. Workspace `AGENTS.md` is handled through the same restricted adapter boundary. External tool configuration, Pi default resources, and unrelated repositories are never Candy runtime sources.
 
-- permission checks;
-- secret isolation;
-- normalized tool events;
-- command cancellation;
-- file-change tracking;
-- structured errors.
+## Providers and credentials
 
-V1 initially uses Pi's existing file and shell tools. Additional editing tools are deferred until real usage demonstrates a need.
+DeepSeek is the default provider path. MiniMax domestic Token Plan is supported only through its approved domestic endpoint, `https://api.minimaxi.com`; Candy must not fail over to the global MiniMax endpoint. Provider model contracts, live entitlement, multimodal behavior, and cancellation are accepted only with the evidence described by the live-provider procedure.
 
-Side-effect-free reads and searches may execute in parallel within one task. File mutations and shell commands execute sequentially within that task by default. Parallel execution across independent task worktrees is allowed.
+Users may set, replace, query presence, and delete DeepSeek and MiniMax credentials. Credentials may come only from a temporary provider-specific process environment or the operating system's local credential store. The TUI may report presence but never reads back a complete credential.
 
-## Permissions and sandboxing
-
-Candy follows a two-layer local control model:
-
-- sandbox policy defines what a model-generated action can technically access;
-- approval policy defines when Candy must pause and ask the user.
-
-The default Auto profile permits reading and editing inside the active workspace; it does not expose a shell. The separately gated macOS Trusted Shell Auto Personal Preview is an explicit one-task capability for a Candy-owned Git Task Worktree: its ordinary commands run offline without another prompt, while outbound network access is a separate one-command approval. The native boundary keeps Git metadata read-only so commit/push cannot be performed by that shell lane. A Read-only profile supports analysis without modifications. V1 does not expose a mode that bypasses both approvals and sandboxing.
-
-Strong command containment is implemented through the narrow native Sandbox Runner accepted in ADR-0005 and platform-scoped by ADR-0010. It owns only OS sandbox and process-tree mechanics; Candy's task, approval, provider, workspace, and product policies remain in the TypeScript Runtime. The macOS arm64 TUI normal composition root now exposes the explicitly selected Trusted Shell Auto Personal Preview after the accepted macOS G2 gate; Windows remains disabled, and Shell-based Auto Debug remains separately gated.
-
-Provider HTTPS requests run through privileged provider adapters and are not ordinary tool-network access. Provider credentials are never inherited by tools, commands, browser processes, or browser pages.
-
-## Model portfolio and multimodal input
-
-Each Candy Task has one selected Primary Model. V1 supports:
-
-- DeepSeek V4 Flash as the default model for speed and cost;
-- DeepSeek V4 Pro as the higher-capability DeepSeek option;
-- MiniMax M3 as a native multimodal coding model for text and image input.
-
-Users may switch the Primary Model between turns, but Candy does not change providers during an active turn and never performs a silent cross-provider fallback. When a user attaches an image to a DeepSeek task, Candy offers to switch the task to MiniMax M3 rather than sending the image through a hidden secondary vision call.
-
-V1 supports pasted images, dragged image files, selected image files, and browser screenshots. Attachments are stored in Candy's application-data directory; sessions record attachment identifiers and metadata rather than embedding binary data. The attachment model may represent video, but the video input UI remains disabled until the MiniMax domestic API contract, limits, cancellation behavior, and Token Plan eligibility are verified.
-
-Candy sends MiniMax requests and multimodal attachments only to `https://api.minimaxi.com`. It must not fail over to the global MiniMax endpoint. A MiniMax failure is explicit and offers retry, model change, or cancellation.
-
-## Browser Workspace
-
-The Desktop client provides a visible, task-bound Browser Workspace shared by the user and agent. V1 supports opening pages, navigating, clicking, typing, inspecting rendered state, taking screenshots, and verifying local or public web pages. It reuses an existing Chromium automation surface; Candy does not implement a browser engine.
-
-The built-in browser uses a Candy-owned persistent Browser Profile that is separate from the user's regular browser and provider credentials. The user signs in directly when an account is required and may clear browser data in Settings. Candy never exposes complete cookie, password, or token values to the model, session, tools, or logs.
-
-The user must allow a site before the agent can operate it. Site permission does not make page content trusted. Submitting information, purchasing, changing permissions, deleting data, publishing content, or using full browser-debug access requires explicit confirmation. Automated file upload is not included in V1. Downloads use a user-configured location and remain visible to the user.
-
-Candy uses a single Browser Control Owner per tab. When packaged Electron can reliably identify physical user interaction, that interaction immediately returns control to the user and cancels or pauses the conflicting agent action. Otherwise V1 presents a visible Take Control action that performs the same transfer before the user operates the page. The agent cannot silently retake control.
-
-## Long-running tasks and Auto Debug
-
-A Long-running Task starts from an explicit outcome, constraints, and verification criteria. Users may pause, resume, steer, or cancel it while Candy runs. Closing the Desktop window may leave it running in the tray or menu bar; explicitly quitting Candy cancels it. Long-running execution never broadens the task's sandbox, approvals, workspace, model, or browser permissions.
-
-Auto Debug is a Long-running Task that reuses Pi's agent loop and Candy's normal tools. It gathers observable failure evidence, edits the project, reruns the same validator, and stops when verification succeeds or execution cannot safely continue. Validators may be tests, builds, explicit commands, or browser-visible assertions.
-
-Command and build validators use Candy's common `CommandValidator` for bounded, redacted evidence and completion semantics. The platform adapter owns only the native process boundary: the existing versioned JSONL contract, explicit offline/network capability, runner location, and macOS/Windows cancellation strategy. This separation does not make Shell Auto a release capability; each platform remains gated by its independent G2 evidence.
-
-Candy pauses Auto Debug when it needs a new approval, detects repeated lack of progress, reaches an optional user budget, loses its execution owner, or receives a user stop. It never auto-commits, pushes, releases, deploys, or creates a second workflow engine.
-
-## V1 product value
-
-Candy V1 focuses on:
-
-- TUI and Desktop access to the same persistent sessions;
-- standalone DeepSeek-first setup with selectable DeepSeek V4 Flash, DeepSeek V4 Pro, and MiniMax M3;
-- desktop session management;
-- structured tool visibility;
-- permission approval;
-- changed-file presentation;
-- diff review;
-- cross-client sequential continuation;
-- bounded parallel tasks with Local/Worktree handoff;
-- native MiniMax M3 image understanding;
-- shared user/agent browser verification;
-- long-running tasks and Auto Debug with explicit completion criteria.
-
-Tool count is not a V1 differentiator.
-
-## Credentials
-
-Users provide their own DeepSeek and MiniMax domestic Token Plan credentials for the models they enable.
-
-Allowed credential sources:
-
-- a temporary provider-specific process environment;
-- the local operating-system credential store.
-
-Credential resolution order:
-
-1. temporary process environment;
-2. local credential store;
-3. `needs_credentials`.
-
-Provider credentials must be removed from environments passed to tools and child processes. Before a native validator starts, Candy unconditionally rejects raw active credentials in executable, arguments, paths, and environment entries; it also rejects their repeatedly JSON-stringified representations while each representation fits the native v1 request-line limit. The raw value is never exempt because it exceeds that limit, and redacting returned output is not a substitute for preventing execution.
-
-Credentials must never appear in:
-
-- repositories;
-- sessions;
-- prompts;
-- model-visible context;
-- logs;
-- diagnostics;
-- analytics;
-- crash uploads;
-- JSONL command/event messages;
-- tool subprocesses.
-
-Each provider credential may authenticate only to its approved HTTPS endpoint. All MiniMax credentials, model requests, and multimodal attachments are restricted to `https://api.minimaxi.com`.
+Provider credentials must never appear in repositories, sessions, prompts, model-visible context, logs, diagnostics, analytics, crash reports, JSONL messages, tool arguments, browser data, or tool subprocess environments. A Candy-managed write, commit, or push containing an active credential is blocked.
 
 Candy V1 has no remote telemetry or automatic crash upload.
 
-## V1 acceptance
+## Acceptance
 
-[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is the authoritative definition of complete. Each implementation slice must pass its mapped Acceptance Gates with reviewable evidence on the current macOS Tahoe `26.x` Apple Silicon primary host and Windows 11. The exact `26.5.2` matrix is a separate compatibility regression gate when that compatibility claim is required. V1 release requires every mandatory product journey, live provider contract, security invariant, recovery case, and responsiveness target to pass with zero open P0/P1 defects.
+[Candy V1 Product Acceptance Standard](./acceptance-v1.md) is authoritative for the TUI V1 release decision. It defines separate evidence for the current macOS Tahoe `26.x` Apple Silicon host, Windows 11, and the exact macOS `26.5.2` regression baseline. Current-host macOS evidence does not prove Windows behavior or the `26.5.2` compatibility claim.
 
-Real provider tests follow the [Live Provider Credential Procedure](../testing/live-provider-credentials.md). Existing Claude Code or OpenCode configurations may be inspected only through a user-authorized redacted audit; Candy never treats them as runtime credential sources or automatically imports their tokens.
+V1 release requires the TUI acceptance gates to pass on both required platforms, all required live provider contracts to be verified for enabled providers, no open P0/P1 defect, and explicit product-owner approval. Desktop and Browser acceptance is deferred to V2.
 
-## First vertical slice
+## V2 boundary
 
-Implement and verify only:
+V2 may add the Electron Desktop client, app-server child process, cross-client session inspection and handoff, Browser Workspace, browser profile and control ownership, Desktop packaging/signing, and Desktop/Browser-specific recovery and responsiveness gates. V2 must define its own acceptance contract; V2 work does not retroactively satisfy a V1 TUI gate.
 
-1. initialize the TypeScript workspace;
-2. pin the Pi-compatible Gate baseline: Node.js `22.23.2`, bundled npm `10.9.8`, TypeScript `5.9.3`, and every resolved `@earendil-works/pi-*` package at exact `0.84.1`, while importing only the documented coding-agent root SDK export;
-3. run one `deepseek-v4-flash` prompt through `https://api.deepseek.com/chat/completions` and the Pi SDK;
-4. stream the response;
-5. execute one read-only tool call;
-6. persist the session in Candy's application-data directory;
-7. load the same session on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11;
-8. verify the credential does not enter logs, sessions, tool subprocesses, or the repository.
+## Source and evidence rules
 
-Do not start the full TUI or Electron UI before this slice passes.
+Use files inside the Candy repository as the source of truth. Do not copy architecture, identifiers, configuration, credentials, or terminology from unrelated repositories. Live provider tests follow [Live Provider Credential Procedure](../testing/live-provider-credentials.md). Existing external tool configuration is discovery evidence only and is never a Candy runtime credential source.
 
-Do not start the parallel scheduler, worktree flow, MiniMax M3 integration, Browser Workspace, or Auto Debug before this slice passes. These remain required V1 capabilities and follow as later vertical slices.
-
-## Upgrade triggers
-
-Consider a shared app-server or daemon only when Candy needs:
-
-- real-time observation from another client;
-- live client handoff;
-- execution after clients close;
-- additional client connections;
-- remote control.
-
-Until then, keep TUI execution in-process and Desktop execution in its app-managed child process.
-
-## Decision records and handoff
-
-- [Accepted V1 architecture](../architecture/candy-v1.md)
-- [Conditionally accepted technical plan](../architecture/technical-plan-v1.md)
-- [Coding implementation plan](../architecture/implementation-plan-v1.md)
-- [Pi/provider Compatibility Gate 0](../research/compatibility-gate-0.md)
-- [Pi-compatible toolchain baseline](../research/pi-toolchain-baseline.md)
-- [Platform Compatibility Gate 0](../research/platform-gate-0.md)
-- [Bounded parallel tasks](../adr/0001-bounded-parallel-tasks.md)
-- [Superseded DeepSeek-primary decision](../adr/0002-deepseek-primary-minimax-vision.md)
-- [DeepSeek-first model portfolio with MiniMax M3](../adr/0003-deepseek-first-multimodal-model-portfolio.md)
-- [Codex-style local control baseline](../adr/0004-codex-style-local-control-baseline.md)
-- [Narrow native Sandbox Runner](../adr/0005-allow-narrow-native-sandbox-runner.md)
-- [Windows Trusted Shell Auto Personal Preview gate](../adr/0011-windows-trusted-shell-auto-personal-preview.md)
-- [Explicit Browser takeover fallback](../adr/0006-use-explicit-browser-takeover-fallback.md)
-- [Current macOS Tahoe primary host and `26.5.2` regression baseline](../adr/0009-current-macos-primary-with-regression-baseline.md)
-- [V1 product acceptance standard](./acceptance-v1.md)
-- [Live provider credential procedure](../testing/live-provider-credentials.md)
-- [Current grilling handoff](./grilling-handoff.md)
+The accepted implementation and security records remain useful design history, but a historical Desktop, Browser, or cross-platform report is not V1 acceptance evidence unless it is explicitly mapped to the TUI contract in `acceptance-v1.md`.

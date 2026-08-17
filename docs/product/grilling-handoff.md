@@ -4,6 +4,8 @@ Updated: 2026-08-09
 
 This document records the accepted product decisions and the remaining grilling frontier so another Codex session can continue without reconstructing the discussion. `docs/product/candy-v1.md`, `CONTEXT.md`, and accepted ADRs remain the source of truth when this handoff and a settled decision differ.
 
+Scope note (2026-08-17): this is a historical handoff snapshot. The current V1 contract is the TUI-only scope in [`candy-v1.md`](candy-v1.md) and [`acceptance-v1.md`](acceptance-v1.md); Desktop, Browser Workspace, and their dependent workflows are V2 and the older requirements below are not V1 acceptance criteria.
+
 ## Accepted decisions
 
 ### Product foundation

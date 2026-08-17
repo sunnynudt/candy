@@ -1,8 +1,10 @@
 # Candy V1 Coding Implementation Plan
 
-Status: implementation authorized; capability enablement and release claims remain blocked by their unresolved Gates
+Status: TUI V1 implementation authorized; Desktop and Browser phases are deferred to V2
 
 This plan begins after the technical plan and conditional Compatibility Gate 0 decision are accepted. Product coding is authorized. Work proceeds as vertical slices; an unresolved live or platform Gate blocks enabling and accepting the affected capability, but it does not block independent code, deterministic fixtures, disabled adapters, or later work that does not rely on the unproved behavior. A slice is complete only when its mapped gates in the [Candy V1 Product Acceptance Standard](../product/acceptance-v1.md) pass with the required evidence.
+
+The current V1 delivery line is the in-process TUI. Electron Desktop, Browser Workspace, cross-client handoff, Desktop packaging, and Desktop/Browser-specific long-running workflows are retained below as V2 planning material and are not V1 exit criteria.
 
 ## Rules of execution
 
@@ -25,13 +27,13 @@ Deliverables:
 1. Verify and record the Pi-compatible baseline: exact Pi package closure, the Pi-tested Node major and security patch, its bundled npm, matching TypeScript, and the separately selected Electron runtime.
 2. Verify the public Pi exports used by the Adapter and classify any unavoidable unstable import.
 3. Freeze official DeepSeek and MiniMax domestic endpoint, model, authentication, streaming, tool, reasoning, attachment, cancellation, limit, and Token Plan contracts.
-4. Select the transactional task metadata implementation and prove it works in the chosen Node and Electron runtimes.
-5. Select Browser Workspace and command-sandbox adapters from first-party evidence.
+4. Select the transactional task metadata implementation and prove it works in the chosen Node and TUI runtimes.
+5. Select the command-sandbox adapter from first-party evidence. Browser Workspace selection is V2 planning material.
 6. Record OS credential, process cancellation, lease, app-data, and Git worktree strategies.
 7. Convert every unresolved item into a named blocker with an owner and validation procedure.
-8. Record the current macOS Tahoe `26.x` Apple Silicon primary host and freeze the compatible Electron line; retain exact `26.5.2` as a separate regression baseline.
+8. Record the current macOS Tahoe `26.x` Apple Silicon primary host; retain exact `26.5.2` as a separate regression baseline. Electron compatibility is V2 planning material.
 9. Specify the accepted Rust Sandbox Runner protocol and macOS/Windows backend security contract; obtain security review before it can enable Shell.
-10. Validate automatic Browser takeover and use the accepted visible Take Control fallback when physical input cannot be distinguished reliably from CDP-synthesized input.
+10. Defer Browser takeover validation to the V2 Browser acceptance contract.
 
 Exit criteria:
 
@@ -115,7 +117,9 @@ Exit criteria:
 - provider failure offers retry, explicit model change, or cancel and never silently reroutes;
 - video UI remains disabled unless its separate contract gate passes.
 
-## Phase 5: Desktop shell and trusted process path
+## Phase 5 (V2): Desktop shell and trusted process path
+
+This phase is deferred. It is not required to accept the TUI V1 and must not be used to claim V1 Desktop support.
 
 Work packets:
 
@@ -154,7 +158,9 @@ Exit criteria:
 
 If G2 cannot pass on either platform, the phase remains blocked and Candy does not advertise the default Auto profile on that platform.
 
-## Phase 7: Browser Workspace
+## Phase 7 (V2): Browser Workspace
+
+This phase is deferred. It is not required to accept the TUI V1 and must not be used to claim V1 Browser support.
 
 Work packets:
 
@@ -173,7 +179,9 @@ Exit criteria:
 - automated uploads remain unavailable;
 - Browser assertions can validate local and public pages through structured observations.
 
-## Phase 8: Long-running Tasks and Auto Debug
+## Phase 8 (V2): Long-running Tasks and Auto Debug
+
+This phase is deferred with the Desktop/Browser workflow. TUI cancellation, steering, follow-up, and explicit continuation remain governed by the TUI acceptance gates.
 
 Work packets:
 
@@ -191,15 +199,15 @@ Exit criteria:
 - task permissions, model, workspace, browser sites, and network capability never broaden during long-running execution;
 - Auto Debug never auto-commits, pushes, releases, or deploys.
 
-## Phase 9: cross-platform release hardening
+## Phase 9: TUI cross-platform release hardening
 
 Work packets:
 
-1. Run the full current macOS Tahoe `26.x` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, worktrees, Browser, downloads, tray behavior, and packaging; run the exact `26.5.2` regression matrix separately when that compatibility claim is required.
+1. Run the TUI current macOS Tahoe `26.x` Apple Silicon and Windows 11 matrix for sessions, credentials, process trees, leases, workspaces, and the stable command; run the exact `26.5.2` TUI regression matrix separately when that compatibility claim is required.
 2. Add migration fixtures for protocol, metadata, and session schema versions.
 3. Produce dependency licenses, SBOM, exact lockfile verification, lifecycle-script allowlist, and packaged-artifact smoke tests.
-4. Verify install, upgrade, rollback, app-data retention, credential deletion, Browser data clearing, and uninstall behavior.
-5. Run the V1 security and recovery checklist with canary credentials and adversarial workspaces/pages.
+4. Verify install, upgrade, rollback, app-data retention, credential deletion, and uninstall behavior for the TUI source distribution.
+5. Run the V1 security and recovery checklist with canary credentials and adversarial workspaces.
 
 Exit criteria:
 
@@ -207,7 +215,7 @@ Exit criteria:
 - a clean machine can install, start, run a task, restart, reload, and uninstall without losing user-reviewed data unexpectedly;
 - packaged applications contain only approved runtime dependencies and no development credentials or local paths;
 - known limitations are explicit in release notes.
-- ACC-01 through ACC-12 pass on both acceptance platforms with zero open P0/P1 defects.
+- ACC-TUI-01 through ACC-TUI-08 pass on both acceptance platforms with zero open P0/P1 defects. Desktop and Browser gates are deferred to V2.
 
 ## Required test matrix
 
@@ -216,17 +224,17 @@ Every mutable or external action is tested across these dimensions where applica
 | Dimension        | Required cases                                                        |
 | ---------------- | --------------------------------------------------------------------- |
 | Operating system | current macOS Tahoe `26.x` Apple Silicon; Windows 11                    |
-| Client           | TUI in-process; Desktop app-server                                    |
+| Client           | TUI in-process                                                        |
 | Workspace        | Git clean; Git dirty; Task Worktree; non-Git Local                    |
 | Task state       | Running; WaitingApproval; Paused; Interrupted; Cancelled              |
 | Provider         | DeepSeek; MiniMax; rate limited; cancelled; malformed stream          |
 | Control          | Read-only; Auto; explicit denial; stale approval                      |
-| Recovery         | client crash; app-server crash; application quit; stale lease         |
-| Security         | secret canary; path escape; network attempt; browser prompt injection |
+| Recovery         | TUI crash; application quit; explicit continuation; stale lease    |
+| Security         | secret canary; path escape; network attempt; hostile resource input   |
 
 ## First implementation checkpoint
 
-After Phase 2, perform a mandatory Runtime proof review before creating the full TUI or Electron shell. In an unattended Goal, Codex performs this review, records the evidence, fixes deterministic failures, and continues automatically only when questions 1 through 4 pass. Missing macOS or live-provider evidence remains a named blocker under question 5 and does not block independent implementation, but no cross-platform or provider-compatibility claim may be made without it. The checkpoint must answer:
+After Phase 2, perform a mandatory Runtime proof review before enabling additional V1 capabilities. In an unattended Goal, Codex performs this review, records the evidence, fixes deterministic failures, and continues automatically only when questions 1 through 4 pass. Missing macOS or live-provider evidence remains a named blocker under question 5 and does not block independent implementation, but no cross-platform or provider-compatibility claim may be made without it. The checkpoint must answer:
 
 1. Does the pinned Pi public surface support the Adapter without internal imports?
 2. Does the approved DeepSeek contract stream tool-capable turns correctly?
