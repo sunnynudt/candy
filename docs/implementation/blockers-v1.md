@@ -2,7 +2,12 @@
 
 Updated: 2026-08-17
 
-Post-`8f3bf78` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **233/233** on Node `22.23.2`/npm `10.9.8`. The code line includes stale-owner fencing, app-data/workspace overlap rejection, bounded workspace/attachment operations, fail-closed Trusted Shell gates pending G2, exclusive/no-follow attachment metadata creation, and TUI control-sequence sanitization for assistant evidence. Current-source DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. Fresh scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` completed against `2911fcd` with **9 open findings (5 medium, 4 low)**; it is not a security clearance. The attachment metadata symlink finding is addressed by `c6eb334`; descriptor-relative/reparse-safe races and platform gates remain open. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`23b3f67` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **235/235** on Node `22.23.2`/npm `10.9.8`. The code line includes stale-owner fencing, app-data/workspace overlap rejection, bounded workspace/attachment operations, fail-closed Trusted Shell gates pending G2, exclusive/no-follow attachment metadata creation, TUI control-sequence sanitization for assistant evidence, and explicit provider reader cancellation. Current-source DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. Fresh scan `76445169-b4e0-4e89-9f30-a22cf156b5d9` completed against `2911fcd` with **9 open findings (5 medium, 4 low)**; it is not a security clearance. The attachment metadata and provider-reader cancellation findings are addressed by `c6eb334` and `23b3f67`; descriptor-relative/reparse-safe races and platform gates remain open pending a fresh current-HEAD scan. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `23b3f67` checkpoint blockers
+
+- Provider stream cancellation is now verified: `npm run check` **235/235**, native check and Pi cancellation smoke pass, current macOS acceptance is **14/14**, and current-source DeepSeek/MiniMax gates are **7/7** and **8/8**.
+- The older scan snapshot's provider-reader finding is addressed, but the snapshot is not a clearance for current HEAD. Remaining blockers are descriptor-relative/reparse-safe filesystem races, nested-interpreter Trusted Shell publication policy, Windows 11 acceptance, exact macOS `26.5.2`, independent G2 approval, signed release, and final V1 acceptance. `.omo/` remains user-owned, untracked, and preserved.
 
 ## 2026-08-17 Issue #4 `8f3bf78` checkpoint blockers
 
