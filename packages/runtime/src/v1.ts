@@ -1092,6 +1092,38 @@ function sameFileIdentity(
   return before.dev === after.dev && before.ino === after.ino;
 }
 
+async function snapshotNonGitFile(
+  absolute: string,
+  metadata: Awaited<ReturnType<typeof lstat>>,
+): Promise<NonGitFileState | undefined> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  } catch (error) {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ELOOP")) return undefined;
+    throw error;
+  }
+  try {
+    const opened = await handle.stat();
+    const current = await lstat(absolute).catch(() => undefined);
+    if (
+      current === undefined ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !opened.isFile() ||
+      !sameFileIdentity(metadata, opened) ||
+      !sameFileIdentity(opened, current)
+    ) {
+      throw new NonGitWorkspaceSnapshotRaceError(
+        "Non-Git workspace file changed while it was being snapshotted.",
+      );
+    }
+    return { size: opened.size, modifiedMs: Math.trunc(opened.mtimeMs) };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 async function snapshotNonGitTree(
   root: string,
   limits: NonGitWorkspaceSnapshotLimits,
@@ -1134,20 +1166,19 @@ async function snapshotNonGitTree(
         if (!entry.isFile()) continue;
         const metadata = await lstat(absolute).catch(() => undefined);
         if (metadata === undefined || metadata.isSymbolicLink() || !metadata.isFile()) continue;
+        const fileState = await snapshotNonGitFile(absolute, metadata);
+        if (fileState === undefined) continue;
         filesSeen += 1;
         if (filesSeen > limits.maxFiles)
           throw new NonGitWorkspaceSnapshotLimitError(
             "Non-Git workspace snapshot exceeded its file limit.",
           );
-        bytesSeen += metadata.size;
+        bytesSeen += fileState.size;
         if (bytesSeen > limits.maxBytes)
           throw new NonGitWorkspaceSnapshotLimitError(
             "Non-Git workspace snapshot exceeded its byte limit.",
           );
-        snapshot.set(relative, {
-          size: metadata.size,
-          modifiedMs: Math.trunc(metadata.mtimeMs),
-        });
+        snapshot.set(relative, fileState);
       }
       const finalDirectoryMetadata = await lstat(directory).catch(() => undefined);
       if (
