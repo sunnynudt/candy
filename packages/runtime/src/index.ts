@@ -452,6 +452,7 @@ export {
   MAX_NON_GIT_SNAPSHOT_ENTRIES,
   MAX_NON_GIT_SNAPSHOT_FILES,
   NonGitWorkspaceSnapshotLimitError,
+  NonGitWorkspaceSnapshotRaceError,
   ApprovalPolicy,
   BrowserControlError,
   BrowserRevisionError,

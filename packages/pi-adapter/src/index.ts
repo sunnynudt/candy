@@ -1745,7 +1745,60 @@ function sameFileSnapshot(
   );
 }
 
+interface WorkspaceRootBinding {
+  readonly absolutePath: string;
+  readonly canonicalPath: string;
+  readonly metadata: Awaited<ReturnType<typeof lstat>>;
+}
+
+async function bindWorkspaceRoot(root: string): Promise<WorkspaceRootBinding> {
+  const absolutePath = path.resolve(root);
+  const metadata = await lstat(absolutePath);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error("The selected workspace must be a real directory.");
+  }
+  return {
+    absolutePath,
+    canonicalPath: await realpath(absolutePath),
+    metadata,
+  };
+}
+
+async function assertWorkspaceRootBinding(binding: WorkspaceRootBinding): Promise<void> {
+  const current = await lstat(binding.absolutePath);
+  if (
+    current.isSymbolicLink() ||
+    !current.isDirectory() ||
+    current.dev !== binding.metadata.dev ||
+    current.ino !== binding.metadata.ino
+  ) {
+    throw new Error("The selected workspace changed while the operation was in progress.");
+  }
+  const canonical = await realpath(binding.absolutePath);
+  if (canonical !== binding.canonicalPath) {
+    throw new Error("The selected workspace changed while the operation was in progress.");
+  }
+}
+
+async function assertOpenedWorkspaceFile(
+  binding: WorkspaceRootBinding,
+  absolutePath: string,
+  opened: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
+): Promise<void> {
+  await assertWorkspaceRootBinding(binding);
+  const current = await lstat(absolutePath);
+  if (current.isSymbolicLink() || !current.isFile() || !sameFileSnapshot(opened, current)) {
+    throw new Error("Workspace file changed while it was being opened.");
+  }
+  const canonicalCandidate = await realpath(absolutePath);
+  const relative = path.relative(binding.canonicalPath, canonicalCandidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace tool path escaped the selected workspace.");
+  }
+}
+
 async function readWorkspaceFile(root: string, absolutePath: string): Promise<Buffer> {
+  const binding = await bindWorkspaceRoot(root);
   await assertWorkspacePath(root, absolutePath, false);
   const handle = await open(absolutePath, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
   try {
@@ -1753,9 +1806,7 @@ async function readWorkspaceFile(root: string, absolutePath: string): Promise<Bu
     if (!opened.isFile()) throw new Error("Workspace reads require a regular file.");
     if (opened.size > MAX_WORKSPACE_FILE_BYTES)
       throw new Error(`Workspace reads are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
-    const current = await lstat(absolutePath);
-    if (!sameFileSnapshot(opened, current))
-      throw new Error("Workspace file changed while it was being opened.");
+    await assertOpenedWorkspaceFile(binding, absolutePath, opened);
     return await handle.readFile();
   } finally {
     await handle.close();
@@ -1769,6 +1820,7 @@ async function writeWorkspaceFile(
 ): Promise<void> {
   if (Buffer.byteLength(content, "utf8") > MAX_WORKSPACE_FILE_BYTES)
     throw new Error(`Workspace writes are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
+  const binding = await bindWorkspaceRoot(root);
   await assertWorkspacePath(root, path.dirname(absolutePath), false);
   const handle = await open(
     absolutePath,
@@ -1778,7 +1830,7 @@ async function writeWorkspaceFile(
   try {
     const opened = await handle.stat();
     if (!opened.isFile()) throw new Error("Workspace writes require a regular file.");
-    await assertWorkspacePath(root, absolutePath, false);
+    await assertOpenedWorkspaceFile(binding, absolutePath, opened);
     await handle.writeFile(content, "utf8");
   } finally {
     await handle.close();

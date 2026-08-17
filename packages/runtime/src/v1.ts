@@ -1078,6 +1078,20 @@ export class NonGitWorkspaceSnapshotLimitError extends Error {
   }
 }
 
+export class NonGitWorkspaceSnapshotRaceError extends Error {
+  public constructor(message = "Non-Git workspace changed while it was being snapshotted.") {
+    super(message);
+    this.name = "NonGitWorkspaceSnapshotRaceError";
+  }
+}
+
+function sameFileIdentity(
+  before: Awaited<ReturnType<typeof lstat>>,
+  after: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return before.dev === after.dev && before.ino === after.ino;
+}
+
 async function snapshotNonGitTree(
   root: string,
   limits: NonGitWorkspaceSnapshotLimits,
@@ -1134,6 +1148,15 @@ async function snapshotNonGitTree(
           size: metadata.size,
           modifiedMs: Math.trunc(metadata.mtimeMs),
         });
+      }
+      const finalDirectoryMetadata = await lstat(directory).catch(() => undefined);
+      if (
+        finalDirectoryMetadata === undefined ||
+        finalDirectoryMetadata.isSymbolicLink() ||
+        !finalDirectoryMetadata.isDirectory() ||
+        !sameFileIdentity(directoryMetadata, finalDirectoryMetadata)
+      ) {
+        throw new NonGitWorkspaceSnapshotRaceError();
       }
     } finally {
       await handle.close().catch(() => undefined);

@@ -1498,6 +1498,23 @@ test("Candy workspace operations keep Pi edit/write inside the selected director
   }
 });
 
+test("Candy workspace operations reject a symlinked selected root", async () => {
+  const realRoot = await mkdtemp(path.join(tmpdir(), "candy-workspace-root-real-"));
+  const parent = await mkdtemp(path.join(tmpdir(), "candy-workspace-root-link-"));
+  const linkedRoot = path.join(parent, "workspace");
+  try {
+    await symlink(realRoot, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+    const operations = createCandyWorkspaceOperations(linkedRoot);
+    await assert.rejects(
+      operations.readFile(path.join(linkedRoot, "value.txt")),
+      /real directory|symbolic/iu,
+    );
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+    await rm(realRoot, { recursive: true, force: true });
+  }
+});
+
 test("Candy workspace operations bound direct file reads and writes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-size-"));
   const operations = createCandyWorkspaceOperations(root);
