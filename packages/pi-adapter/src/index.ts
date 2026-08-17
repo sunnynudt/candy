@@ -1815,7 +1815,12 @@ export class PiAgentEngine {
         ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
         : piSdk.SessionManager.create(input.cwd, sessionDirectory);
       const settingsManager = piSdk.SettingsManager.inMemory({}, { projectTrusted: false });
-      const resourceLoader = new CandyRestrictedResourceLoader(input.cwd, undefined, activeSecrets);
+      const resourceLoader = new CandyRestrictedResourceLoader(
+        input.cwd,
+        undefined,
+        activeSecrets,
+        path.dirname(this.sessionRoot),
+      );
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
         input.approvalProfile ?? "read-only",

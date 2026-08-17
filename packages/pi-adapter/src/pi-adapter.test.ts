@@ -852,8 +852,8 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
     assert.deepEqual(loader.getSkills(), { skills: [], diagnostics: [] });
     assert.deepEqual(loader.getPrompts(), { prompts: [], diagnostics: [] });
     assert.deepEqual(loader.getThemes(), { themes: [], diagnostics: [] });
-    assert.equal(loader.getSystemPrompt(), undefined);
-    assert.equal(loader.getSystemPromptSource(), undefined);
+    assert.match(loader.getSystemPrompt(), /local-first coding agent/u);
+    assert.deepEqual(loader.getSystemPromptSource(), { path: "<candy-default>" });
     assert.deepEqual(loader.getAppendSystemPrompt(), []);
     assert.deepEqual(loader.getAppendSystemPromptSources(), []);
     assert.deepEqual(loader.getAgentsFiles(), {
@@ -873,6 +873,51 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy restricted resource loader exposes only Candy-owned instructions, skills, and prompts", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-resource-workspace-"));
+  const candyRoot = await mkdtemp(path.join(tmpdir(), "candy-resource-root-"));
+  const credentialCanary = "resource-secret-canary-123456";
+  try {
+    await mkdir(path.join(candyRoot, "skills", "inspect"), { recursive: true });
+    await mkdir(path.join(candyRoot, "prompts"), { recursive: true });
+    await writeFile(
+      path.join(candyRoot, "SYSTEM.md"),
+      `Candy-owned system rules\ntoken: ${credentialCanary}\n`,
+    );
+    await writeFile(path.join(candyRoot, "APPEND_SYSTEM.md"), "Append only local rules\n");
+    await writeFile(
+      path.join(candyRoot, "skills", "inspect", "SKILL.md"),
+      "---\nname: inspect\ndescription: Inspect bounded evidence\ndisable-model-invocation: true\n---\nInspect $ARGUMENTS\n",
+    );
+    await writeFile(
+      path.join(candyRoot, "prompts", "review.md"),
+      "---\nname: review\ndescription: Review a change\nargument-hint: <path>\n---\nReview $1\n",
+    );
+
+    const loader = new CandyRestrictedResourceLoader(
+      workspace,
+      undefined,
+      [credentialCanary],
+      candyRoot,
+    );
+    assert.match(loader.getSystemPrompt(), /Candy-owned system rules/u);
+    assert.doesNotMatch(loader.getSystemPrompt(), new RegExp(credentialCanary, "u"));
+    assert.match(loader.getSystemPrompt(), /\[REDACTED\]/u);
+    assert.deepEqual(loader.getAppendSystemPrompt(), ["Append only local rules\n"]);
+    assert.equal(loader.getSkills().skills[0]?.name, "inspect");
+    assert.equal(loader.getSkills().skills[0]?.disableModelInvocation, true);
+    assert.equal(loader.getPrompts().prompts[0]?.name, "review");
+    assert.equal(loader.getPrompts().prompts[0]?.argumentHint, "<path>");
+    assert.equal(loader.getPrompts().prompts[0]?.content, "Review $1\n");
+    const candyRootReal = await realpath(candyRoot);
+    assert.ok(loader.getSkills().skills[0]?.filePath.startsWith(candyRootReal));
+    assert.ok(loader.getPrompts().prompts[0]?.filePath.startsWith(candyRootReal));
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+    await rm(candyRoot, { recursive: true, force: true });
   }
 });
 
