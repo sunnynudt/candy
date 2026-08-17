@@ -2,15 +2,15 @@
 
 Updated: 2026-08-17
 
-Post-`6c06118` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; the deterministic `npm run check` passes **210/210**. Security checkpoints `d517729`, `2172da5`, and `6c06118` respectively add the shared credential guard/provider redirect and Shell publication hardening, Candy-bound Git metadata authorization, and guarded workspace file handles. The current security scan revalidation is preserved as `incomplete` because this session could not verify the delegated-worker capacity required by the scan preflight; it is not counted as a completed scan.
+Post-`89b261f` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; the deterministic `npm run check` passes **213/213**. The checkpoint adds guarded AGENTS/resource reads, canonical Git Worktree parent/candidate containment, and sequential safe Apply Changes directory creation, with regressions for resource swaps, symlinked worktree parents, and nested untracked paths. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**, both bound to `89b261f` and emitting sanitized reports. The exact `26.5.2` command is correctly blocked by preflight on this `26.6.1` host; Windows 11 remains unavailable. The current security scan revalidation is preserved as `incomplete` because this session could not verify the delegated-worker capacity required by the scan preflight; it is not counted as a completed scan. `.omo/` remains user-owned and untracked.
 
-Current Issue #4 security boundary: the credential/provider/publication findings are addressed by source-backed tests; final-file workspace reads/writes now use guarded handles, while parent-directory TOCTOU, AGENTS context loading, Apply Changes parent creation, and Git worktree lexical/path races remain open for a separate review. `.omo/` remains user-owned and untracked.
+Current Issue #4 security boundary: credential/provider/publication and the reviewed path categories above have source-backed fixes and regressions. These are implementation results, not independent G2 approval; residual OS-level containment, platform-specific reparse/race evidence, and the incomplete delegated security scan remain open.
 
 可持续更新的实施待办见 [Candy V1 待办与进度](todolist-v1.md)。其中 `☑️` 仅表示对应范围已经验证完成，`◐` 会明确列出剩余验收条件。
 
 ## Current Issue #4 scope status
 
-Post-`961537a` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64, with source revision `961537af4b90350c95910342c41c7f947830a9e3`, Node `22.23.2`/npm `10.9.8`, and deterministic `npm run check` at **201/201**. The earlier 199/199 figure below is historical checkpoint evidence.
+Post-`89b261f` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64, with source revision `89b261f66cfc0c283a8e86e275162054e7d8a61e`, Node `22.23.2`/npm `10.9.8`, and deterministic `npm run check` at **213/213**. The exact `npm run acceptance:macos:baseline` command is blocked because this host is `26.6.1`, not `26.5.2`; the baseline report records that preflight result. The earlier figures below are historical checkpoint evidence.
 
 Post-`a28606c` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64, with Node `22.23.2`/npm `10.9.8` and deterministic `npm run check` at **203/203**. The report is bound to the final code checkpoint and records the lifecycle regression evidence below.
 
