@@ -10,6 +10,12 @@ Post-`88b60be` current-host revalidation: `npm run acceptance:macos` passes **14
 - Full `npm run check` passes **241/241**. Current macOS Tahoe `26.6.1` arm64 acceptance passes **14/14**, with source revision `88b60be367d69b1c01e7ef26c9b18a9f8e146151`, `realPty=true`, Node `22.23.2`/npm `10.9.8`, and the terminal matrix passing. The checkpoint is pushed and the remote SHA matches.
 - Standard scan `78bc305c-c0e7-4880-bd6a-d76954ddd465` is bound to `88b60be` and reports **4 open medium findings**: worktree path-check/use race, workspace intermediate-component race, residual Pi session-manager path race, and conditional Trusted Shell descendant-publication risk. The low file-level snapshot finding is addressed, but the scan used parent fallback and is not a security clearance. Windows 11, exact macOS `26.5.2`, independent G2, signing, and final V1 acceptance remain open. Desktop and Browser remain V2. `.omo/` remains user-owned and untracked.
 
+## 2026-08-17 Issue #4 platform preflight audit
+
+- On current HEAD `b66a725df8d9eb78e5f0d63835675643debc979d`, `npm run acceptance:macos:baseline` ran the pinned Node `22.23.2`/npm `10.9.8` build, then correctly stopped before acceptance with **0 passed / 0 failed / 1 blocked** because the host is macOS `26.6.1` arm64 rather than the required exact `26.5.2`; the source-bound report is `out/acceptance/macos/baseline-latest.md`.
+- `npm run acceptance:windows` built successfully, then correctly stopped at the Windows x64 preflight because the current host is not Windows. No Windows result is claimed or substituted by macOS evidence. The Windows 11 host run remains required for the full TUI, Credential Manager, native runner, and Windows-specific acceptance matrix.
+- These are platform-availability results, not product failures and not release acceptance. The current macOS `26.6.1` 14/14 result, exact macOS `26.5.2` baseline, Windows 11, platform G2, signing, and final V1 acceptance remain separate evidence rows.
+
 ## 2026-08-17 Issue #4 Apply/worktree root binding checkpoint
 
 - `2c4215bb4ba8be85dd8860c4f68550df4b2a11e0` is the published canonical-branch code checkpoint. Git worktree create/inspect/status/reset/clean/change paths now recheck lexical and canonical containment around Git operations. Apply Changes binds target/source root identity and canonical path, rechecks roots around Git commands and collision checks, and validates opened untracked files before copying/writing.

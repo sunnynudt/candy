@@ -10,6 +10,12 @@ Post-`88b60be` current-host revalidation: macOS acceptance passes **14/14** with
 - Full `npm run check` passes **241/241** and current macOS acceptance passes **14/14** at source revision `88b60be` on macOS `26.6.1` arm64 with a passing real-PTY terminal matrix.
 - The current scan reports four open medium findings. It closes only the low file-metadata race category; it does not establish descriptor-relative/reparse-safe directory operations, clear the worktree/session/Trusted Shell residuals, or provide Windows 11, exact `26.5.2`, independent G2, signing, or final V1 evidence. `.omo/` remains user-owned, untracked, and preserved.
 
+## 2026-08-17 Issue #4 platform preflight audit
+
+- Current HEAD `b66a725` ran `npm run acceptance:macos:baseline` with Node `22.23.2`/npm `10.9.8`; the command built successfully and then recorded **0/0 with 1 blocked preflight** because the host is `26.6.1` arm64, not exact `26.5.2`. The generated report is source-bound to `b66a725` and is not baseline acceptance evidence.
+- Current HEAD also ran `npm run acceptance:windows`; the build succeeded, then the acceptance script rejected the non-Windows host before running Windows steps. No Windows acceptance result is claimed. A Windows 11 x64 host remains required.
+- The platform blockers are environmental gates, not reasons to weaken the TUI or substitute cross-host tests. They remain open together with the four current medium security findings, platform G2, signing, and final V1 acceptance.
+
 ## 2026-08-17 Issue #4 `2c4215b` Apply/worktree checkpoint
 
 - Code checkpoint `2c4215bb4ba8be85dd8860c4f68550df4b2a11e0` is pushed to and matches `origin/codex/candy-v1-foundation`. Full `npm run check` passes **241/241**; current macOS acceptance passes **14/14** at source revision `2c4215b` on macOS `26.6.1` arm64 with a passing real-PTY terminal matrix.

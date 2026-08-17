@@ -36,6 +36,8 @@
 
 新增 non-Git snapshot file binding 安全证据：`88b60be` 为每个普通非 Git 快照文件打开 no-follow final-path handle，比较 opened handle 与前后 lstat 的 identity，并以 opened handle 的 size/mtime 记录快照；对象变化、变成 symlink、非 regular file 或无法安全打开时 fail closed。全量 `npm run check` **241/241**，current macOS acceptance **14/14**，报告 source revision 为 `88b60be`；标准扫描 `78bc305c-c0e7-4880-bd6a-d76954ddd465` 报告 4 个 open medium findings。该项关闭此前 low file-metadata race，不替代 descriptor-relative/reparse-safe intermediate directory、Git worktree、session-manager、Trusted Shell、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
+新增平台 preflight 审计证据：当前 HEAD `b66a725` 的 `npm run acceptance:macos:baseline` 在 macOS `26.6.1` arm64 上生成 **0 passed / 0 failed / 1 blocked** 的 source-bound report，明确未执行精确 `26.5.2` acceptance；`npm run acceptance:windows` 在成功 build 后因当前主机不是 Windows x64 而停止，未产生 Windows acceptance。两者都不能替代目标平台证据；Windows 11、精确 `26.5.2`、平台 G2、签名和最终 V1 acceptance 仍待完成。
+
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
 - `456bab2` 新增 `smoke:tui:pi`：使用 Candy 生产 `PiAgentEngine` 和真实 Candy TUI 控制环，以 mock DeepSeek SSE 保持确定性；断言只访问 `https://api.deepseek.com/chat/completions`，Pi 响应投影到 TUI，任务/transcript 写入 Candy-owned SQLite/session storage，并扫描 session 内容确认 fixture credential 未进入持久化数据。
