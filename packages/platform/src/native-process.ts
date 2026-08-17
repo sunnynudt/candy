@@ -97,11 +97,12 @@ export class NativeProcessRunner {
   public run(request: NativeProcessRequest): Promise<NativeProcessResult> {
     if (this.platform !== "darwin" && this.platform !== "win32")
       throw new NativeProcessRunnerUnavailableError();
-    if (!path.isAbsolute(this.runnerExecutable))
+    const targetPath = this.platform === "win32" ? path.win32 : path.posix;
+    if (!targetPath.isAbsolute(this.runnerExecutable))
       throw new Error("Sandbox Runner executable must be absolute.");
-    if (!path.isAbsolute(request.executable) || !path.isAbsolute(request.cwd))
+    if (!targetPath.isAbsolute(request.executable) || !targetPath.isAbsolute(request.cwd))
       throw new Error("Sandbox commands require absolute executable and cwd paths.");
-    if (!path.isAbsolute(request.workspace))
+    if (!targetPath.isAbsolute(request.workspace))
       throw new Error("Sandbox commands require an absolute workspace path.");
     if (request.network === true && this.platform !== "darwin" && this.platform !== "win32")
       throw new Error("Sandbox command network capability is unavailable on this platform.");
