@@ -2,7 +2,7 @@
 
 Updated: 2026-08-17
 
-Post-`7aa382c` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **220/220** on Node `22.23.2`/npm `10.9.8`. The latest checkpoint adds task-id validation, attachment metadata-id validation, and bounded untracked Apply-file reads. Live DeepSeek passes **7/7**; domestic MiniMax passes **7/8**, with LIVE-MM-03 failing its thinking/tool-delta assertion. The sealed standard scan `e7f04f06-b75a-468a-9a74-5a027404708a` reports five open findings. The exact macOS `26.5.2` command is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
+Post-`bd8428b` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **229/229** on Node `22.23.2`/npm `10.9.8`. The checkpoint adds stale-owner fencing, app-data/workspace overlap rejection, bounded direct workspace reads/writes, and bounded attachment retrieval. Live DeepSeek passes **7/7** and domestic MiniMax passes **8/8**. The sealed standard scan `0c6364e9-6b74-4e1a-adb6-25ec357553a3` reports **8 open findings (6 medium, 2 low)** against the preceding `1783e64` snapshot; a fresh scan for `bd8428b` remains required. Exact macOS `26.5.2` is blocked on this `26.6.1` host, and Windows 11 evidence remains unavailable.
 
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
@@ -22,7 +22,14 @@ Post-native-containment-revalidation evidence: current source revision `38775e2`
 
 Post-clean-install evidence: pinned `npm ci --ignore-scripts` completed with an unchanged lockfile, 0 vulnerabilities, successful toolchain assertion, and successful build.
 
-Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `7aa382c` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 220/220; DeepSeek passes 7/7 and domestic MiniMax passes 7/8, with the MiniMax thinking/tool-delta assertion still open. The sealed current-HEAD scan reports five open findings: pathname TOCTOU containment, nested-interpreter publication bypass, post-materialization JSONL limits, stale app-server owner recovery, and attachment/non-Git snapshot aggregate bounds. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
+Current Issue #4 checkpoint note: the active V1 release line is TUI-only on macOS and Windows 11. Checkpoint `bd8428b` is the current published HEAD. Current macOS acceptance passes 14/14 with deterministic check 229/229; DeepSeek passes 7/7 and domestic MiniMax passes 8/8. The sealed scan reports eight findings for the prior `1783e64` snapshot, including descriptor-relative TOCTOU, nested-interpreter publication indirection, and session/attachment races; it is not evidence that `bd8428b` is clean. Windows 11 execution remains pending a Windows 11 host. The exact `26.5.2` runner correctly stops at preflight on this `26.6.1` host; macOS evidence is not used as Windows evidence. Desktop, Browser Workspace, and dependent workflows are V2. Trusted Shell remains subject to each platform's independent native security gate.
+
+## 2026-08-17 Issue #4 `bd8428b` checkpoint blockers
+
+- A fresh whole-repository security scan must be run against `bd8428b`; the completed scan is bound to `1783e64` because the working tree changed while it was running.
+- Native descriptor-relative/no-reparse remediation is still required for workspace, attachment, session, non-Git snapshot, Apply, and Worktree TOCTOU paths. The current TypeScript checks reduce ordinary path escapes but do not prove OS-level race safety.
+- macOS Trusted Shell nested-interpreter publication policy remains unresolved. Windows Trusted Shell remains fail-closed until its native gate is independently accepted.
+- Windows 11 TUI acceptance, exact macOS `26.5.2` regression, signed release, independent G2 approval, and final V1 acceptance remain unavailable or open.
 
 ## 2026-08-17 Issue #4 current checkpoint
 
