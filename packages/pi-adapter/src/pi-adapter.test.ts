@@ -653,6 +653,172 @@ test("Pi agent engine projects retry lifecycle and settles only after retry succ
   }
 });
 
+test("Pi agent engine compacts context overflow before continuing the turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-overflow-compaction-"));
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  const stream = (content: string, finishReason: "length" | "stop"): string =>
+    `data: ${JSON.stringify({
+      model: "deepseek-v4-flash",
+      choices: [{ delta: { content }, finish_reason: finishReason }],
+    })}\n\ndata: [DONE]\n\n`;
+  globalThis.fetch = async () => {
+    requests += 1;
+    if (requests === 1) return new Response(stream("x".repeat(100_000), "stop"));
+    if (requests === 3) return new Response(stream("partial", "length"));
+    return new Response(stream(requests === 4 ? "summary" : "recovered", "stop"));
+  };
+
+  const runTurn = async (prompt: string): Promise<PiAgentObservation[]> => {
+    const observations: PiAgentObservation[] = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-overflow-compaction",
+        prompt,
+        model: "deepseek-v4-flash",
+        cwd: process.cwd(),
+      },
+      new AbortController().signal,
+    )) {
+      observations.push(observation);
+    }
+    return observations;
+  };
+
+  try {
+    await runTurn("first turn");
+    await runTurn("second turn");
+    const observations = await runTurn("third turn");
+    assert.equal(requests, 5);
+    assert.deepEqual(
+      observations.map((observation) => observation.type),
+      [
+        "turn.started",
+        "assistant.delta",
+        "turn.compaction",
+        "turn.compaction",
+        "assistant.delta",
+        "turn.settled",
+        "turn.completed",
+      ],
+    );
+    assert.deepEqual(observations[2], {
+      type: "turn.compaction",
+      taskId: "task-overflow-compaction",
+      phase: "started",
+      reason: "overflow",
+    });
+    assert.deepEqual(observations[3], {
+      type: "turn.compaction",
+      taskId: "task-overflow-compaction",
+      phase: "completed",
+      reason: "overflow",
+      aborted: false,
+      willRetry: true,
+    });
+    assert.equal(observations[4]?.type, "assistant.delta");
+    assert.equal((observations[4] as { text?: string }).text, "recovered");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi agent engine cancels an unsettled context compaction", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-compaction-cancel-"));
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let requests = 0;
+  const stream = (content: string, finishReason: "length" | "stop"): string =>
+    `data: ${JSON.stringify({
+      model: "deepseek-v4-flash",
+      choices: [{ delta: { content }, finish_reason: finishReason }],
+    })}\n\ndata: [DONE]\n\n`;
+  globalThis.fetch = async (_input, init) => {
+    requests += 1;
+    if (requests === 1) return new Response(stream("x".repeat(100_000), "stop"));
+    if (requests === 2) return new Response(stream("second", "stop"));
+    if (requests === 3) return new Response(stream("partial", "length"));
+    if (requests === 4) {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = (): void =>
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    return new Response(stream("unexpected", "stop"));
+  };
+
+  const runTurn = async (prompt: string): Promise<PiAgentObservation[]> => {
+    const observations: PiAgentObservation[] = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-compaction-cancel",
+        prompt,
+        model: "deepseek-v4-flash",
+        cwd: process.cwd(),
+      },
+      controller.signal,
+    )) {
+      observations.push(observation);
+    }
+    return observations;
+  };
+
+  try {
+    await runTurn("first turn");
+    await runTurn("second turn");
+    const observations: PiAgentObservation[] = [];
+    await assert.rejects(
+      (async () => {
+        for await (const observation of new PiAgentEngine(root, async () => ({
+          secret: "fixture-secret",
+          release: () => undefined,
+        })).runTurn(
+          {
+            taskId: "task-compaction-cancel",
+            prompt: "third turn",
+            model: "deepseek-v4-flash",
+            cwd: process.cwd(),
+          },
+          controller.signal,
+        )) {
+          observations.push(observation);
+          if (observation.type === "turn.compaction" && observation.phase === "started") {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            controller.abort();
+          }
+        }
+      })(),
+      /cancelled/u,
+    );
+    assert.equal(requests, 4);
+    assert.ok(
+      observations.some(
+        (observation) => observation.type === "turn.compaction" && observation.phase === "started",
+      ),
+    );
+    assert.equal(
+      observations.some((observation) => observation.type === "turn.completed"),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi agent engine cancellation aborts an unsettled retry", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-retry-cancel-"));
   const originalFetch = globalThis.fetch;
