@@ -117,6 +117,56 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
   }
 });
 
+test("interactive TUI strips terminal control sequences from assistant evidence", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-control-sequences-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "\u001b[31mred\u001b[0m\u0007\u000dnext\n\u001b]0;hostile title\u0007done",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("show hostile output");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /completed/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    if (taskId === undefined) throw new Error("TUI task id was not rendered.");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const assistant = store.transcript(taskId)?.find((entry) => entry.role === "assistant")?.text;
+    store.close();
+    assert.equal(assistant, " red   next\n done");
+    assert.equal(
+      [...(assistant ?? "")].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return (
+          codePoint <= 0x09 ||
+          (codePoint >= 0x0b && codePoint <= 0x1f) ||
+          (codePoint >= 0x7f && codePoint <= 0x9f)
+        );
+      }),
+      false,
+    );
+    assert.match(output, /red {3}next/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI manages OS credential presence without reading back secrets", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credentials-"));
   const terminal = new FakeTerminal();

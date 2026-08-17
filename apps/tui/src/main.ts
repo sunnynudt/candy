@@ -2458,7 +2458,60 @@ function isProcessAlive(pid: number): boolean {
 }
 
 function redactTuiOutput(value: string): string {
-  return redactCredentialMaterial(value);
+  return replaceTuiControlSequences(redactCredentialMaterial(value));
+}
+
+function replaceTuiControlSequences(value: string): string {
+  const characters = [...value];
+  const output: string[] = [];
+  const escape = String.fromCodePoint(0x1b);
+  const bell = String.fromCodePoint(0x07);
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (character === undefined) break;
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (character !== escape) {
+      output.push(isTuiNonNewlineControl(codePoint) ? " " : character);
+      continue;
+    }
+    const next = characters[index + 1];
+    if (next === "]") {
+      output.push(" ");
+      index += 2;
+      while (index < characters.length) {
+        if (characters[index] === bell) break;
+        if (characters[index] === escape && characters[index + 1] === "\\") {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    if (next === "[") {
+      output.push(" ");
+      index += 2;
+      while (index < characters.length) {
+        const sequenceCharacter = characters[index];
+        if (sequenceCharacter === undefined) break;
+        const sequenceCodePoint = sequenceCharacter.codePointAt(0) ?? 0;
+        if (sequenceCodePoint >= 0x40 && sequenceCodePoint <= 0x7e) break;
+        index += 1;
+      }
+      continue;
+    }
+    output.push(" ");
+    if (next !== undefined) index += 1;
+  }
+  return output.join("");
+}
+
+function isTuiNonNewlineControl(codePoint: number): boolean {
+  return (
+    codePoint <= 0x09 ||
+    (codePoint >= 0x0b && codePoint <= 0x1f) ||
+    (codePoint >= 0x7f && codePoint <= 0x9f)
+  );
 }
 
 function formatApprovalField(value: string): string {
