@@ -1925,7 +1925,12 @@ async function assertSessionFile(sessionRoot: string, sessionFile: string): Prom
   const root = path.resolve(sessionRoot);
   const absolute = path.resolve(sessionFile);
   const relative = path.relative(root, absolute);
-  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error("Candy session file escaped the session root.");
   }
   await ensureNoSymlinkDirectory(path.dirname(absolute));

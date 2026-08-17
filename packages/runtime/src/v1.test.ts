@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import {
   NativeProcessRunner,
   ProcessSupervisor,
@@ -315,7 +316,25 @@ test("attachment store hashes image bytes, keeps binary outside session, and rej
   rmSync(outside, { force: true });
 });
 
-test("attachment store rejects a pre-existing metadata symlink and preserves duplicate puts", async () => {
+async function tryCreateFileSymlink(
+  t: TestContext,
+  target: string,
+  linkPath: string,
+  reason: string,
+): Promise<boolean> {
+  try {
+    await symlink(target, linkPath);
+    return true;
+  } catch (error) {
+    if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+      t.skip(reason);
+      return false;
+    }
+    throw error;
+  }
+}
+
+test("attachment store rejects a pre-existing metadata symlink and preserves duplicate puts", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-metadata-link-"));
   const outside = path.join(path.dirname(root), "candy-attachment-metadata-outside.json");
   const content = Buffer.from(
@@ -330,7 +349,15 @@ test("attachment store rejects a pre-existing metadata symlink and preserves dup
 
     await rm(path.join(root, `${first.id}.json`));
     await writeFile(outside, "keep", "utf8");
-    await symlink(outside, path.join(root, `${first.id}.json`));
+    if (
+      !(await tryCreateFileSymlink(
+        t,
+        outside,
+        path.join(root, `${first.id}.json`),
+        "Windows file symlinks require Developer Mode or equivalent authorization.",
+      ))
+    )
+      return;
     await assert.rejects(store.put("image", "image/png", content), /regular file|integrity/iu);
     assert.equal(await readFile(outside, "utf8"), "keep");
   } finally {
@@ -392,7 +419,7 @@ test("non-Git workspace snapshots fail closed at configured aggregate limits", a
   }
 });
 
-test("non-Git workspace snapshots do not follow replaced or pre-existing symlink entries", async () => {
+test("non-Git workspace snapshots do not follow replaced or pre-existing symlink entries", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-links-"));
   const outside = await mkdtemp(path.join(tmpdir(), "candy-non-git-snapshot-links-outside-"));
   try {
@@ -400,8 +427,20 @@ test("non-Git workspace snapshots do not follow replaced or pre-existing symlink
     await mkdir(path.join(outside, "nested"));
     writeFileSync(path.join(outside, "nested", "secret.txt"), "outside nested");
     writeFileSync(path.join(root, "safe.txt"), "inside");
-    await symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
-    await symlink(path.join(outside, "nested"), path.join(root, "linked-directory"), "dir");
+    if (
+      !(await tryCreateFileSymlink(
+        t,
+        path.join(outside, "secret.txt"),
+        path.join(root, "linked.txt"),
+        "Windows file symlinks require Developer Mode or equivalent authorization.",
+      ))
+    )
+      return;
+    await symlink(
+      path.join(outside, "nested"),
+      path.join(root, "linked-directory"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
 
     const tracker = new NonGitWorkspaceChangeTracker();
     await tracker.captureBaseline(root);
@@ -710,7 +749,11 @@ test("Git worktree manager rejects a symlinked parent outside its Candy root", a
   const outside = path.join(root, "outside");
   await mkdir(worktreeRoot);
   await mkdir(outside);
-  await symlink(outside, path.join(worktreeRoot, "linked"), "dir");
+  await symlink(
+    outside,
+    path.join(worktreeRoot, "linked"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   const calls: string[][] = [];
   const plan = planGitWorktree(
     path.join(root, "repo"),

@@ -56,7 +56,7 @@ const report = [
   `- Node: \`${process.version}\``,
   `- Worktree clean at start: \`${cleanWorktree ? "yes" : "no"}\``,
   "",
-  "This is a sanitized deterministic TUI-only Windows 11 implementation and smoke run. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, complete cross-platform support, exact macOS baseline compatibility, V2 Desktop/Browser completion, or final V1 acceptance.",
+  "This is a sanitized deterministic TUI-only Windows 11 implementation and smoke run. It does not run live providers, inspect other tool credentials, or claim Trusted Shell G2, complete cross-platform support, current macOS TUI parity, V2 Desktop/Browser completion, or final V1 acceptance.",
   "",
   `Summary: ${passed} passed, ${failed} failed.`,
   "",

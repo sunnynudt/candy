@@ -2135,7 +2135,10 @@ function isPathInside(root: string, candidate: string): boolean {
   const normalize = (value: string): string =>
     process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
   const relative = path.relative(normalize(root), normalize(candidate));
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 function pathsOverlap(first: string, second: string): boolean {
