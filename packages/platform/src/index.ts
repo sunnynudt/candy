@@ -96,6 +96,20 @@ export interface TaskMetadata {
   readonly trustedShell: boolean;
 }
 
+export interface TaskReviewMetadata {
+  readonly revision: number;
+  readonly changes: {
+    readonly available: boolean;
+    readonly tracked: readonly string[];
+    readonly untracked: readonly string[];
+    readonly patchText: string;
+    readonly patchTruncated: boolean;
+  };
+  readonly manifestReviewed: boolean;
+  readonly fullDiffReviewed: boolean;
+  readonly untrackedFingerprint?: string;
+}
+
 export interface TaskValidatorSpec {
   readonly executable: string;
   readonly args: readonly string[];
@@ -314,10 +328,17 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN trusted_shell INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version = 11;
       `);
-    } else if (schemaVersion !== 11) {
+    } else if (schemaVersion !== 11 && schemaVersion !== 12) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
+    this.#database.exec(`
+      CREATE TABLE IF NOT EXISTS task_reviews (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+        review_json TEXT NOT NULL
+      );
+      PRAGMA user_version = 12;
+    `);
   }
 
   public create(
@@ -415,6 +436,37 @@ export class SQLiteTaskStore {
       .prepare("UPDATE task_metadata SET worktree_path = ? WHERE task_id = ?")
       .run(worktreePath ?? null, taskId);
     return this.require(taskId);
+  }
+
+  public updateReview(taskId: string, review: TaskReviewMetadata): void {
+    assertTaskId(taskId);
+    assertTaskReview(review);
+    this.require(taskId);
+    this.#database
+      .prepare(
+        `INSERT INTO task_reviews (task_id, review_json) VALUES (?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET review_json = excluded.review_json`,
+      )
+      .run(taskId, JSON.stringify(review));
+  }
+
+  public getReview(taskId: string): TaskReviewMetadata | undefined {
+    assertTaskId(taskId);
+    const row = this.#database
+      .prepare("SELECT review_json FROM task_reviews WHERE task_id = ?")
+      .get(taskId) as { review_json: string } | undefined;
+    if (row === undefined) return undefined;
+    try {
+      const review = JSON.parse(row.review_json) as unknown;
+      return isTaskReviewMetadata(review) ? review : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  public clearReview(taskId: string): void {
+    assertTaskId(taskId);
+    this.#database.prepare("DELETE FROM task_reviews WHERE task_id = ?").run(taskId);
   }
 
   public get(taskId: string): TaskMetadata | undefined {
@@ -658,6 +710,53 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
       : {}),
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
   };
+}
+
+const MAX_PERSISTED_REVIEW_BYTES = 64 * 1024;
+
+function assertTaskReview(review: TaskReviewMetadata): void {
+  if (!isTaskReviewMetadata(review)) throw new Error("Task review metadata is invalid.");
+  if (Buffer.byteLength(JSON.stringify(review), "utf8") > MAX_PERSISTED_REVIEW_BYTES)
+    throw new Error("Task review metadata is too large.");
+}
+
+function isTaskReviewMetadata(value: unknown): value is TaskReviewMetadata {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<TaskReviewMetadata>;
+  const changes = candidate.changes;
+  if (
+    typeof candidate.revision !== "number" ||
+    !Number.isSafeInteger(candidate.revision) ||
+    candidate.revision < 0 ||
+    typeof candidate.manifestReviewed !== "boolean" ||
+    typeof candidate.fullDiffReviewed !== "boolean" ||
+    typeof changes !== "object" ||
+    changes === null
+  )
+    return false;
+  const changeCandidate = changes as Partial<TaskReviewMetadata["changes"]>;
+  if (
+    typeof changeCandidate.available !== "boolean" ||
+    !Array.isArray(changeCandidate.tracked) ||
+    !Array.isArray(changeCandidate.untracked) ||
+    !changeCandidate.tracked.every(isSafeReviewPath) ||
+    !changeCandidate.untracked.every(isSafeReviewPath) ||
+    typeof changeCandidate.patchText !== "string" ||
+    changeCandidate.patchText.length > MAX_PERSISTED_REVIEW_BYTES ||
+    changeCandidate.patchText.includes("\0") ||
+    typeof changeCandidate.patchTruncated !== "boolean"
+  )
+    return false;
+  if (
+    candidate.untrackedFingerprint !== undefined &&
+    !/^[a-f0-9]{64}$/u.test(candidate.untrackedFingerprint)
+  )
+    return false;
+  return true;
+}
+
+function isSafeReviewPath(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 1_024 && !/[\0\r\n]/u.test(value);
 }
 
 function assertTaskId(taskId: string): void {

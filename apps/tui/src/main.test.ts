@@ -1372,6 +1372,103 @@ test("interactive TUI explicitly discards a completed Task Worktree without touc
   }
 });
 
+test("interactive TUI persists reviewed workspace metadata across restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-review-restart-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const firstTerminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const firstEngine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "reviewed after restart\n");
+      await writeFile(path.join(input.cwd, "new.txt"), "created after restart\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const firstRun = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine: firstEngine,
+      terminal: firstTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput(":profile auto");
+    firstTerminal.emitInput("\r");
+    firstTerminal.emitInput("edit and review after restart");
+    firstTerminal.emitInput("\r");
+    const created = await waitForOutput(firstTerminal, /Task Worktree:/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(firstTerminal, new RegExp(`${taskId} completed`, "u"));
+    firstTerminal.emitInput(":changes");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, new RegExp(`changed files: ${taskId}`, "u"));
+    firstTerminal.emitInput(":diff");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /\+reviewed after restart/u);
+    await waitForOutput(firstTerminal, /\+created after restart/u);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    assert.ok(executionPath);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(path.join(repository, "new.txt")), false);
+
+    const secondTerminal = new FakeTerminal();
+    let secondEngineCalls = 0;
+    const secondEngine: TuiAgentEngine = {
+      async *runTurn() {
+        yield* [];
+        secondEngineCalls += 1;
+        throw new Error("review restart unexpectedly started a provider turn");
+      },
+    };
+    const secondRun = new InteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine: secondEngine,
+      terminal: secondTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${taskId}\\tcompleted\\t`, "u"));
+    secondTerminal.emitInput(`:use ${taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
+    secondTerminal.emitInput(":transcript");
+    secondTerminal.emitInput("\r");
+    const transcript = await waitForOutput(
+      secondTerminal,
+      /edit and review after restart[\s\S]*candy_write|edit and review after restart/u,
+    );
+    assert.match(transcript, /edit and review after restart/u);
+    secondTerminal.emitInput(":apply");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+    assert.equal(secondEngineCalls, 0);
+    assert.equal(
+      await readFile(path.join(repository, "README.md"), "utf8"),
+      "reviewed after restart\n",
+    );
+    assert.equal(
+      await readFile(path.join(repository, "new.txt"), "utf8"),
+      "created after restart\n",
+    );
+    assert.equal(existsSync(executionPath), false);
+    assert.equal(runGit(repository, ["diff", "--cached", "--quiet"]), "");
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI reviews Git tracked, untracked, removed files and filters diff paths", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-git-"));
   const terminal = new FakeTerminal();

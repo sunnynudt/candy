@@ -30,6 +30,7 @@ import {
   SQLiteTaskStore,
   SystemClock,
   type TaskMetadata,
+  type TaskReviewMetadata,
   discoverGitBashExecutable,
   getWindowsTrustedShellCapabilityStatus,
   isTrustedShellAutoAvailable as isPlatformTrustedShellAutoAvailable,
@@ -205,13 +206,7 @@ interface TuiValidatorState {
   readonly durationMs?: number;
 }
 
-interface TuiWorkspaceReview {
-  readonly revision: number;
-  readonly changes: WorkspaceChangeSnapshot;
-  readonly manifestReviewed: boolean;
-  readonly fullDiffReviewed: boolean;
-  readonly untrackedFingerprint?: string;
-}
+type TuiWorkspaceReview = TaskReviewMetadata;
 
 interface TuiCompleteDiff {
   readonly changes: WorkspaceChangeSnapshot;
@@ -976,7 +971,7 @@ export class InteractiveTui {
       previous !== undefined &&
       previous.revision === snapshot.revision &&
       sameWorkspaceChanges(previous.changes, changes);
-    this.#workspaceReviews.set(snapshot.taskId, {
+    const review: TuiWorkspaceReview = {
       revision: snapshot.revision,
       changes,
       manifestReviewed: kind === "manifest" || (compatible && previous.manifestReviewed),
@@ -986,12 +981,15 @@ export class InteractiveTui {
         : compatible && previous.untrackedFingerprint !== undefined
           ? { untrackedFingerprint: previous.untrackedFingerprint }
           : {}),
-    });
+    };
+    this.#store.updateReview(snapshot.taskId, review);
+    this.#workspaceReviews.set(snapshot.taskId, review);
   }
 
   private async applyCurrent(): Promise<void> {
     const snapshot = this.requireCompletedWorktree("Apply Changes");
-    const review = this.#workspaceReviews.get(snapshot.taskId);
+    const review =
+      this.#workspaceReviews.get(snapshot.taskId) ?? this.#store.getReview(snapshot.taskId);
     if (
       review === undefined ||
       review.revision !== snapshot.revision ||
@@ -1047,6 +1045,7 @@ export class InteractiveTui {
     this.#store.updateWorktree(snapshot.taskId);
     this.refreshController(snapshot.taskId);
     this.#workspaceReviews.delete(snapshot.taskId);
+    this.#store.clearReview(snapshot.taskId);
     this.write(`applied ${snapshot.taskId} to Local Workspace; Task Worktree removed\n`);
   }
 
@@ -1060,6 +1059,7 @@ export class InteractiveTui {
     this.#store.updateWorktree(snapshot.taskId);
     this.refreshController(snapshot.taskId);
     this.#workspaceReviews.delete(snapshot.taskId);
+    this.#store.clearReview(snapshot.taskId);
     this.write(`discarded ${snapshot.taskId}; Local Workspace unchanged\n`);
   }
 
@@ -1350,6 +1350,8 @@ export class InteractiveTui {
   ): Promise<void> {
     const taskId = task.snapshot().taskId;
     try {
+      this.#workspaceReviews.delete(taskId);
+      this.#store.clearReview(taskId);
       const taskSnapshot = this.#store.get(taskId);
       if (taskSnapshot === undefined) throw new Error("Task metadata is unavailable after start.");
       if (

@@ -25,6 +25,7 @@ import {
   parseOpenCodeDeepSeekCredential,
   resolveAppPaths,
   resolveDefaultAppDataRoot,
+  type TaskReviewMetadata,
 } from "./index.js";
 
 test("manual clock advances deterministically", () => {
@@ -253,6 +254,39 @@ test("sqlite task transcript persists across reopen and rejects invalid entries"
   }
 });
 
+test("sqlite task review metadata persists across reopen", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-review-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  const review: TaskReviewMetadata = {
+    revision: 1,
+    changes: {
+      available: true,
+      tracked: ["src/value.ts"],
+      untracked: ["notes.txt"],
+      patchText: "diff --git a/src/value.ts b/src/value.ts\n+reviewed\n",
+      patchTruncated: false,
+    },
+    manifestReviewed: true,
+    fullDiffReviewed: true,
+    untrackedFingerprint: "a".repeat(64),
+  };
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    store.create("task-review", "auto");
+    store.updateReview("task-review", review);
+    assert.deepEqual(store.getReview("task-review"), review);
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.deepEqual(reopened.getReview("task-review"), review);
+    reopened.clearReview("task-review");
+    assert.equal(reopened.getReview("task-review"), undefined);
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task metadata persists the workspace baseline and never overwrites it", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-baseline-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");
@@ -353,7 +387,7 @@ test("sqlite task store rejects unknown future schema", async () => {
   try {
     mkdirSync(path.dirname(databasePath), { recursive: true });
     const raw = new DatabaseSync(databasePath);
-    raw.exec("PRAGMA user_version = 12");
+    raw.exec("PRAGMA user_version = 13");
     raw.close();
     assert.throws(
       () => new SQLiteTaskStore(databasePath),

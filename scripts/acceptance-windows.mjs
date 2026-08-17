@@ -31,6 +31,7 @@ const steps = [
   "smoke:tui:credential-revocation",
   "smoke:tui:pi",
   "smoke:tui:pi:tool",
+  "smoke:tui:pi:coding",
   "smoke:tui-task",
   "smoke:tui:journey:windows",
   "smoke:credential-manager:windows",
