@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -82,6 +83,7 @@ export interface TuiTaskSmokeResult {
 }
 
 const activeTuiOwners = new Set<string>();
+const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
 
 export async function runTuiSmoke(): Promise<TuiSmokeResult> {
   const browser = new UnavailableBrowserCapability();
@@ -825,10 +827,7 @@ export class InteractiveTui {
     if (isVideoAttachmentPath(candidate))
       throw new Error("Video attachments are unavailable until their provider gate passes.");
     const mimeType = attachmentMimeType(candidate);
-    const file = await stat(candidate);
-    if (file.size > MAX_ATTACHMENT_BYTES)
-      throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
-    const content = await readFile(candidate);
+    const content = await readAttachmentSource(candidate);
     const activeSecrets = this.#activeSecretsProvider?.() ?? [];
     const contentBuffer = Buffer.from(content);
     if (
@@ -2013,6 +2012,19 @@ export class InteractiveTui {
 
   private write(value: string): void {
     this.#surface?.appendTranscript(redactTuiOutput(value));
+  }
+}
+
+async function readAttachmentSource(candidate: string): Promise<Buffer> {
+  const handle = await open(candidate, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    const file = await handle.stat();
+    if (!file.isFile()) throw new Error("Attachment path must be a regular file.");
+    if (file.size > MAX_ATTACHMENT_BYTES)
+      throw new Error(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit.`);
+    return await handle.readFile();
+  } finally {
+    await handle.close();
   }
 }
 
