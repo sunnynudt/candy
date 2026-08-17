@@ -2,6 +2,10 @@
 
 Updated: 2026-08-17
 
+Post-`6c06118` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; the deterministic `npm run check` passes **210/210**. Security checkpoints `d517729`, `2172da5`, and `6c06118` respectively add the shared credential guard/provider redirect and Shell publication hardening, Candy-bound Git metadata authorization, and guarded workspace file handles. The current security scan revalidation is preserved as `incomplete` because this session could not verify the delegated-worker capacity required by the scan preflight; it is not counted as a completed scan.
+
+Current Issue #4 security boundary: the credential/provider/publication findings are addressed by source-backed tests; final-file workspace reads/writes now use guarded handles, while parent-directory TOCTOU, AGENTS context loading, Apply Changes parent creation, and Git worktree lexical/path races remain open for a separate review. `.omo/` remains user-owned and untracked.
+
 可持续更新的实施待办见 [Candy V1 待办与进度](todolist-v1.md)。其中 `☑️` 仅表示对应范围已经验证完成，`◐` 会明确列出剩余验收条件。
 
 ## Current Issue #4 scope status

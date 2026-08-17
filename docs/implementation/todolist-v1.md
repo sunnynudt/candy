@@ -4,6 +4,8 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
+当前 HEAD `6c06118` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **210/210**。Issue #4 安全修复 checkpoint：`d517729` 统一凭据检测/脱敏、provider redirect fail-closed 和 Shell publication guard；`2172da5` 将 Task Worktree Git metadata 绑定到 Candy 从原始仓库解析的 common directory；`6c06118` 让 workspace 文件读写/搜索使用 guarded file handles。父目录 TOCTOU、AGENTS context、Apply Changes parent creation、Git worktree path race、Windows 11、精确 macOS `26.5.2` 和最终安全扫描仍未完成；`.omo/` 保持用户-owned 未跟踪。
+
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
 本文件是 V1 开发待办的进度基准。每完成一项或一个可独立验证的子项，都必须在此更新状态、验证证据和剩余条件；不能用局部测试通过替代完整验收。

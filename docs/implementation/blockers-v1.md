@@ -2,6 +2,8 @@
 
 Updated: 2026-08-17
 
+Post-`6c06118` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64, and its embedded deterministic `npm run check` passes **210/210**. Published security checkpoints are `d517729` (credential/provider/Shell publication), `2172da5` (Candy-bound Git metadata), and `6c06118` (guarded workspace file handles). The fresh standard security revalidation remains `incomplete` at preflight because delegated-worker capacity was not verifiable; no full-scan Pass is claimed. Remaining path races include parent-directory operations, AGENTS context reads, Apply Changes parent creation, and Git worktree root/discard paths. Windows 11 and exact macOS `26.5.2` evidence remain unavailable on this host.
+
 Current policy note: the primary macOS acceptance environment is the current Tahoe `26.x` arm64 host (currently `26.6.1`). Exact `26.5.2` is a separate compatibility regression baseline. Historical `26.5.2` rows below remain evidence records; use `npm run acceptance:macos` for current-host validation and `npm run acceptance:macos:baseline` for the exact baseline.
 
 Post-`961537a` current-host revalidation: `npm run acceptance:macos` passes **14/14** at source revision `961537af4b90350c95910342c41c7f947830a9e3`, with deterministic `npm run check` at **201/201**. The earlier 199/199 figure in the checkpoint note below is historical evidence.
