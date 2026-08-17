@@ -4,7 +4,7 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 HEAD `e6170b6` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **238/238**。Issue #4 安全修复 checkpoint：`d517729` 统一凭据检测/脱敏、provider redirect fail-closed 和 Shell publication guard；`2172da5` 将 Task Worktree Git metadata 绑定到 Candy 从原始仓库解析的 common directory；`6c06118` 让 workspace 文件读写/搜索使用 guarded file handles；`89b261f` 增加 AGENTS/resource guarded read、Worktree canonical parent/candidate containment、Apply Changes 逐级安全目录创建及回归测试；`b672d5a` 增加 workspace 目录逐级创建、canonical parent containment 及 symlink/junction mkdir/write 回归；`1bcdd9f` 增加 non-Git snapshot symlink rejection；`e6170b6` 增加 Candy Pi session root/task directory symlink rejection 与 no-follow session file validation。最新标准扫描 `2c682ace-5786-4844-9890-1eb2052b6a38` 绑定文档 HEAD `09dc079`，parent fallback 下报告 **5 个开放 finding（4 medium、1 low）**，不构成安全 clearance。当前代码 revision 的 live provider gate 未在本 checkpoint 重跑；既有 live evidence 仍按其 source revision 解释。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11 仍待目标主机；`.omo/` 保持 user-owned 未跟踪。
+当前代码 HEAD `6f63c3e` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **239/239**。Issue #4 安全修复 checkpoint：`d517729` 统一凭据检测/脱敏、provider redirect fail-closed 和 Shell publication guard；`2172da5` 将 Task Worktree Git metadata 绑定到 Candy 从原始仓库解析的 common directory；`6c06118` 让 workspace 文件读写/搜索使用 guarded file handles；`89b261f` 增加 AGENTS/resource guarded read、Worktree canonical parent/candidate containment、Apply Changes 逐级安全目录创建及回归测试；`b672d5a` 增加 workspace 目录逐级创建、canonical parent containment 及 symlink/junction mkdir/write 回归；`1bcdd9f` 增加 non-Git snapshot symlink rejection；`e6170b6` 增加 Candy Pi session root/task directory symlink rejection 与 no-follow session file validation；`6f63c3e` 增加 workspace root/opened-file binding 和 non-Git traversed-directory identity recheck。最新标准扫描 `631e277f-7272-4d06-9d00-70f486f0a0ab` 绑定当前 HEAD `6f63c3e`，parent fallback 下报告 **5 个开放 finding（4 medium、1 low）**，不构成 security clearance。当前代码 revision 的 live provider gate 未在本 checkpoint 重跑；既有 live evidence 仍按其 source revision 解释。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11 仍待目标主机；`.omo/` 保持 user-owned 未跟踪。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -29,6 +29,8 @@
 新增 clean-install 证据：固定 Node `22.23.2`/npm `10.9.8` 下 `npm ci --ignore-scripts` 不修改 `package-lock.json`，并通过 toolchain assertion 与 build。
 
 新增 Pi session-root 安全证据：`e6170b6` 对 Candy-owned `sessionRoot/taskId`、`sessionRoot/pi-agent` 做最终目录 symlink rejection，reload/recovery 和已有 session 选择使用 regular-file/no-follow handle validation；Pi adapter focused tests **47/47**，全量 `npm run check` **238/238**，current macOS acceptance **14/14**。该项只覆盖已回归的 symlink route，不替代 descriptor-relative/OS-level replacement-race、Windows 11、精确 `26.5.2` 或独立 G2 证据。
+
+新增 workspace binding 安全证据：`6f63c3e` 对 Pi workspace 文件读写绑定 selected root identity，在打开文件后复核 regular-file identity 与 canonical containment；non-Git snapshot 对每个 traversed directory 在 enumeration 后复核 identity，并新增 selected-root symlink regression。全量 `npm run check` **239/239**，current macOS acceptance **14/14**，报告 source revision 为 `6f63c3e`。该项只降低常见 final-file/root replacement route，不替代 descriptor-relative/reparse-safe directory、Apply/worktree、session-manager、file-level snapshot race、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
