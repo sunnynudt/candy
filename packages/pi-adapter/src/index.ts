@@ -1213,7 +1213,7 @@ function createCandyWorkspaceBrowseTools(
         if (!childStats.isDirectory() && !childStats.isFile()) continue;
         await assertBrowsePath(root, childPath);
         const entry: CandyBrowseEntry = {
-          path: relativeBrowsePath(root, childPath),
+          path: relativeBrowsePath(root, childPath, activeSecrets),
           kind: childStats.isDirectory() ? "directory" : "file",
         };
         if (
@@ -1240,7 +1240,7 @@ function createCandyWorkspaceBrowseTools(
       const pending = [
         {
           absolutePath,
-          relativePath: relativeBrowsePath(root, absolutePath),
+          relativePath: relativeBrowsePath(root, absolutePath, activeSecrets),
           stats: startStats,
         },
       ];
@@ -1273,7 +1273,7 @@ function createCandyWorkspaceBrowseTools(
             if (!childStats.isDirectory() && !childStats.isFile()) continue;
             pending.push({
               absolutePath: childPath,
-              relativePath: relativeBrowsePath(root, childPath),
+              relativePath: relativeBrowsePath(root, childPath, activeSecrets),
               stats: childStats,
             });
           }
@@ -1420,9 +1420,13 @@ async function assertBrowsePath(root: string, candidate: string): Promise<void> 
   }
 }
 
-function relativeBrowsePath(root: string, absolutePath: string): string {
+function relativeBrowsePath(
+  root: string,
+  absolutePath: string,
+  activeSecrets: readonly string[] = [],
+): string {
   const relative = path.relative(root, absolutePath);
-  return normalizeWorkspaceToolPath(relative || ".");
+  return normalizeWorkspaceToolPath(redactBashOutput(relative || ".", activeSecrets));
 }
 
 function fitsBrowseResult(value: object): boolean {

@@ -20,6 +20,10 @@ import type {
 
 const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 const MAX_CANDY_RESOURCE_BYTES = 64 * 1024;
+const MAX_CANDY_RESOURCE_DEPTH = 32;
+const MAX_CANDY_RESOURCE_DIRECTORIES = 2_048;
+const MAX_CANDY_RESOURCE_FILES = 2_048;
+const MAX_CANDY_RESOURCE_TOTAL_BYTES = 8 * 1024 * 1024;
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const DEFAULT_CANDY_SYSTEM_PROMPT =
   "Candy is a local-first coding agent. Keep provider credentials, session content, and diagnostics inside Candy's approved boundaries. Use the selected workspace only and report bounded evidence.";
@@ -313,19 +317,42 @@ function loadCandyPrompts(
 }
 
 function listCandyFiles(directory: string, fileSystem: RestrictedResourceFileSystem): string[] {
-  let entries: readonly RestrictedResourceDirectoryEntry[] | undefined;
-  try {
-    entries = fileSystem.readdir?.(directory);
-  } catch {
-    return [];
-  }
-  if (entries === undefined) return [];
+  const pending = [{ directory, depth: 0 }];
   const files: string[] = [];
-  for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
-    const filePath = path.join(directory, entry.name);
-    if (entry.isFile()) files.push(filePath);
-    else if (entry.isDirectory()) files.push(...listCandyFiles(filePath, fileSystem));
+  let directoryCount = 0;
+  let totalBytes = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) break;
+    directoryCount += 1;
+    if (directoryCount > MAX_CANDY_RESOURCE_DIRECTORIES) return [];
+    let entries: readonly RestrictedResourceDirectoryEntry[] | undefined;
+    try {
+      entries = fileSystem.readdir?.(current.directory);
+    } catch {
+      continue;
+    }
+    if (entries === undefined) continue;
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const filePath = path.join(current.directory, entry.name);
+      if (entry.isFile()) {
+        let stats: RestrictedResourceFileStats;
+        try {
+          stats = fileSystem.lstat(filePath);
+        } catch {
+          continue;
+        }
+        if (!stats.isFile() || stats.isSymbolicLink()) continue;
+        if (files.length >= MAX_CANDY_RESOURCE_FILES) return [];
+        totalBytes += Math.min(stats.size, MAX_CANDY_RESOURCE_BYTES);
+        if (totalBytes > MAX_CANDY_RESOURCE_TOTAL_BYTES) return [];
+        files.push(filePath);
+      } else if (entry.isDirectory()) {
+        if (current.depth >= MAX_CANDY_RESOURCE_DEPTH) return [];
+        pending.push({ directory: filePath, depth: current.depth + 1 });
+      }
+    }
   }
   return files.sort();
 }

@@ -388,6 +388,50 @@ test("Candy workspace search skips invalid text and caps serialized results", as
   }
 });
 
+test("Candy workspace browse tools redact active secrets from model-visible paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-browse-path-secret-"));
+  try {
+    const secretDirectory = path.join(root, "fixture-secret-folder");
+    await mkdir(secretDirectory);
+    await writeFile(path.join(secretDirectory, "needle.txt"), "needle\n");
+    const tools = createCandyWorkspaceTools(root, "read-only", undefined, undefined, [
+      "fixture-secret",
+    ]);
+    const listTool = tools.find((tool) => tool.name === "candy_list");
+    const searchTool = tools.find((tool) => tool.name === "candy_search");
+    assert.ok(listTool);
+    assert.ok(searchTool);
+
+    const listResult = await listTool.execute(
+      "list-secret-path",
+      { path: "." },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const listContent = listResult.content[0];
+    assert.ok(listContent?.type === "text");
+    const listText = listContent.text;
+    assert.doesNotMatch(listText, /fixture-secret/u);
+    assert.match(listText, /\[REDACTED\]/u);
+
+    const searchResult = await searchTool.execute(
+      "search-secret-path",
+      { query: "needle" },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const searchContent = searchResult.content[0];
+    assert.ok(searchContent?.type === "text");
+    const searchText = searchContent.text;
+    assert.doesNotMatch(searchText, /fixture-secret/u);
+    assert.match(searchText, /\[REDACTED\]/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("provider catalog keeps domestic endpoints and live capabilities gated", () => {
   assert.deepEqual(
     MODEL_CATALOG.map((entry) => [entry.modelId, entry.endpoint, entry.enabled]),
@@ -1189,6 +1233,26 @@ test("Candy restricted resource loader exposes only Candy-owned instructions, sk
     const candyRootReal = await realpath(candyRoot);
     assert.ok(loader.getSkills().skills[0]?.filePath.startsWith(candyRootReal));
     assert.ok(loader.getPrompts().prompts[0]?.filePath.startsWith(candyRootReal));
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+    await rm(candyRoot, { recursive: true, force: true });
+  }
+});
+
+test("Candy restricted resource loader bounds resource directory depth", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-resource-depth-workspace-"));
+  const candyRoot = await mkdtemp(path.join(tmpdir(), "candy-resource-depth-root-"));
+  try {
+    const nestedSegments = Array.from({ length: 33 }, (_, index) => `nested-${index}`);
+    const deepDirectory = path.join(candyRoot, "skills", ...nestedSegments);
+    await mkdir(deepDirectory, { recursive: true });
+    await writeFile(
+      path.join(deepDirectory, "SKILL.md"),
+      "---\nname: too-deep\ndescription: Must not load\n---\nignored\n",
+    );
+
+    const loader = new CandyRestrictedResourceLoader(workspace, undefined, [], candyRoot);
+    assert.deepEqual(loader.getSkills(), { skills: [], diagnostics: [] });
   } finally {
     await rm(workspace, { recursive: true, force: true });
     await rm(candyRoot, { recursive: true, force: true });
