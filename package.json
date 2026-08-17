@@ -8,12 +8,16 @@
     "node": "22.23.2",
     "npm": "10.9.8"
   },
+  "bin": {
+    "candy": "scripts/candy.mjs"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "build": "tsc -b --pretty false",
+    "candy": "node scripts/candy.mjs",
     "tui": "npm run build && node apps/tui/dist/main.js",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:boundaries && npm run check:pi-versions && npm run check:lifecycle-scripts",
     "check:boundaries": "node scripts/check-boundaries.mjs",
