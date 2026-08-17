@@ -10,6 +10,7 @@ import {
   realpath,
   rm,
   symlink,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -311,6 +312,30 @@ test("attachment store hashes image bytes, keeps binary outside session, and rej
   assert.equal(await store.cleanupBefore(101), 1);
   assert.equal(readFileSync(outside, "utf8"), "keep");
   rmSync(outside, { force: true });
+});
+
+test("attachment store rejects a pre-existing metadata symlink and preserves duplicate puts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-attachment-metadata-link-"));
+  const outside = path.join(path.dirname(root), "candy-attachment-metadata-outside.json");
+  const content = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  try {
+    const store = new AttachmentStore(root, () => 100);
+    const first = await store.put("image", "image/png", content);
+    const duplicate = await store.put("image", "image/png", content);
+    assert.deepEqual(duplicate, first);
+
+    await rm(path.join(root, `${first.id}.json`));
+    await writeFile(outside, "keep", "utf8");
+    await symlink(outside, path.join(root, `${first.id}.json`));
+    await assert.rejects(store.put("image", "image/png", content), /regular file|integrity/iu);
+    assert.equal(await readFile(outside, "utf8"), "keep");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { force: true });
+  }
 });
 
 test("attachment cleanup bounds metadata materialization", async () => {

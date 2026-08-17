@@ -192,19 +192,30 @@ export class AttachmentStore {
       sha256,
       createdAt: this.clock(),
     };
-    await writeFile(path.join(this.root, `${id}.json`), JSON.stringify(metadata), { flag: "w" });
-    return metadata;
+    const metadataPath = path.join(this.root, `${id}.json`);
+    try {
+      await writeExclusiveFile(metadataPath, JSON.stringify(metadata));
+      return metadata;
+    } catch (error: unknown) {
+      if (!isNodeError(error) || error.code !== "EEXIST") throw error;
+      const existing = await readAttachmentMetadata(metadataPath);
+      if (
+        existing.id !== metadata.id ||
+        existing.kind !== metadata.kind ||
+        existing.mimeType !== metadata.mimeType ||
+        existing.bytes !== metadata.bytes ||
+        existing.sha256 !== metadata.sha256
+      )
+        throw new Error("Attachment integrity check failed.", { cause: error });
+      return existing;
+    }
   }
 
   public async get(
     id: string,
   ): Promise<{ readonly metadata: AttachmentMetadata; readonly content: Uint8Array }> {
     if (!/^att_[a-f0-9]{64}$/u.test(id)) throw new Error("Invalid attachment id.");
-    const metadata = JSON.parse(
-      (
-        await readBoundedFile(path.join(this.root, `${id}.json`), MAX_ATTACHMENT_METADATA_BYTES)
-      ).toString("utf8"),
-    ) as AttachmentMetadata;
+    const metadata = await readAttachmentMetadata(path.join(this.root, `${id}.json`));
     if (
       !Number.isSafeInteger(metadata.bytes) ||
       metadata.bytes < 0 ||
@@ -282,6 +293,30 @@ async function readBoundedFile(filePath: string, maxBytes: number): Promise<Buff
   } finally {
     await handle.close();
   }
+}
+
+async function writeExclusiveFile(filePath: string, content: string): Promise<void> {
+  const handle = await open(
+    filePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NO_FOLLOW_FINAL_PATH,
+    0o600,
+  );
+  try {
+    await handle.writeFile(content, "utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readAttachmentMetadata(filePath: string): Promise<AttachmentMetadata> {
+  const entry = await lstat(filePath);
+  if (!entry.isFile() || entry.isSymbolicLink())
+    throw new Error("Attachment metadata is not a regular file.");
+  if (entry.size > MAX_ATTACHMENT_METADATA_BYTES)
+    throw new Error("Attachment metadata exceeds its size limit.");
+  return JSON.parse(
+    (await readBoundedFile(filePath, MAX_ATTACHMENT_METADATA_BYTES)).toString("utf8"),
+  ) as AttachmentMetadata;
 }
 
 function isValidImageContent(mimeType: string, content: Uint8Array): boolean {
