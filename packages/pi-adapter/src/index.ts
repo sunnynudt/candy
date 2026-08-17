@@ -21,6 +21,12 @@ import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
 
+const SAFE_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+
+function assertSafeTaskId(taskId: string): void {
+  if (!SAFE_TASK_ID_PATTERN.test(taskId)) throw new Error("Candy task id is invalid.");
+}
+
 export function listPiPublicExports(): readonly string[] {
   return Object.keys(piSdk).sort();
 }
@@ -1823,6 +1829,7 @@ export class CandyPiSessionStore {
   public constructor(private readonly sessionRoot: string) {}
 
   public async create(taskId: string, cwd: string): Promise<PiSessionHandle> {
+    assertSafeTaskId(taskId);
     const directory = path.join(this.sessionRoot, taskId);
     await mkdir(directory, { recursive: true });
     const manager = piSdk.SessionManager.create(cwd, directory);
@@ -2071,6 +2078,7 @@ export class PiAgentEngine {
   ) {}
 
   public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
+    assertSafeTaskId(taskId);
     const sessionDirectory = path.join(this.sessionRoot, taskId);
     const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
       (left, right) => right.modified.getTime() - left.modified.getTime(),
@@ -2108,12 +2116,14 @@ export class PiAgentEngine {
   }
 
   public async steer(taskId: string, text: string): Promise<void> {
+    assertSafeTaskId(taskId);
     const session = this.#activeSessions.get(taskId);
     if (session === undefined) throw new Error("Pi agent turn is no longer active.");
     await session.steer(text);
   }
 
   public async followUp(taskId: string, text: string): Promise<void> {
+    assertSafeTaskId(taskId);
     const session = this.#activeSessions.get(taskId);
     if (session === undefined) throw new Error("Pi agent turn is no longer active.");
     await session.followUp(text);
@@ -2123,6 +2133,7 @@ export class PiAgentEngine {
     input: PiAgentEngineInput,
     signal: AbortSignal,
   ): AsyncIterable<PiAgentObservation> {
+    assertSafeTaskId(input.taskId);
     if (signal.aborted) throw new Error("Pi agent turn cancelled.");
     const lease = await this.acquireSecret();
     if (!lease)

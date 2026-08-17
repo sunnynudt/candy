@@ -61,6 +61,20 @@ test("invalid versions and malformed input fail closed", () => {
   );
 });
 
+test("task ids are path-safe at the protocol boundary", () => {
+  assert.doesNotThrow(() =>
+    validateProtocolMessage({ ...snapshotCommandFixture, taskId: "task_ok-1" }),
+  );
+  assert.throws(
+    () => validateProtocolMessage({ ...snapshotCommandFixture, taskId: "../outside" }),
+    /taskId is invalid/u,
+  );
+  assert.throws(
+    () => validateProtocolMessage({ ...snapshotCommandFixture, taskId: "nested/task" }),
+    /taskId is invalid/u,
+  );
+});
+
 test("secret-shaped fields and values fail closed", () => {
   assert.throws(
     () => validateProtocolMessage({ ...snapshotCommandFixture, apiKey: "redacted" }),

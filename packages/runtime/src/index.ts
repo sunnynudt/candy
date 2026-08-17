@@ -442,6 +442,7 @@ export {
   ApplyChangesService,
   AttachmentStore,
   MAX_ATTACHMENT_BYTES,
+  MAX_UNTRACKED_FILE_BYTES,
   ApprovalPolicy,
   BrowserControlError,
   BrowserRevisionError,

@@ -52,6 +52,7 @@ import {
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   MAX_ATTACHMENT_BYTES,
+  MAX_UNTRACKED_FILE_BYTES,
   TaskController,
   TaskScheduler,
   UnavailableBrowserCapability,
@@ -2151,6 +2152,11 @@ async function buildUntrackedReview(
     const source = await lstat(absolute);
     if (source.isSymbolicLink() || !source.isFile())
       throw new Error("Untracked review requires a regular non-symbolic file.");
+    if (source.size > MAX_UNTRACKED_FILE_BYTES) {
+      throw new ApplyChangesBlockedError(
+        `Untracked file exceeds the ${MAX_UNTRACKED_FILE_BYTES}-byte review limit.`,
+      );
+    }
     const canonical = await realpath(absolute);
     if (!isPathInside(canonicalWorkspace, canonical))
       throw new Error("Untracked review path escapes the Task Workspace.");

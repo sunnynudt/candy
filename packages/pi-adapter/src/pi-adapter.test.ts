@@ -1926,3 +1926,18 @@ test("Pi session manager persists in Candy-owned storage and reloads with a rema
   const content = await readFile(created.sessionFile, "utf8");
   assert.ok(CandyPiSessionStore.fingerprint(content).length > 0);
 });
+
+test("Candy session paths reject traversal task ids", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-session-task-id-"));
+  const store = new CandyPiSessionStore(root);
+  await assert.rejects(() => store.create("../outside", root), /task id is invalid/u);
+  await assert.rejects(async () => {
+    for await (const observation of new PiAgentEngine(root, async () => undefined).runTurn(
+      { taskId: "nested/task", cwd: root, prompt: "hello", model: "deepseek-v4-flash" },
+      new AbortController().signal,
+    )) {
+      // The invalid task id must be rejected before provider or session work starts.
+      void observation;
+    }
+  }, /task id is invalid/u);
+});

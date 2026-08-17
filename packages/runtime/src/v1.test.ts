@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   appendFile,
   mkdir,
@@ -302,7 +302,12 @@ test("attachment store hashes image bytes, keeps binary outside session, and rej
   writeFileSync(path.join(root, `${metadata.id}.bin`), "tampered");
   await assert.rejects(store.get(metadata.id), /integrity/u);
   await assert.rejects(store.put("video", "video/mp4", new Uint8Array([1])), /unavailable/u);
+  const outside = path.join(path.dirname(root), "outside.bin");
+  writeFileSync(outside, "keep");
+  writeFileSync(path.join(root, "evil.json"), JSON.stringify({ id: "../outside", createdAt: 0 }));
   assert.equal(await store.cleanupBefore(101), 1);
+  assert.equal(readFileSync(outside, "utf8"), "keep");
+  rmSync(outside, { force: true });
 });
 
 test("attachment store applies a credential guard before persisting bytes", async () => {

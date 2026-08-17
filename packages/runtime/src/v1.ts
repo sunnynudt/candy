@@ -16,6 +16,7 @@ import path from "node:path";
 import { cleanChildEnvironment, containsCredentialMaterial } from "@candy/platform";
 
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
+export const MAX_UNTRACKED_FILE_BYTES = 1_048_576;
 const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -229,9 +230,9 @@ export class AttachmentStore {
     let removed = 0;
     for (const entry of await readdir(this.root).catch(() => [] as string[])) {
       if (!entry.endsWith(".json")) continue;
-      const metadata = JSON.parse(
-        await readFile(path.join(this.root, entry), "utf8"),
-      ) as AttachmentMetadata;
+      const metadataPath = path.join(this.root, entry);
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as AttachmentMetadata;
+      if (!/^att_[a-f0-9]{64}$/u.test(metadata.id)) continue;
       if (metadata.createdAt < cutoff) {
         await rm(path.join(this.root, `${metadata.id}.json`), { force: true });
         await rm(path.join(this.root, `${metadata.id}.bin`), { force: true });
@@ -1436,6 +1437,10 @@ async function readApplyFile(root: string, requested: string): Promise<Buffer> {
     const opened = await handle.stat();
     if (!opened.isFile())
       throw new ApplyChangesBlockedError("Apply Changes requires a regular file.");
+    if (opened.size > MAX_UNTRACKED_FILE_BYTES)
+      throw new ApplyChangesBlockedError(
+        `Untracked file exceeds the ${MAX_UNTRACKED_FILE_BYTES}-byte Apply limit.`,
+      );
     await assertSafePath(root, requested, false);
     return await handle.readFile();
   } finally {

@@ -1,5 +1,15 @@
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_JSONL_BYTES = 1024 * 1024;
+export const MAX_TASK_ID_LENGTH = 128;
+
+export function isSafeTaskId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_TASK_ID_LENGTH &&
+    /^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(value)
+  );
+}
 
 export type CandyModelId = "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
@@ -627,7 +637,9 @@ export function validateProtocolMessage(value: unknown): ProtocolMessage {
     );
   }
 
-  assertString(value.taskId, "taskId");
+  if (!isSafeTaskId(value.taskId)) {
+    throw new ProtocolValidationError("invalid_message", "taskId is invalid.");
+  }
 
   if (value.kind === "command") {
     assertString(value.commandId, "commandId");
