@@ -1824,13 +1824,14 @@ async function writeWorkspaceFile(
   await assertWorkspacePath(root, path.dirname(absolutePath), false);
   const handle = await open(
     absolutePath,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NO_FOLLOW_FINAL_PATH,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | NO_FOLLOW_FINAL_PATH,
     0o666,
   );
   try {
     const opened = await handle.stat();
     if (!opened.isFile()) throw new Error("Workspace writes require a regular file.");
     await assertOpenedWorkspaceFile(binding, absolutePath, opened);
+    await handle.truncate(0);
     await handle.writeFile(content, "utf8");
   } finally {
     await handle.close();
