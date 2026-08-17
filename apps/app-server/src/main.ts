@@ -49,6 +49,7 @@ import {
   type ValidatorResult,
   type WorkspaceChangeTracker,
   planGitWorktree,
+  resolveGitCommonDirectory,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -77,6 +78,9 @@ export class PiAppServerEngine implements RecoverableAgentEngine {
       ...(input.images === undefined ? {} : { images: input.images }),
       ...(input.activeSecrets === undefined ? {} : { activeSecrets: input.activeSecrets }),
       ...(input.trustedShell === undefined ? {} : { trustedShell: input.trustedShell }),
+      ...(input.trustedGitCommonDirectory === undefined
+        ? {}
+        : { trustedGitCommonDirectory: input.trustedGitCommonDirectory }),
       ...(input.shellApproval === undefined ? {} : { shellApproval: input.shellApproval }),
     };
     const engine = model === "MiniMax-M3" ? this.minimax : this.deepseek;
@@ -717,6 +721,10 @@ export class AppServerController {
     emit: Emit,
   ): Promise<void> {
     const executionPath = metadata.worktreePath ?? metadata.workspacePath;
+    const trustedGitCommonDirectory =
+      metadata.trustedShell && this.#engine instanceof PiAppServerEngine
+        ? await resolveGitCommonDirectory(metadata.workspacePath)
+        : undefined;
     for await (const observation of this.#engine.runTurn(
       {
         taskId,
@@ -729,6 +737,7 @@ export class AppServerController {
         ...(metadata.trustedShell && metadata.worktreePath !== undefined
           ? {
               trustedShell: true,
+              ...(trustedGitCommonDirectory === undefined ? {} : { trustedGitCommonDirectory }),
               shellApproval: (
                 request: {
                   readonly command: string;

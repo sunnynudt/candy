@@ -834,6 +834,19 @@ class NodeGitCommandRunner implements GitCommandRunner {
   }
 }
 
+/** Resolve Git metadata from Candy's original repository, not from a mutable worktree marker. */
+export async function resolveGitCommonDirectory(
+  repository: string,
+  runner: GitCommandRunner = new NodeGitCommandRunner(),
+): Promise<string> {
+  const value = (await runner.run(["rev-parse", "--git-common-dir"], repository)).trim();
+  if (value.length === 0 || value.includes("\n") || value.includes("\r"))
+    throw new Error("Git common directory is invalid.");
+  const directory = await realpath(path.resolve(repository, value));
+  if (!(await stat(directory)).isDirectory()) throw new Error("Git common directory is invalid.");
+  return directory;
+}
+
 /** Reads a task workspace without mutating Git state or exposing command errors. */
 export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
   readonly #runner: GitCommandRunner;

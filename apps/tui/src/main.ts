@@ -61,6 +61,7 @@ import {
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
   planGitWorktree,
+  resolveGitCommonDirectory,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
 
@@ -1442,6 +1443,10 @@ export class InteractiveTui {
             : "Trusted Shell Auto is disabled pending the macOS G2 gate.",
         );
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
+      const trustedGitCommonDirectory =
+        taskSnapshot.trustedShell && this.#engine instanceof TuiModelRouter
+          ? await resolveGitCommonDirectory(taskSnapshot.workspacePath)
+          : undefined;
       const prompt = explicitPrompt;
       if (prompt === undefined)
         throw new Error("Explicit continuation required; the interrupted prompt was not replayed.");
@@ -1477,6 +1482,7 @@ export class InteractiveTui {
             ...(taskSnapshot.trustedShell
               ? {
                   trustedShell: true,
+                  ...(trustedGitCommonDirectory === undefined ? {} : { trustedGitCommonDirectory }),
                   ...(this.#shellRunner?.bashPath === undefined
                     ? {}
                     : { bashPath: this.#shellRunner.bashPath }),

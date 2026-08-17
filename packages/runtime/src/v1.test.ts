@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { appendFile, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -29,7 +29,25 @@ import {
   SerialMutationLane,
   WorkspaceHandoff,
   planGitWorktree,
+  resolveGitCommonDirectory,
 } from "./v1.js";
+
+test("Git common directory is resolved from the original repository seam", async () => {
+  const repository = await mkdtemp(path.join(tmpdir(), "candy-git-common-"));
+  await mkdir(path.join(repository, ".git"));
+  const calls: readonly string[][] = [];
+  const runner = {
+    run: async (args: readonly string[], cwd: string) => {
+      (calls as string[][]).push([...args, cwd]);
+      return ".git\n";
+    },
+  };
+  assert.equal(
+    await resolveGitCommonDirectory(repository, runner),
+    await realpath(path.join(repository, ".git")),
+  );
+  assert.deepEqual(calls, [["rev-parse", "--git-common-dir", repository]]);
+});
 
 test("approval policy keeps read-only strict and shell unavailable before native G2", () => {
   const readOnly = new ApprovalPolicy("read-only");

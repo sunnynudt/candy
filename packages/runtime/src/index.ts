@@ -14,6 +14,8 @@ export interface AgentTurnInput {
   readonly activeSecrets?: readonly string[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
+  /** Candy-resolved Git metadata root for a trusted Task Worktree. */
+  readonly trustedGitCommonDirectory?: string;
   readonly shellApproval?: (
     request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
     signal: AbortSignal,
@@ -456,6 +458,7 @@ export {
   SerialMutationLane,
   WorkspaceHandoff,
   planGitWorktree,
+  resolveGitCommonDirectory,
 } from "./v1.js";
 export type {
   ActionKind,

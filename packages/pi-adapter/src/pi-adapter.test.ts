@@ -1566,6 +1566,45 @@ test("Candy Trusted Shell rejects publication commands before approval or spawn"
   assert.equal(safeRunnerCalled, true);
 });
 
+test("Candy Trusted Shell only grants Candy-approved Git metadata paths", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-trusted-shell-worktree-"));
+  const common = await mkdtemp(path.join(tmpdir(), "candy-trusted-shell-common-"));
+  const commonDirectory = path.join(common, ".git");
+  const gitDirectory = path.join(commonDirectory, "worktrees", "task");
+  await mkdir(gitDirectory, { recursive: true });
+  await writeFile(path.join(workspace, ".git"), `gitdir: ${gitDirectory}\n`);
+  await writeFile(path.join(gitDirectory, "commondir"), "../..\n");
+  let readOnlyPaths: readonly string[] | undefined;
+  let runnerCalled = false;
+  const operations = createCandyBashOperations(workspace, {
+    bashPath: "/bin/bash",
+    exists: () => true,
+    trustedGitCommonDirectory: commonDirectory,
+    runner: {
+      run: async (request) => {
+        runnerCalled = true;
+        readOnlyPaths = request.readOnlyPaths;
+        return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+      },
+    },
+  });
+  await operations.exec("git status --short", workspace, { onData: () => undefined });
+  assert.equal(runnerCalled, true);
+  assert.deepEqual(readOnlyPaths, [
+    path.join(workspace, ".git"),
+    await realpath(gitDirectory),
+    await realpath(commonDirectory),
+  ]);
+
+  await writeFile(path.join(workspace, ".git"), `gitdir: ${path.dirname(common)}\n`);
+  runnerCalled = false;
+  await assert.rejects(
+    operations.exec("git status --short", workspace, { onData: () => undefined }),
+    /outside Candy's approved repository/iu,
+  );
+  assert.equal(runnerCalled, false);
+});
+
 test("Candy Bash operations abort the native runner on timeout", async () => {
   let runnerSignal: AbortSignal | undefined;
   const operations = createCandyBashOperations("C:\\task-worktree", {
