@@ -692,6 +692,46 @@ test("Pi agent engine cancellation aborts an unsettled retry", async () => {
   }
 });
 
+test("Pi agent engine does not start an already cancelled turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-pre-cancelled-"));
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  let leaseCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(null, { status: 500 });
+  };
+  const controller = new AbortController();
+  controller.abort();
+
+  try {
+    await assert.rejects(
+      (async () => {
+        for await (const _observation of new PiAgentEngine(root, async () => {
+          leaseCalls += 1;
+          return { secret: "fixture-secret", release: () => undefined };
+        }).runTurn(
+          {
+            taskId: "task-pre-cancelled",
+            prompt: "must not start",
+            model: "deepseek-v4-flash",
+            cwd: process.cwd(),
+          },
+          controller.signal,
+        )) {
+          void _observation;
+        }
+      })(),
+      /cancelled/u,
+    );
+    assert.equal(leaseCalls, 0);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi lifecycle event fixtures preserve retry, compaction, and settled ordering", () => {
   const taskId = "task-lifecycle-fixture";
   const events = [

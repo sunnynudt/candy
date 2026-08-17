@@ -1876,6 +1876,7 @@ export class PiAgentEngine {
     input: PiAgentEngineInput,
     signal: AbortSignal,
   ): AsyncIterable<PiAgentObservation> {
+    if (signal.aborted) throw new Error("Pi agent turn cancelled.");
     const lease = await this.acquireSecret();
     if (!lease)
       throw new ProviderContractError("DeepSeek credentials are unavailable.", "needs_credentials");

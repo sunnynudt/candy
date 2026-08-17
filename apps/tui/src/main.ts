@@ -1512,8 +1512,12 @@ export class InteractiveTui {
               `\n[provider retry ${observation.attempt}/${observation.maxAttempts}; waiting ${observation.delayMs}ms]\n`,
             );
           }
-          if (observation.type === "turn.retry.completed" && !observation.ok) {
-            this.write(`\n[provider retry ${observation.attempt} failed]\n`);
+          if (observation.type === "turn.retry.completed") {
+            this.write(
+              observation.ok
+                ? `\n[provider retry ${observation.attempt} succeeded]\n`
+                : `\n[provider retry ${observation.attempt} failed]\n`,
+            );
           }
           if (observation.type === "turn.compaction") {
             this.write(

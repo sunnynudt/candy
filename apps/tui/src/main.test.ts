@@ -375,6 +375,59 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
   }
 });
 
+test("interactive TUI projects retry and compaction until the turn settles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-lifecycle-"));
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "turn.retrying",
+          taskId: input.taskId,
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 1,
+        };
+        yield { type: "turn.retry.completed", taskId: input.taskId, attempt: 1, ok: true };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "started",
+          reason: "overflow",
+        };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "completed",
+          reason: "overflow",
+          aborted: false,
+          willRetry: true,
+        };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "recovered after compaction" };
+        yield { type: "turn.settled", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new InteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("recover the turn");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /completed/u);
+    assert.match(output, /provider retry 1\/3; waiting 1ms/u);
+    assert.match(output, /provider retry 1 succeeded/u);
+    assert.match(output, /context compaction: overflow/u);
+    assert.match(output, /context compaction settled: overflow/u);
+    assert.match(output, /turn settled/u);
+    assert.match(output, /recovered after compaction/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI enables Trusted Shell Auto in the accepted macOS composition root", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
