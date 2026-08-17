@@ -2041,3 +2041,44 @@ test("Candy session paths reject traversal task ids", async () => {
     }
   }, /task id is invalid/u);
 });
+
+test("Candy Pi session storage rejects symlinked task directories", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-session-links-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-session-links-outside-"));
+  try {
+    await symlink(
+      outside,
+      path.join(root, "task-linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const store = new CandyPiSessionStore(root);
+    await assert.rejects(
+      () => store.create("task-linked", root),
+      /session paths cannot contain symbolic links/u,
+    );
+
+    const engine = new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    }));
+    await assert.rejects(
+      (async () => {
+        for await (const _observation of engine.runTurn(
+          {
+            taskId: "task-linked",
+            cwd: root,
+            prompt: "hello",
+            model: "deepseek-v4-flash",
+          },
+          new AbortController().signal,
+        )) {
+          void _observation;
+        }
+      })(),
+      /session paths cannot contain symbolic links/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});

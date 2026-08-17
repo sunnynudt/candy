@@ -6,7 +6,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { access, lstat, mkdir, open, opendir, readFile, realpath, unlink } from "node:fs/promises";
+import { access, lstat, mkdir, open, opendir, realpath, unlink } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
 import * as piSdk from "@earendil-works/pi-coding-agent";
@@ -1853,6 +1853,56 @@ async function assertWorkspacePath(
   }
 }
 
+async function ensureNoSymlinkDirectory(directory: string): Promise<string> {
+  const absolute = path.resolve(directory);
+  await mkdir(absolute, { recursive: true });
+  const metadata = await lstat(absolute);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error("Candy session paths cannot contain symbolic links.");
+  }
+  return absolute;
+}
+
+async function ensureSessionDirectory(sessionRoot: string, taskId: string): Promise<string> {
+  const root = await ensureNoSymlinkDirectory(sessionRoot);
+  return ensureNoSymlinkDirectory(path.join(root, taskId));
+}
+
+async function assertSessionFile(sessionRoot: string, sessionFile: string): Promise<void> {
+  const root = path.resolve(sessionRoot);
+  const absolute = path.resolve(sessionFile);
+  const relative = path.relative(root, absolute);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new Error("Candy session file escaped the session root.");
+  }
+  await ensureNoSymlinkDirectory(path.dirname(absolute));
+  const before = await lstat(absolute);
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error("Candy session files must be regular files.");
+  }
+  const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw new Error("Candy session files must be regular files.");
+    const after = await lstat(absolute);
+    if (after.isSymbolicLink() || !after.isFile() || !sameFileSnapshot(opened, after)) {
+      throw new Error("Candy session file changed while it was being opened.");
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readSessionFile(sessionRoot: string, sessionFile: string): Promise<string> {
+  await assertSessionFile(sessionRoot, sessionFile);
+  const handle = await open(path.resolve(sessionFile), fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  try {
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
 }
@@ -1871,8 +1921,7 @@ export class CandyPiSessionStore {
 
   public async create(taskId: string, cwd: string): Promise<PiSessionHandle> {
     assertSafeTaskId(taskId);
-    const directory = path.join(this.sessionRoot, taskId);
-    await mkdir(directory, { recursive: true });
+    const directory = await ensureSessionDirectory(this.sessionRoot, taskId);
     const manager = piSdk.SessionManager.create(cwd, directory);
     manager.appendCustomEntry("candy.session.created", { taskId });
     manager.appendMessage({
@@ -1903,7 +1952,7 @@ export class CandyPiSessionStore {
   }
 
   public async reload(handle: PiSessionHandle, remappedCwd: string): Promise<PiSessionHandle> {
-    const content = await readFile(handle.sessionFile, "utf8");
+    const content = await readSessionFile(this.sessionRoot, handle.sessionFile);
     if (!content.includes('"type":"session"')) {
       throw new Error("Candy session does not contain a Pi session header.");
     }
@@ -2120,12 +2169,12 @@ export class PiAgentEngine {
 
   public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
     assertSafeTaskId(taskId);
-    const sessionDirectory = path.join(this.sessionRoot, taskId);
+    const sessionDirectory = await ensureSessionDirectory(this.sessionRoot, taskId);
     const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
       (left, right) => right.modified.getTime() - left.modified.getTime(),
     )[0];
     if (!existing) return undefined;
-    const content = await readFile(existing.path, "utf8");
+    const content = await readSessionFile(this.sessionRoot, existing.path);
     void piSdk.SessionManager.open(existing.path, sessionDirectory, cwd);
     const entries = content
       .split(/\r?\n/u)
@@ -2212,8 +2261,8 @@ export class PiAgentEngine {
         "provider_error",
       );
     }
-    const sessionDirectory = path.join(this.sessionRoot, input.taskId);
-    await mkdir(sessionDirectory, { recursive: true });
+    const sessionDirectory = await ensureSessionDirectory(this.sessionRoot, input.taskId);
+    const agentDirectory = await ensureSessionDirectory(this.sessionRoot, "pi-agent");
     const credentialStore = new PiCredentialStore(lease.secret, this.provider);
     let session: piSdk.AgentSession | undefined;
     try {
@@ -2237,6 +2286,7 @@ export class PiAgentEngine {
       const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
         (left, right) => right.modified.getTime() - left.modified.getTime(),
       )[0];
+      if (existing) await assertSessionFile(this.sessionRoot, existing.path);
       const sessionManager = existing
         ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
         : piSdk.SessionManager.create(input.cwd, sessionDirectory);
@@ -2269,7 +2319,7 @@ export class PiAgentEngine {
       );
       const created = await piSdk.createAgentSession({
         cwd: input.cwd,
-        agentDir: path.join(this.sessionRoot, "pi-agent"),
+        agentDir: agentDirectory,
         modelRuntime,
         model,
         sessionManager,
