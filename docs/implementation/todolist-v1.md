@@ -10,6 +10,8 @@
 
 `961537a` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，source revision 为 `961537af4b90350c95910342c41c7f947830a9e3`，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **201/201**。下方较早的 199/199 仅保留为历史 checkpoint 证据。
 
+`a28606c` 后当前主机复验：`npm run acceptance:macos` 通过 **14/14**，固定 Node `22.23.2`/npm `10.9.8`，`npm run check` 为 **203/203**；新增 retry 成功投影、compaction 到 settled 顺序和已取消 turn 不启动 provider 的证据。
+
 当前范围说明：Issue #4 已将 V1 收敛为 macOS/Windows 11 TUI；Desktop、Browser Workspace 及其依赖流程延后到 V2。下方较早条目保留为历史证据，不改变当前 [产品范围](../product/candy-v1.md) 与 [TUI 验收合同](../product/acceptance-v1.md)。实现 checkpoint `819d8a7` 已接入 Windows 11 toolchain gate 及仅在 Windows 11 x64 执行的核心 TUI journey，`c632f74` 已接入仅在支持平台执行的 OS-store TUI credential lifecycle smoke，`456bab2` 已接入真实 PiAgentEngine 驱动的确定性 TUI journey，覆盖批准的 DeepSeek endpoint、Candy-owned session persistence 和 session credential exclusion，`737d7d7` 已接入 Pi-backed `candy_write` tool-loop workspace mutation，`34ae949` 已接入 credential revocation evidence，证明删除凭据后下一次真实 Pi 操作返回 `needs_credentials` 且不再发起 provider request、历史保留、session 无凭据，`a36aac4` 已接入 bounded workspace review metadata persistence 和真实 Pi coding journey，覆盖 review、restart、transcript/tool evidence、显式 Apply 且不改变 HEAD/index，`54b54c1` 已接入真实 Pi provider stream cancellation，观察 abort 且无 false completion；当前 macOS TUI-only acceptance 报告单独绑定最终 HEAD，为 14/14（macOS `26.6.1` arm64，Node `22.23.2`/npm `10.9.8`），确定性检查为 199/199，并覆盖有界、凭据脱敏的工具参数及增量/完成输出、presence-only credential evidence、revocation、Pi-backed projection/persistence/workspace mutation/review-restart-apply/cancellation 和 TUI-only 十轮响应性门槛；Windows 仍待目标主机执行，精确 `26.5.2` 在当前主机 preflight blocked。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
@@ -47,6 +49,12 @@
 - `961537a` 新增 `:prompts` 和 `:prompt <name> [args]`。模板只从 Candy-owned app-data 的 `prompts/*.md` 经过 restricted loader 读取；支持带引号参数及 `$1..$99`、`$ARGUMENTS`、`$@` 展开，并在未知模板、引号不闭合、控制字符、超长参数、空模板或凭据内容时 fail closed。
 - 新增 TUI 回归覆盖模板列表、带空格参数、active secret 脱敏、未知模板和参数边界；固定 Node `22.23.2`/npm `10.9.8` 下 `npm run check` 通过 **201/201**。
 - 该 checkpoint 只补齐 Issue #4 user story #27 的确定性实现证据；Windows 11、精确 macOS `26.5.2`、新 revision 的 live-provider 重跑、G2、签名和最终 V1 acceptance 仍未完成。
+
+## 2026-08-17 Issue #4 lifecycle projection checkpoint
+
+- `a28606c` 补齐 TUI 的 provider retry 成功状态；retry 开始、成功/失败、compaction 开始/完成、`turn settled` 和最终完成现在按顺序可见。
+- Pi Adapter 对已取消的 turn 在获取 credential lease 和发起 provider/session 之前 fail closed；新增 TUI/adapter 回归后固定工具链下 `npm run check` 为 **203/203**，当前 macOS acceptance 为 **14/14**。
+- 该 checkpoint 是确定性实现证据，不替代 Windows 11、精确 macOS `26.5.2`、新 revision live-provider、G2、签名或最终 V1 acceptance。
 
 ## 2026-08-17 Issue #4 live provider checkpoint (source `b23383a`)
 
