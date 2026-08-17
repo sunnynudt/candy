@@ -1182,13 +1182,16 @@ export class GitWorktreeManager {
   public async create(plan: GitWorktreePlan): Promise<void> {
     await this.assertWorktreePath(plan.worktreePath);
     await mkdir(this.#path.dirname(this.#path.resolve(plan.worktreePath)), { recursive: true });
+    await this.assertWorktreePath(plan.worktreePath, false);
     await this.#runner.run(plan.createArgs, plan.repository);
+    await this.assertWorktreePath(plan.worktreePath);
     await this.inspect(plan);
   }
 
   public async inspect(plan: GitWorktreePlan): Promise<string> {
     await this.assertWorktreePath(plan.worktreePath);
     const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
+    await this.assertWorktreePath(plan.worktreePath);
     const expectedPath = await canonicalGitWorktreePath(plan.worktreePath, this.#path);
     let associated = false;
     for (const entry of parseGitWorktreePorcelain(listing)) {
@@ -1210,6 +1213,7 @@ export class GitWorktreeManager {
   public async removeClean(plan: GitWorktreePlan): Promise<void> {
     await this.assertWorktreePath(plan.worktreePath);
     const status = await this.#runner.run(["status", "--porcelain=v1", "-z"], plan.worktreePath);
+    await this.assertWorktreePath(plan.worktreePath);
     if (status.length > 0) throw new Error("Dirty worktrees cannot be removed automatically.");
     await this.#runner.run(plan.removeArgs, plan.repository);
   }
@@ -1217,8 +1221,11 @@ export class GitWorktreeManager {
   /** Explicitly discard a task-owned worktree after review, then remove it. */
   public async discard(plan: GitWorktreePlan): Promise<void> {
     await this.inspect(plan);
+    await this.assertWorktreePath(plan.worktreePath);
     await this.#runner.run(["reset", "--hard", plan.baseCommit], plan.worktreePath);
+    await this.assertWorktreePath(plan.worktreePath);
     await this.#runner.run(["clean", "-fd"], plan.worktreePath);
+    await this.assertWorktreePath(plan.worktreePath);
     await this.unlock(plan);
     await this.#runner.run(plan.removeArgs, plan.repository);
   }
@@ -1233,12 +1240,14 @@ export class GitWorktreeManager {
         plan.worktreePath,
       ),
     );
+    await this.assertWorktreePath(plan.worktreePath);
     const untracked = splitNull(
       await this.#runner.run(
         ["ls-files", "--others", "--exclude-standard", "-z"],
         plan.worktreePath,
       ),
     );
+    await this.assertWorktreePath(plan.worktreePath);
     const patchText = await this.#runner.run(
       ["diff", "--binary", "--no-ext-diff", "--no-color", plan.baseCommit, "--"],
       plan.worktreePath,
@@ -1246,7 +1255,7 @@ export class GitWorktreeManager {
     return { tracked, untracked, patchText };
   }
 
-  private async assertWorktreePath(worktreePath: string): Promise<void> {
+  private async assertWorktreePath(worktreePath: string, checkCandidate = true): Promise<void> {
     const root = this.#path.resolve(this.worktreeRoot);
     const candidate = this.#path.resolve(worktreePath);
     const relative = this.#path.relative(root, candidate);
@@ -1262,7 +1271,9 @@ export class GitWorktreeManager {
       await this.#path.canonicalize(this.#path.dirname(candidate)),
     );
     const canonicalCandidate = this.#path.normalize(await this.#path.canonicalize(candidate));
-    for (const checked of [canonicalParent, canonicalCandidate]) {
+    for (const checked of checkCandidate
+      ? [canonicalParent, canonicalCandidate]
+      : [canonicalParent]) {
       const canonicalRelative = this.#path.relative(canonicalRoot, checked);
       if (
         canonicalRelative === ".." ||
@@ -1281,6 +1292,80 @@ export class ApplyChangesBlockedError extends Error {
   }
 }
 
+interface ApplyRootBinding {
+  readonly absolutePath: string;
+  readonly canonicalPath: string;
+  readonly metadata: Awaited<ReturnType<typeof lstat>>;
+}
+
+async function bindApplyRoot(root: string): Promise<ApplyRootBinding> {
+  const absolutePath = path.resolve(root);
+  const metadata = await lstat(absolutePath).catch(() => {
+    throw new ApplyChangesBlockedError("Apply Changes workspace root is unavailable.");
+  });
+  if (metadata.isSymbolicLink() || !metadata.isDirectory())
+    throw new ApplyChangesBlockedError("Apply Changes workspace root must be a real directory.");
+  const canonicalPath = await realpath(absolutePath).catch(() => {
+    throw new ApplyChangesBlockedError("Apply Changes workspace root cannot be canonicalized.");
+  });
+  return { absolutePath, canonicalPath, metadata };
+}
+
+async function assertApplyRootBinding(binding: ApplyRootBinding): Promise<void> {
+  const current = await lstat(binding.absolutePath).catch(() => undefined);
+  if (
+    current === undefined ||
+    current.isSymbolicLink() ||
+    !current.isDirectory() ||
+    !sameFileIdentity(binding.metadata, current)
+  ) {
+    throw new ApplyChangesBlockedError(
+      "Apply Changes workspace changed while the operation was in progress.",
+    );
+  }
+  const canonical = await realpath(binding.absolutePath).catch(() => undefined);
+  if (canonical !== binding.canonicalPath) {
+    throw new ApplyChangesBlockedError(
+      "Apply Changes workspace changed while the operation was in progress.",
+    );
+  }
+}
+
+async function assertApplyContainedPath(
+  binding: ApplyRootBinding,
+  candidate: string,
+): Promise<void> {
+  await assertApplyRootBinding(binding);
+  const canonicalCandidate = await realpath(candidate).catch(() => undefined);
+  if (canonicalCandidate === undefined) {
+    throw new ApplyChangesBlockedError("Apply Changes path disappeared during the operation.");
+  }
+  const relative = path.relative(binding.canonicalPath, canonicalCandidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new ApplyChangesBlockedError("Apply Changes path escaped its workspace.");
+  }
+}
+
+async function assertOpenedApplyFile(
+  binding: ApplyRootBinding,
+  absolute: string,
+  opened: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
+): Promise<void> {
+  await assertApplyRootBinding(binding);
+  const current = await lstat(absolute).catch(() => undefined);
+  if (
+    current === undefined ||
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    !sameFileIdentity(opened, current) ||
+    current.size !== opened.size ||
+    current.mtimeMs !== opened.mtimeMs
+  ) {
+    throw new ApplyChangesBlockedError("Apply Changes file changed while it was opened.");
+  }
+  await assertApplyContainedPath(binding, absolute);
+}
+
 export class ApplyChangesService {
   readonly #guard: ApplyChangesGuard;
   readonly #runner: GitCommandRunner;
@@ -1297,11 +1382,16 @@ export class ApplyChangesService {
     const targetRoot = path.resolve(this.targetRoot);
     const source = path.resolve(sourceRoot);
     const sameRoot = source === targetRoot;
+    const targetBinding = await bindApplyRoot(targetRoot);
+    const sourceBinding = sameRoot ? targetBinding : await bindApplyRoot(source);
     let actualBase: string;
     let targetStatus: string;
     try {
+      await assertApplyRootBinding(targetBinding);
       actualBase = (await this.#runner.run(["rev-parse", "HEAD"], targetRoot)).trim();
+      await assertApplyRootBinding(targetBinding);
       targetStatus = await this.#runner.run(["status", "--porcelain=v1", "-z"], targetRoot);
+      await assertApplyRootBinding(targetBinding);
     } catch {
       throw new ApplyChangesBlockedError("Apply Changes requires a valid Git target.");
     }
@@ -1315,8 +1405,8 @@ export class ApplyChangesService {
 
     const paths = uniqueRelativePaths(input.paths);
     for (const requested of paths) {
-      await assertSafePath(source, requested, true);
-      await assertSafePath(targetRoot, requested, false);
+      await assertSafePath(source, requested, true, sourceBinding);
+      await assertSafePath(targetRoot, requested, false, targetBinding);
     }
     const explicitUntrackedPaths = input.untrackedPaths !== undefined;
     const untrackedPaths = explicitUntrackedPaths ? uniqueRelativePaths(input.untrackedPaths!) : [];
@@ -1325,6 +1415,7 @@ export class ApplyChangesService {
       ? untrackedPaths
       : uniqueRelativePaths(input.paths);
     for (const requested of reviewedUntrackedCandidates) {
+      await assertApplyRootBinding(sourceBinding);
       const isUntracked = Boolean(
         (
           await this.#runner.run(
@@ -1333,14 +1424,15 @@ export class ApplyChangesService {
           )
         ).trim(),
       );
+      await assertApplyRootBinding(sourceBinding);
       if (!isUntracked) {
         if (explicitUntrackedPaths)
           throw new ApplyChangesBlockedError("Reviewed untracked manifest changed before Apply.");
         continue;
       }
       if (!explicitUntrackedPaths) untrackedPaths.push(requested);
-      await assertSafePath(source, requested, true);
-      const content = await readApplyFile(source, requested);
+      await assertSafePath(source, requested, true, sourceBinding);
+      const content = await readApplyFile(source, requested, sourceBinding);
       if (
         input.activeSecrets.some(
           (secret) => secret.length > 0 && content.includes(Buffer.from(secret)),
@@ -1352,6 +1444,7 @@ export class ApplyChangesService {
       }
       untrackedContents.set(requested, content);
       if (sameRoot) continue;
+      await assertApplyRootBinding(targetBinding);
       try {
         await lstat(path.resolve(targetRoot, requested));
         throw new ApplyChangesBlockedError(
@@ -1360,14 +1453,17 @@ export class ApplyChangesService {
       } catch (error) {
         if (!isNodeError(error) || error.code !== "ENOENT") throw error;
       }
+      await assertApplyRootBinding(targetBinding);
     }
     if (input.patchText.length > 0) {
       if (sameRoot) {
         try {
+          await assertApplyRootBinding(sourceBinding);
           const currentPatch = await this.#runner.run(
             ["diff", "--binary", "--no-ext-diff", "--no-color", input.expectedBase, "--"],
             source,
           );
+          await assertApplyRootBinding(sourceBinding);
           if (currentPatch !== input.patchText) {
             throw new ApplyChangesBlockedError("Reviewed diff changed before Apply.");
           }
@@ -1379,16 +1475,19 @@ export class ApplyChangesService {
         }
       } else {
         try {
+          await assertApplyRootBinding(targetBinding);
           await this.#runner.run(
             ["apply", "--check", "--binary", "--whitespace=nowarn", "--"],
             targetRoot,
             input.patchText,
           );
+          await assertApplyRootBinding(targetBinding);
           await this.#runner.run(
             ["apply", "--binary", "--whitespace=nowarn", "--"],
             targetRoot,
             input.patchText,
           );
+          await assertApplyRootBinding(targetBinding);
         } catch (error) {
           throw new ApplyChangesBlockedError(
             `Git refused the reviewed patch: ${error instanceof Error ? error.message : "unknown error"}`,
@@ -1399,11 +1498,12 @@ export class ApplyChangesService {
     for (const requested of untrackedPaths) {
       if (sameRoot) continue;
       const targetPath = path.resolve(targetRoot, requested);
-      await ensureSafeDirectory(targetRoot, path.dirname(targetPath));
-      await assertSafePath(targetRoot, requested, true);
-      const content = untrackedContents.get(requested) ?? (await readApplyFile(source, requested));
-      await writeFile(targetPath, content, { flag: "wx" });
-      await assertSafePath(targetRoot, requested, false);
+      await ensureSafeDirectory(targetRoot, path.dirname(targetPath), targetBinding);
+      await assertSafePath(targetRoot, requested, true, targetBinding);
+      const content =
+        untrackedContents.get(requested) ?? (await readApplyFile(source, requested, sourceBinding));
+      await writeApplyFile(targetRoot, requested, content, targetBinding);
+      await assertSafePath(targetRoot, requested, false, targetBinding);
     }
     return "applied";
   }
@@ -1564,7 +1664,9 @@ async function assertSafePath(
   root: string,
   requested: string,
   requireLeaf: boolean,
+  binding?: ApplyRootBinding,
 ): Promise<void> {
+  if (binding !== undefined) await assertApplyRootBinding(binding);
   const absolute = path.resolve(root, requested);
   const relative = path.relative(root, absolute);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
@@ -1589,10 +1691,15 @@ async function assertSafePath(
       throw error;
     }
   }
+  if (binding !== undefined && requireLeaf) await assertApplyRootBinding(binding);
 }
 
-async function readApplyFile(root: string, requested: string): Promise<Buffer> {
-  await assertSafePath(root, requested, false);
+async function readApplyFile(
+  root: string,
+  requested: string,
+  binding: ApplyRootBinding,
+): Promise<Buffer> {
+  await assertSafePath(root, requested, false, binding);
   const absolute = path.resolve(root, requested);
   const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
   try {
@@ -1603,14 +1710,19 @@ async function readApplyFile(root: string, requested: string): Promise<Buffer> {
       throw new ApplyChangesBlockedError(
         `Untracked file exceeds the ${MAX_UNTRACKED_FILE_BYTES}-byte Apply limit.`,
       );
-    await assertSafePath(root, requested, false);
+    await assertOpenedApplyFile(binding, absolute, opened);
     return await handle.readFile();
   } finally {
     await handle.close();
   }
 }
 
-async function ensureSafeDirectory(root: string, directory: string): Promise<void> {
+async function ensureSafeDirectory(
+  root: string,
+  directory: string,
+  binding: ApplyRootBinding,
+): Promise<void> {
+  await assertApplyRootBinding(binding);
   const absoluteRoot = path.resolve(root);
   const absoluteDirectory = path.resolve(directory);
   const relative = path.relative(absoluteRoot, absoluteDirectory);
@@ -1630,5 +1742,30 @@ async function ensureSafeDirectory(root: string, directory: string): Promise<voi
     const checked = await lstat(current);
     if (checked.isSymbolicLink() || !checked.isDirectory())
       throw new ApplyChangesBlockedError("Apply Changes directory changed while it was created.");
+    await assertApplyContainedPath(binding, current);
+  }
+}
+
+async function writeApplyFile(
+  root: string,
+  requested: string,
+  content: Buffer,
+  binding: ApplyRootBinding,
+): Promise<void> {
+  await assertSafePath(root, requested, true, binding);
+  const absolute = path.resolve(root, requested);
+  const handle = await open(
+    absolute,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NO_FOLLOW_FINAL_PATH,
+    0o666,
+  );
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile())
+      throw new ApplyChangesBlockedError("Apply Changes requires a regular file.");
+    await assertOpenedApplyFile(binding, absolute, opened);
+    await handle.writeFile(content);
+  } finally {
+    await handle.close();
   }
 }

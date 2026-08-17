@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -731,6 +732,37 @@ test("Git worktree manager rejects a symlinked parent outside its Candy root", a
   }
 });
 
+test("Git worktree operations recheck containment before running Git", async () => {
+  const calls: string[][] = [];
+  let canonicalCalls = 0;
+  const pathSeam = {
+    ...path.win32,
+    canonicalize: async (value: string) => {
+      canonicalCalls += 1;
+      return canonicalCalls === 3 ? "C:\\outside-root" : value;
+    },
+  };
+  const plan = planGitWorktree(
+    "C:\\repo",
+    "C:\\Candy Data\\worktrees\\task-recheck",
+    "task-recheck",
+    "0123456789abcdef",
+  );
+  const manager = new GitWorktreeManager(
+    "C:\\Candy Data\\worktrees",
+    {
+      run: async (args) => {
+        calls.push([...args]);
+        return "";
+      },
+    },
+    pathSeam,
+  );
+
+  await assert.rejects(manager.inspect(plan), /canonical path escaped/u);
+  assert.deepEqual(calls, []);
+});
+
 test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {
   const root = mkdtempSync(path.join(tmpdir(), "candy-git-fixture-"));
   const repository = path.join(root, "repo");
@@ -939,6 +971,45 @@ test("Apply Changes creates missing untracked parent directories one component a
       await readFile(path.join(target, "nested", "new.txt"), "utf8"),
       "nested untracked\n",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Apply Changes stops when the target root is replaced between Git commands", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-apply-root-race-"));
+  const source = path.join(root, "source");
+  const target = path.join(root, "target");
+  const movedTarget = path.join(root, "target-replaced");
+  await mkdir(source);
+  await mkdir(target);
+  const calls: string[][] = [];
+  const runner = {
+    run: async (args: readonly string[]) => {
+      calls.push([...args]);
+      if (args[0] === "rev-parse") {
+        await rename(target, movedTarget);
+        await mkdir(target);
+        return "base\n";
+      }
+      if (args[0] === "status") assert.fail("status must not run after the target root changed");
+      return "";
+    },
+  };
+  try {
+    await assert.rejects(
+      new ApplyChangesService(target, runner).apply(source, {
+        targetIsGit: true,
+        targetClean: true,
+        expectedBase: "base",
+        actualBase: "base",
+        paths: [],
+        patchText: "",
+        activeSecrets: [],
+      }),
+      /valid Git target/u,
+    );
+    assert.deepEqual(calls, [["rev-parse", "HEAD"]]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
