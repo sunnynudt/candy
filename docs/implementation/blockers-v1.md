@@ -2,7 +2,13 @@
 
 Updated: 2026-08-17
 
-Post-`88b60be` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`. Non-Git snapshot files now use opened no-follow handles with identity binding. Standard scan `78bc305c-c0e7-4880-bd6a-d76954ddd465` is bound to `88b60be`, completed with parent fallback, and reports **4 open medium findings**; the prior low file-metadata finding is addressed, but this is not a security clearance. Remaining blockers are descriptor-relative/reparse-safe workspace intermediate operations, worktree path-check/use races, residual session-manager path races, and conditional Trusted Shell descendant-publication policy. Exact macOS `26.5.2` is blocked on this `26.6.1` host; Windows 11 evidence remains unavailable.
+Post-`50074c2` current-host revalidation: macOS acceptance passes **14/14** with embedded deterministic `npm run check` at **241/241** on Node `22.23.2`/npm `10.9.8`. Workspace writes now validate the opened regular-file handle before truncation. Standard scan `721c4ab5-ccdf-4052-9a28-b695323b3b70` is bound to `50074c2`, completed with parent validation fallback, and reports **4 open medium findings**; the change reduces the pre-validation destructive write window but is not a security clearance. Remaining blockers are descriptor-relative/reparse-safe workspace intermediate operations, worktree path-check/use races, residual session-manager path races, and conditional Trusted Shell descendant-publication policy. Exact macOS `26.5.2` is blocked on this `26.6.1` host; Windows 11 evidence remains unavailable.
+
+## 2026-08-17 Issue #4 `50074c2` workspace write ordering checkpoint
+
+- Code checkpoint `50074c2ee25ccd3d161d5096a8b6c3fce06cd6f9` is pushed and matches `origin/codex/candy-v1-foundation`. `candy_write` validates the opened regular-file handle and workspace binding before truncating through the handle; the normal write contract remains intact.
+- Focused Pi Adapter workspace/security regressions pass **48/48**, full `npm run check` passes **241/241**, and current macOS acceptance passes **14/14** at source revision `50074c2` on macOS `26.6.1` arm64 with a passing real-PTY matrix.
+- The current scan still has four medium findings. This checkpoint lowers one write-side effect window but does not clear intermediate directory, Git path-check/use, Pi SessionManager, Trusted Shell descendant, Windows 11, exact `26.5.2`, independent G2, signing, or final V1 gates. `.omo/` remains user-owned, untracked, and preserved.
 
 ## 2026-08-17 Issue #4 `88b60be` non-Git snapshot binding checkpoint
 

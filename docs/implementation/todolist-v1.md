@@ -4,7 +4,7 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 HEAD `88b60be` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 non-Git snapshot binding checkpoint：`88b60be` 为每个普通非 Git 快照文件绑定 no-follow opened handle，并以前后 identity 校验确保元数据来自同一对象；最新标准扫描 `78bc305c-c0e7-4880-bd6a-d76954ddd465` 绑定当前 HEAD，报告 **4 个开放 finding（全部 medium）**，此前的 low file-metadata finding 已处理，但不构成 security clearance。该扫描因六个 agent slot 占满使用 parent fallback。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11、独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 HEAD `50074c2` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**。Issue #4 最新 workspace write ordering checkpoint：`50074c2` 让 `candy_write` 先验证 opened regular-file handle 与 workspace binding，再通过该 handle truncate/write；最新标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 绑定当前 HEAD，报告 **4 个开放 finding（全部 medium）**，此前的 low file-metadata finding 已处理，且本次局部写入修复只降低风险、不构成 security clearance。该扫描使用 parent validation fallback。精确 macOS `26.5.2` 在当前 `26.6.1` 主机 preflight blocked，Windows 11、独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
@@ -37,6 +37,8 @@
 新增 non-Git snapshot file binding 安全证据：`88b60be` 为每个普通非 Git 快照文件打开 no-follow final-path handle，比较 opened handle 与前后 lstat 的 identity，并以 opened handle 的 size/mtime 记录快照；对象变化、变成 symlink、非 regular file 或无法安全打开时 fail closed。全量 `npm run check` **241/241**，current macOS acceptance **14/14**，报告 source revision 为 `88b60be`；标准扫描 `78bc305c-c0e7-4880-bd6a-d76954ddd465` 报告 4 个 open medium findings。该项关闭此前 low file-metadata race，不替代 descriptor-relative/reparse-safe intermediate directory、Git worktree、session-manager、Trusted Shell、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
 新增平台 preflight 审计证据：当前 HEAD `b66a725` 的 `npm run acceptance:macos:baseline` 在 macOS `26.6.1` arm64 上生成 **0 passed / 0 failed / 1 blocked** 的 source-bound report，明确未执行精确 `26.5.2` acceptance；`npm run acceptance:windows` 在成功 build 后因当前主机不是 Windows x64 而停止，未产生 Windows acceptance。两者都不能替代目标平台证据；Windows 11、精确 `26.5.2`、平台 G2、签名和最终 V1 acceptance 仍待完成。
+
+新增 workspace write handle-ordering 安全证据：`50074c2` 移除 `O_TRUNC` 的 pre-validation 使用，先对 opened regular-file handle 做 workspace identity/canonical 校验，再通过同一 handle truncate/write；Pi Adapter focused workspace/security regressions **48/48**、全量 `npm run check` **241/241**、current macOS acceptance **14/14**，报告 source revision 为 `50074c2`。标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 仍报告 4 个 open medium findings；该项是 defense in depth，不替代 descriptor-relative/reparse-safe intermediate directory、Git worktree、session-manager、Trusted Shell、Windows 11、精确 `26.5.2` 或独立 G2 证据。
 
 ## 2026-08-17 Issue #4 Pi-backed TUI journey checkpoint
 
