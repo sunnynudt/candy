@@ -4,7 +4,7 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 checkpoint `9009ac1` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。该 security checkpoint 关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings：Git worktree path-check/use race、workspace intermediate-component race、residual Pi session-manager path race、conditional Trusted Shell descendant-publication risk；每项均补回归测试，workspace/session 链同时绑定锚点根目录。生产 Trusted Shell 校验仍保持 fail-closed，等待独立 reviewer 或用户确认 macOS G2 后再翻转 attestation。本会话无法重跑外部标准扫描器，独立扫描重跑仍是 evidence gate，本 checkpoint 不构成 security clearance。本工作包按用户指示暂不执行 Windows 11；macOS G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 checkpoint `9009ac1` + 锚点根绑定 follow-up `3408413` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**（报告 source revision 为 `3408413`），内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。该 security checkpoint 关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings：Git worktree path-check/use race、workspace intermediate-component race、residual Pi session-manager path race、conditional Trusted Shell descendant-publication risk；每项均补回归测试，workspace/session 链同时绑定锚点根目录。G2 评审证据包已整理为 `docs/implementation/macos-g2-review-3408413.md`，等待独立 reviewer 或用户审阅确认。生产 Trusted Shell 校验仍保持 fail-closed，确认前不翻转 attestation。本会话无法重跑外部标准扫描器，独立扫描重跑仍是 evidence gate，本 checkpoint 不构成 security clearance。本工作包按用户指示暂不执行 Windows 11；macOS G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
 
 ## 2026-08-18 Issue #4 macOS security hardening checkpoint（`9009ac1`）
 
