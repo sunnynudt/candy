@@ -2108,6 +2108,24 @@ async function openWorkspaceDirectoryChain(
     throw new Error("Workspace tool path escaped the selected workspace.");
   }
   const bindings: WorkspaceDirectoryBinding[] = [];
+  const rootMetadata = await lstat(absoluteRoot).catch(() => undefined);
+  if (rootMetadata === undefined || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
+    throw new Error("Workspace tool root must be a real directory.");
+  }
+  const rootHandle = await open(
+    absoluteRoot,
+    fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+  );
+  try {
+    const opened = await rootHandle.stat();
+    if (!opened.isDirectory() || !sameDirectoryIdentity(rootMetadata, opened)) {
+      throw new Error("Workspace root changed while it was being opened.");
+    }
+  } catch (error) {
+    await rootHandle.close().catch(() => undefined);
+    throw error;
+  }
+  bindings.push({ absolute: absoluteRoot, handle: rootHandle });
   let current = absoluteRoot;
   const segments = relative === "" ? [] : relative.split(path.sep);
   try {
@@ -2382,6 +2400,28 @@ async function openSessionDirectoryChain(
     throw new Error("Candy session directory escaped the session root.");
   }
   const bindings: SessionDirectoryBinding[] = [];
+  const anchorMetadata = await lstat(absoluteAnchor).catch(() => undefined);
+  if (
+    anchorMetadata === undefined ||
+    anchorMetadata.isSymbolicLink() ||
+    !anchorMetadata.isDirectory()
+  ) {
+    throw new Error("Candy session root is not a real directory.");
+  }
+  const anchorHandle = await open(
+    absoluteAnchor,
+    fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+  );
+  try {
+    const opened = await anchorHandle.stat();
+    if (!opened.isDirectory() || !sameDirectoryIdentity(anchorMetadata, opened)) {
+      throw new Error("Candy session root changed while it was being prepared.");
+    }
+  } catch (error) {
+    await anchorHandle.close().catch(() => undefined);
+    throw error;
+  }
+  bindings.push({ absolute: absoluteAnchor, handle: anchorHandle });
   let current = absoluteAnchor;
   const segments = relative === "" ? [] : relative.split(path.sep);
   try {

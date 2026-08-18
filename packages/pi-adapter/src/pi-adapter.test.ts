@@ -1567,6 +1567,41 @@ test("Candy workspace deletes fail closed when the parent directory is replaced 
   }
 });
 
+test("Candy workspace deletes fail closed when the workspace root is replaced during approval", async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), "candy-workspace-root-race-"));
+  const root = path.join(parent, "workspace");
+  const backup = path.join(parent, "workspace-backup");
+  try {
+    await mkdir(root);
+    await writeFile(path.join(root, "target.txt"), "payload\n");
+    let replaced = false;
+    const tools = createCandyWorkspaceTools(root, "auto", undefined, async () => {
+      if (!replaced) {
+        replaced = true;
+        await rename(root, backup);
+        await mkdir(root);
+      }
+      return true;
+    });
+    const deleteTool = tools.find((tool) => tool.name === "candy_delete");
+    assert.ok(deleteTool);
+    await assert.rejects(
+      deleteTool.execute(
+        "delete-root-race",
+        { path: "target.txt" },
+        new AbortController().signal,
+        undefined,
+        {} as never,
+      ),
+      /changed while the operation was in progress/u,
+    );
+    assert.equal(await readFile(path.join(backup, "target.txt"), "utf8"), "payload\n");
+    await assert.rejects(access(path.join(root, "target.txt")), /ENOENT/u);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
 test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktree", async () => {
   const calls: unknown[] = [];
   let approvalRequest: unknown;
