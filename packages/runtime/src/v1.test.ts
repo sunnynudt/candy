@@ -806,6 +806,74 @@ test("Git worktree operations recheck containment before running Git", async () 
   assert.deepEqual(calls, []);
 });
 
+test("Git worktree manager rejects a same-path parent replacement during create", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-worktree-identity-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  const parent = path.join(worktreeRoot, "task-parent");
+  const backup = path.join(worktreeRoot, "task-parent-backup");
+  await mkdir(parent, { recursive: true });
+  let calls = 0;
+  const plan = planGitWorktree(
+    path.join(root, "repo"),
+    path.join(parent, "task-boundary"),
+    "task-identity",
+    "0123456789abcdef",
+  );
+  const manager = new GitWorktreeManager(worktreeRoot, {
+    run: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await rename(parent, backup);
+        await mkdir(parent);
+      }
+      return "";
+    },
+  });
+  try {
+    await assert.rejects(manager.create(plan), /changed while the operation was in progress/u);
+    assert.equal(calls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Git worktree inspection rejects a same-path worktree replacement", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-git-worktree-identity-"));
+  const worktreeRoot = path.join(root, "worktrees");
+  const worktree = path.join(worktreeRoot, "task-inspect");
+  const backup = path.join(worktreeRoot, "task-inspect-backup");
+  await mkdir(worktree, { recursive: true });
+  let calls = 0;
+  const plan = planGitWorktree(
+    path.join(root, "repo"),
+    worktree,
+    "task-identity",
+    "0123456789abcdef",
+  );
+  const manager = new GitWorktreeManager(worktreeRoot, {
+    run: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await rename(worktree, backup);
+        await mkdir(worktree);
+      }
+      return [
+        `worktree ${worktree}`,
+        "HEAD 0123456789abcdef",
+        "detached",
+        "locked candy:task-identity",
+        "",
+      ].join("\0");
+    },
+  });
+  try {
+    await assert.rejects(manager.inspect(plan), /changed while the operation was in progress/u);
+    assert.equal(calls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Git worktree fixture creates, inspects, and cleans a detached task worktree", () => {
   const root = mkdtempSync(path.join(tmpdir(), "candy-git-fixture-"));
   const repository = path.join(root, "repo");

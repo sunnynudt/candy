@@ -18,6 +18,7 @@ import { cleanChildEnvironment, containsCredentialMaterial } from "@candy/platfo
 const MAX_WORKSPACE_PATCH_BYTES = 1_048_576;
 export const MAX_UNTRACKED_FILE_BYTES = 1_048_576;
 const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
+const O_DIRECTORY_PATH_FLAG = process.platform === "win32" ? 0 : fsConstants.O_DIRECTORY;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_TASK_ATTACHMENT_COUNT = 32;
 export const MAX_TASK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -812,7 +813,23 @@ const nativeGitPathSeam: PathSeam = {
     try {
       return await realpath(value);
     } catch {
-      return value;
+      // Components may not exist yet (for example before `git worktree add`).
+      // Resolve the longest existing prefix so the canonical comparison stays
+      // consistent with realpath semantics instead of mixing resolved and
+      // unresolved aliases such as /var and /private/var.
+      let candidate = value;
+      const suffix: string[] = [];
+      for (;;) {
+        const parent = path.dirname(candidate);
+        if (parent === candidate) return value;
+        suffix.unshift(path.basename(candidate));
+        candidate = parent;
+        try {
+          return path.join(await realpath(candidate), ...suffix);
+        } catch {
+          // Continue upward until an existing ancestor is found.
+        }
+      }
     }
   },
 };
@@ -1197,6 +1214,85 @@ async function snapshotNonGitTree(
   return snapshot;
 }
 
+interface WorktreePathBinding {
+  readonly absolute: string;
+  readonly identity: Awaited<ReturnType<typeof lstat>>;
+}
+
+/**
+ * Bind every existing component from the Candy worktree root down to `target`
+ * with a no-follow directory handle and compare the opened handle identity to
+ * the path identity. A same-path directory replacement (different inode) or a
+ * symlink swap fails closed instead of relying only on canonical strings.
+ */
+async function bindWorktreePathComponents(
+  root: string,
+  target: string,
+): Promise<readonly WorktreePathBinding[]> {
+  const absoluteRoot = path.resolve(root);
+  const absoluteTarget = path.resolve(target);
+  const relative = path.relative(absoluteRoot, absoluteTarget);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    throw new Error("Task worktree is outside Candy's worktree root.");
+  const bindings: WorktreePathBinding[] = [];
+  const rootMetadata = await lstat(absoluteRoot).catch(() => undefined);
+  if (rootMetadata === undefined || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
+    throw new Error("Task worktree root is not a real directory.");
+  }
+  const rootHandle = await open(
+    absoluteRoot,
+    fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+  );
+  try {
+    const opened = await rootHandle.stat();
+    if (!opened.isDirectory() || !sameFileIdentity(rootMetadata, opened)) {
+      throw new Error("Task worktree root changed while it was being bound.");
+    }
+  } finally {
+    await rootHandle.close().catch(() => undefined);
+  }
+  bindings.push({ absolute: absoluteRoot, identity: rootMetadata });
+  let current = absoluteRoot;
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    const metadata = await lstat(current).catch(() => undefined);
+    if (metadata === undefined || metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error("Task worktree path component is not a real directory.");
+    }
+    const handle = await open(
+      current,
+      fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+    );
+    try {
+      const opened = await handle.stat();
+      if (!opened.isDirectory() || !sameFileIdentity(metadata, opened)) {
+        throw new Error("Task worktree path component changed while it was being bound.");
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+    bindings.push({ absolute: current, identity: metadata });
+  }
+  return bindings;
+}
+
+async function assertWorktreePathComponentsUnchanged(
+  bindings: readonly WorktreePathBinding[],
+): Promise<void> {
+  for (const binding of bindings) {
+    const current = await lstat(binding.absolute).catch(() => undefined);
+    if (
+      current === undefined ||
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      !sameFileIdentity(binding.identity, current)
+    ) {
+      throw new Error("Task worktree path changed while the operation was in progress.");
+    }
+  }
+}
+
 export class GitWorktreeManager {
   readonly #runner: GitCommandRunner;
   readonly #path: PathSeam;
@@ -1214,14 +1310,22 @@ export class GitWorktreeManager {
     await this.assertWorktreePath(plan.worktreePath);
     await mkdir(this.#path.dirname(this.#path.resolve(plan.worktreePath)), { recursive: true });
     await this.assertWorktreePath(plan.worktreePath, false);
+    const parentBindings = await this.bindWorktreeChain(
+      this.#path.dirname(this.#path.resolve(plan.worktreePath)),
+    );
     await this.#runner.run(plan.createArgs, plan.repository);
+    await this.assertWorktreeChainUnchanged(parentBindings);
     await this.assertWorktreePath(plan.worktreePath);
+    const worktreeBindings = await this.bindWorktreeChain(plan.worktreePath);
     await this.inspect(plan);
+    await this.assertWorktreeChainUnchanged([...parentBindings, ...worktreeBindings]);
   }
 
   public async inspect(plan: GitWorktreePlan): Promise<string> {
     await this.assertWorktreePath(plan.worktreePath);
+    const bindings = await this.bindWorktreeChain(plan.worktreePath);
     const listing = await this.#runner.run(plan.inspectArgs, plan.repository);
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     const expectedPath = await canonicalGitWorktreePath(plan.worktreePath, this.#path);
     let associated = false;
@@ -1238,39 +1342,57 @@ export class GitWorktreeManager {
 
   public async unlock(plan: GitWorktreePlan): Promise<void> {
     await this.assertWorktreePath(plan.worktreePath);
+    const bindings = await this.bindWorktreeChain(plan.worktreePath);
     await this.#runner.run(plan.unlockArgs, plan.repository);
+    await this.assertWorktreeChainUnchanged(bindings);
   }
 
   public async removeClean(plan: GitWorktreePlan): Promise<void> {
     await this.assertWorktreePath(plan.worktreePath);
+    const bindings = await this.bindWorktreeChain(plan.worktreePath);
     const status = await this.#runner.run(["status", "--porcelain=v1", "-z"], plan.worktreePath);
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     if (status.length > 0) throw new Error("Dirty worktrees cannot be removed automatically.");
+    await this.assertWorktreeChainUnchanged(bindings);
+    const parentBindings = await this.bindWorktreeChain(
+      this.#path.dirname(this.#path.resolve(plan.worktreePath)),
+    );
     await this.#runner.run(plan.removeArgs, plan.repository);
+    await this.assertWorktreeChainUnchanged(parentBindings);
   }
 
   /** Explicitly discard a task-owned worktree after review, then remove it. */
   public async discard(plan: GitWorktreePlan): Promise<void> {
     await this.inspect(plan);
     await this.assertWorktreePath(plan.worktreePath);
+    const bindings = await this.bindWorktreeChain(plan.worktreePath);
     await this.#runner.run(["reset", "--hard", plan.baseCommit], plan.worktreePath);
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     await this.#runner.run(["clean", "-fd"], plan.worktreePath);
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     await this.unlock(plan);
+    const parentBindings = await this.bindWorktreeChain(
+      this.#path.dirname(this.#path.resolve(plan.worktreePath)),
+    );
     await this.#runner.run(plan.removeArgs, plan.repository);
+    await this.assertWorktreeChainUnchanged(parentBindings);
   }
 
   public async changes(
     plan: GitWorktreePlan,
   ): Promise<GitChangeManifest & { readonly patchText: string }> {
     await this.assertWorktreePath(plan.worktreePath);
+    const bindings = await this.bindWorktreeChain(plan.worktreePath);
     const tracked = splitNull(
       await this.#runner.run(
         ["diff", "--name-only", "--no-ext-diff", "-z", plan.baseCommit, "--"],
         plan.worktreePath,
       ),
     );
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     const untracked = splitNull(
       await this.#runner.run(
@@ -1278,12 +1400,29 @@ export class GitWorktreeManager {
         plan.worktreePath,
       ),
     );
+    await this.assertWorktreeChainUnchanged(bindings);
     await this.assertWorktreePath(plan.worktreePath);
     const patchText = await this.#runner.run(
       ["diff", "--binary", "--no-ext-diff", "--no-color", plan.baseCommit, "--"],
       plan.worktreePath,
     );
+    await this.assertWorktreeChainUnchanged(bindings);
     return { tracked, untracked, patchText };
+  }
+
+  private async bindWorktreeChain(target: string): Promise<readonly WorktreePathBinding[]> {
+    // Descriptor-relative binding applies on the real host only. Cross-host
+    // fixtures (for example path.win32 seams on macOS) keep the canonical
+    // containment checks, which those fixtures already exercise.
+    if (this.#path.sep !== path.sep) return [];
+    return bindWorktreePathComponents(this.worktreeRoot, target);
+  }
+
+  private async assertWorktreeChainUnchanged(
+    bindings: readonly WorktreePathBinding[],
+  ): Promise<void> {
+    if (bindings.length === 0) return;
+    await assertWorktreePathComponentsUnchanged(bindings);
   }
 
   private async assertWorktreePath(worktreePath: string, checkCandidate = true): Promise<void> {

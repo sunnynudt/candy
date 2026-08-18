@@ -540,11 +540,27 @@ function containsShellPublicationAction(command: string): boolean {
   // A lexical publication deny-list cannot safely reason about shell
   // variables, command substitution, or nested interpreters. Reject those
   // forms before approval so they cannot bypass the fail-closed policy.
+  if (/[\r\n]/u.test(command) || /[`$]/u.test(command)) return true;
+  if (/(?:^|[;&|\s(])(eval|source)\b/u.test(command)) return true;
+  if (/(?:^|[;&|\s(])(ba?sh|zsh|sh|dash|ksh|tcsh|fish|pwsh|powershell)\s+-c\b/u.test(command))
+    return true;
   if (
-    /[\r\n]/u.test(command) ||
-    /[`$]/u.test(command) ||
-    /(?:^|[;&|\s])(eval|source)\b/u.test(command) ||
-    /(?:^|[;&|\s])(ba?sh|zsh)\s+-c\b/u.test(command)
+    /(?:^|[;&|\s(])(python|python2|python3|perl|ruby|php|lua|node|bun|deno)\s+(?:-[a-zA-Z]+)?\s*(?:-c|-e|-r|-p|--eval|--print|--execute)\b/u.test(
+      command,
+    ) ||
+    /\bawk\b[^;|&]*\bsystem\s*\(/u.test(command)
+  )
+    return true;
+  if (
+    /(?:^|[;&|\s(])(env|xargs|sudo|su|ssh|make|ninja|npx|bunx|script|expect|screen|tmux|docker|podman|nix-shell|guix-shell)\b/u.test(
+      command,
+    )
+  )
+    return true;
+  if (
+    /(?:^|[;&|\s(])(npm|pnpm|yarn|bun)\s+run\b/u.test(command) ||
+    /(?:^|[;&|\s(])(cargo|go|dotnet)\s+run\b/u.test(command) ||
+    /(?:^|[;&|\s(])(find)\b[^;|&]*\s(?:-exec|-execdir)\b/u.test(command)
   )
     return true;
   const safeGitCommands = new Set([
@@ -556,6 +572,7 @@ function containsShellPublicationAction(command: string): boolean {
     "fetch",
     "log",
     "ls-files",
+    "ls-remote",
     "merge",
     "pull",
     "rebase",
@@ -642,6 +659,7 @@ export interface CandyBashPathSeam {
   readonly isAbsolute: (value: string) => boolean;
   readonly dirname: (path: string) => string;
   readonly join: (...paths: string[]) => string;
+  readonly sep: string;
 }
 
 export interface CandyBashOperationsOptions {
@@ -695,6 +713,7 @@ export interface CandyNetworkOperationsOptions {
 
 const WINDOWS_GIT_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
 const NO_FOLLOW_FINAL_PATH = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
+const O_DIRECTORY_PATH_FLAG = process.platform === "win32" ? 0 : fsConstants.O_DIRECTORY;
 
 export function createCandyBashOperations(
   workspaceRoot: string,
@@ -830,6 +849,289 @@ interface CandyNetworkToolInput {
   readonly timeout?: number;
 }
 
+interface ParsedDirectNetworkCommand {
+  readonly executable: string;
+  readonly args: readonly string[];
+}
+
+/**
+ * Tokenize a strictly bounded network command. Quoted whitespace and quoted
+ * shell metacharacters are data; unquoted metacharacters, escapes, variables,
+ * and substitution forms are rejected so the command cannot hide indirection.
+ */
+function tokenizeNetworkCommand(value: string): readonly string[] | undefined {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let hasToken = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] ?? "";
+    if (quote !== undefined) {
+      if (character === quote) {
+        quote = undefined;
+      } else if (character === "\\") {
+        return undefined;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      hasToken = true;
+      continue;
+    }
+    if (character === "\\") return undefined;
+    if (/\s/u.test(character)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = "";
+        hasToken = false;
+      }
+      continue;
+    }
+    if (/[`$;|&()<>*?[\]{}!]/u.test(character)) return undefined;
+    current += character;
+    hasToken = true;
+  }
+  if (quote !== undefined) return undefined;
+  if (hasToken) tokens.push(current);
+  return tokens;
+}
+
+function isReadOnlyNetworkUrl(value: string): boolean {
+  if (!/^https?:\/\//iu.test(value)) return false;
+  const remainder = value.slice(value.indexOf("://") + 3);
+  const authority = remainder.split(/[/?#]/u, 1)[0] ?? "";
+  return !authority.includes("@");
+}
+
+const NETWORK_GIT_LS_REMOTE_FLAGS = new Set([
+  "--heads",
+  "--tags",
+  "--refs",
+  "--symref",
+  "--exit-code",
+  "--quiet",
+]);
+
+function parseNetworkGitCommand(
+  tokens: readonly string[],
+  gitPath: string,
+): ParsedDirectNetworkCommand | undefined {
+  if (tokens[0] !== "git" || tokens[1] !== "ls-remote") return undefined;
+  const args = ["ls-remote"];
+  let urlSeen = false;
+  for (const token of tokens.slice(2)) {
+    if (token === "--") {
+      args.push(token);
+      continue;
+    }
+    if (token.startsWith("--sort=")) {
+      args.push(token);
+      continue;
+    }
+    if (token.startsWith("-")) {
+      if (!NETWORK_GIT_LS_REMOTE_FLAGS.has(token)) return undefined;
+      args.push(token);
+      continue;
+    }
+    if (!urlSeen) {
+      if (!isReadOnlyNetworkUrl(token) && !/^[A-Za-z0-9._/-]+$/u.test(token)) return undefined;
+      urlSeen = true;
+    }
+    args.push(token);
+  }
+  if (!urlSeen) return undefined;
+  return { executable: gitPath, args };
+}
+
+const NETWORK_CURL_NO_ARG_FLAGS = new Set([
+  "-L",
+  "--location",
+  "-s",
+  "--silent",
+  "-S",
+  "--show-error",
+  "-f",
+  "--fail",
+  "--compressed",
+  "-g",
+  "--globoff",
+  "--http1.0",
+  "--http1.1",
+  "--http2",
+  "--tlsv1.2",
+  "--tlsv1.3",
+  "--retry-all-errors",
+  "-O",
+  "--remote-name",
+]);
+
+const NETWORK_CURL_VALUE_FLAGS = new Set([
+  "-o",
+  "--output",
+  "--max-time",
+  "--connect-timeout",
+  "--retry",
+  "-A",
+  "--user-agent",
+]);
+
+const NETWORK_CURL_SAFE_SHORT_FLAGS = new Set(["L", "s", "S", "f", "g", "O", "4", "6"]);
+
+function parseNetworkCurlCommand(
+  tokens: readonly string[],
+  curlPath: string,
+): ParsedDirectNetworkCommand | undefined {
+  if (tokens[0] !== "curl") return undefined;
+  const args = ["--disable"];
+  let urlSeen = false;
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    if (token === "--") {
+      for (const url of tokens.slice(index + 1)) {
+        if (!isReadOnlyNetworkUrl(url)) return undefined;
+        urlSeen = true;
+        args.push(url);
+      }
+      break;
+    }
+    if (NETWORK_CURL_NO_ARG_FLAGS.has(token)) {
+      args.push(token);
+      continue;
+    }
+    if (NETWORK_CURL_VALUE_FLAGS.has(token)) {
+      const value = tokens[index + 1];
+      if (value === undefined) return undefined;
+      if (
+        (token === "--max-time" || token === "--connect-timeout" || token === "--retry") &&
+        !/^\d+$/u.test(value)
+      )
+        return undefined;
+      args.push(token, value);
+      index += 1;
+      continue;
+    }
+    if (
+      /^-[A-Za-z0-9]+$/u.test(token) &&
+      [...token.slice(1)].every((character) => NETWORK_CURL_SAFE_SHORT_FLAGS.has(character))
+    ) {
+      args.push(token);
+      continue;
+    }
+    if (token.startsWith("-")) return undefined;
+    if (!isReadOnlyNetworkUrl(token)) return undefined;
+    urlSeen = true;
+    args.push(token);
+  }
+  if (!urlSeen) return undefined;
+  return { executable: curlPath, args };
+}
+
+const NETWORK_WGET_NO_ARG_FLAGS = new Set([
+  "-q",
+  "--quiet",
+  "-S",
+  "--server-response",
+  "--spider",
+  "-4",
+  "-6",
+]);
+
+function parseNetworkWgetCommand(
+  tokens: readonly string[],
+  wgetPath: string,
+): ParsedDirectNetworkCommand | undefined {
+  if (tokens[0] !== "wget") return undefined;
+  const args: string[] = [];
+  let urlSeen = false;
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    if (NETWORK_WGET_NO_ARG_FLAGS.has(token)) {
+      args.push(token);
+      continue;
+    }
+    if (
+      token.startsWith("--output-document=") ||
+      token.startsWith("--timeout=") ||
+      token.startsWith("--tries=")
+    ) {
+      args.push(token);
+      continue;
+    }
+    if (token === "-O") {
+      const value = tokens[index + 1];
+      if (value === undefined) return undefined;
+      args.push(token, value);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) return undefined;
+    if (!isReadOnlyNetworkUrl(token)) return undefined;
+    urlSeen = true;
+    args.push(token);
+  }
+  if (!urlSeen) return undefined;
+  return { executable: wgetPath, args };
+}
+
+function resolveDirectNetworkToolPath(
+  tool: "git" | "curl" | "wget",
+  bashPath: string,
+  pathImpl: CandyBashPathSeam,
+  exists: (candidate: string) => boolean,
+): string | undefined {
+  if (pathImpl.sep === "\\") {
+    const gitBin = pathImpl.dirname(bashPath);
+    const gitRoot = pathImpl.dirname(gitBin);
+    const name = tool === "git" ? "git.exe" : tool === "curl" ? "curl.exe" : "wget.exe";
+    if (tool === "git") {
+      return [
+        pathImpl.join(gitBin, name),
+        pathImpl.join(gitRoot, "cmd", name),
+        pathImpl.join(gitRoot, "mingw64", "bin", name),
+      ].find((candidate) => exists(candidate));
+    }
+    return [
+      pathImpl.join(gitRoot, "mingw64", "bin", name),
+      pathImpl.join(gitRoot, "usr", "bin", name),
+      pathImpl.join(gitRoot, "bin", name),
+    ].find((candidate) => exists(candidate));
+  }
+  const candidates =
+    tool === "git"
+      ? ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+      : tool === "curl"
+        ? ["/usr/bin/curl", "/opt/homebrew/bin/curl", "/usr/local/bin/curl"]
+        : ["/usr/bin/wget", "/opt/homebrew/bin/wget", "/usr/local/bin/wget"];
+  return candidates.find((candidate) => exists(candidate));
+}
+
+function parseDirectNetworkCommand(
+  command: string,
+  bashPath: string,
+  pathImpl: CandyBashPathSeam,
+  exists: (candidate: string) => boolean,
+): ParsedDirectNetworkCommand | undefined {
+  const tokens = tokenizeNetworkCommand(command);
+  if (tokens === undefined || tokens.length === 0) return undefined;
+  const tool = tokens[0];
+  if (tool === "git") {
+    const gitPath = resolveDirectNetworkToolPath("git", bashPath, pathImpl, exists);
+    return gitPath === undefined ? undefined : parseNetworkGitCommand(tokens, gitPath);
+  }
+  if (tool === "curl") {
+    const curlPath = resolveDirectNetworkToolPath("curl", bashPath, pathImpl, exists);
+    return curlPath === undefined ? undefined : parseNetworkCurlCommand(tokens, curlPath);
+  }
+  if (tool === "wget") {
+    const wgetPath = resolveDirectNetworkToolPath("wget", bashPath, pathImpl, exists);
+    return wgetPath === undefined ? undefined : parseNetworkWgetCommand(tokens, wgetPath);
+  }
+  return undefined;
+}
+
 /**
  * Candy-owned network elevation tool. The normal Pi Bash definition remains
  * the offline path; this tool makes network an explicit, single-use capability.
@@ -846,10 +1148,11 @@ export function createCandyNetworkToolDefinition(
     name: "candy_bash_network",
     label: "Trusted Shell network elevation",
     description:
-      "Request one-time outbound network access for a complete command in the current Task Worktree. The user must approve each request.",
-    promptSnippet: "Request one-command network access for a shell command",
+      "Request one-time read-only outbound network access for a direct tool command (git ls-remote, curl GET/HEAD, or wget GET) in the current Task Worktree. The command runs without a shell, so it cannot create publication-capable descendants. The user must approve each request.",
+    promptSnippet: "Request one-command read-only network access for a direct tool",
     promptGuidelines: [
       "Use candy_bash_network only when the command genuinely needs outbound network access.",
+      "Only read-only direct tools are accepted: git ls-remote, curl GET/HEAD, or wget GET. Shell commands, interpreters, package managers, and uploads are rejected.",
       "Provide a concise reason. Network access is denied by default and is never retained for later commands.",
     ],
     parameters: networkShellSchema,
@@ -912,22 +1215,26 @@ export function createCandyNetworkToolDefinition(
       if (executionSignal.aborted) abort();
       else executionSignal.addEventListener("abort", abort, { once: true });
       try {
-        const processExecPath = resolveCandyShellProcessExecPath();
-        const processExecPaths = resolveCandyShellProcessExecPaths(
+        const directCommand = parseDirectNetworkCommand(
+          input.command,
           bashPath,
-          processExecPath,
           pathImpl,
           options.exists ?? existsSync,
         );
+        if (directCommand === undefined) {
+          throw new Error(
+            "Network commands are restricted to read-only direct tools: git ls-remote, curl GET/HEAD, or wget GET.",
+          );
+        }
         if (controller.signal.aborted) throw new Error("Operation aborted");
         const result = await options.runner.run({
-          executable: bashPath,
-          args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(input.command)],
+          executable: directCommand.executable,
+          args: directCommand.args,
           cwd: root,
           workspace: root,
           network: true,
-          allowProcessExec: true,
-          processExecPaths,
+          allowProcessExec: false,
+          processExecPaths: [],
           readOnlyPaths: resolveCandyShellReadOnlyPaths(root, options.trustedGitCommonDirectory),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
@@ -1118,7 +1425,18 @@ export function createCandyWorkspaceOperations(
     },
     access: async (absolutePath) => {
       await assertWorkspacePath(root, absolutePath, false);
-      await access(absolutePath);
+      const directoryBindings = await openWorkspaceDirectoryChain(
+        root,
+        path.dirname(absolutePath),
+        false,
+      );
+      try {
+        await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+        await access(absolutePath);
+        await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+      } finally {
+        await closeWorkspaceDirectoryChain(directoryBindings);
+      }
     },
     writeFile: async (absolutePath, content) => {
       await assertWorkspacePath(root, absolutePath, true);
@@ -1660,18 +1978,30 @@ export function createCandyWorkspaceTools(
           return piSdk.withFileMutationQueue(absolutePath, async () => {
             throwIfToolAborted(operationSignal);
             await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
-            const before = await lstat(absolutePath);
-            if (!before.isFile()) throw new Error("Only regular workspace files can be deleted.");
-            throwIfToolAborted(operationSignal);
-            const approved = await fileDeleteApproval({ path: relativePath }, operationSignal);
-            if (!approved) throw new Error("File deletion was denied by the user.");
-            throwIfToolAborted(operationSignal);
-            await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
-            const after = await lstat(absolutePath);
-            if (!after.isFile() || !sameFileSnapshot(before, after)) {
-              throw new Error("The file changed while deletion approval was pending.");
+            const directoryBindings = await openWorkspaceDirectoryChain(
+              path.resolve(workspaceRoot),
+              path.dirname(absolutePath),
+              false,
+            );
+            try {
+              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+              const before = await lstat(absolutePath);
+              if (!before.isFile()) throw new Error("Only regular workspace files can be deleted.");
+              throwIfToolAborted(operationSignal);
+              const approved = await fileDeleteApproval({ path: relativePath }, operationSignal);
+              if (!approved) throw new Error("File deletion was denied by the user.");
+              throwIfToolAborted(operationSignal);
+              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+              await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
+              const after = await lstat(absolutePath);
+              if (!after.isFile() || !sameFileSnapshot(before, after)) {
+                throw new Error("The file changed while deletion approval was pending.");
+              }
+              await unlink(absolutePath);
+              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+            } finally {
+              await closeWorkspaceDirectoryChain(directoryBindings);
             }
-            await unlink(absolutePath);
             throwIfToolAborted(operationSignal);
             return {
               content: [{ type: "text" as const, text: `Deleted ${relativePath}` }],
@@ -1745,6 +2075,100 @@ function sameFileSnapshot(
   );
 }
 
+function sameDirectoryIdentity(
+  before: Awaited<ReturnType<typeof lstat>>,
+  after: Awaited<ReturnType<typeof lstat>>,
+): boolean {
+  return before.dev === after.dev && before.ino === after.ino;
+}
+
+interface WorkspaceDirectoryBinding {
+  readonly absolute: string;
+  readonly handle: Awaited<ReturnType<typeof open>>;
+}
+
+/**
+ * Bind every existing or newly created component from the workspace root down
+ * to `directory` by holding no-follow directory handles. Each handle identity
+ * must match its path at bind time, and the caller revalidates the same
+ * identities before and after the path is used, so a symlink swap or a
+ * same-path directory replacement fails closed.
+ */
+async function openWorkspaceDirectoryChain(
+  root: string,
+  directory: string,
+  allowCreate: boolean,
+): Promise<readonly WorkspaceDirectoryBinding[]> {
+  const absoluteRoot = path.resolve(root);
+  const absoluteDirectory = path.isAbsolute(directory)
+    ? path.resolve(directory)
+    : path.resolve(absoluteRoot, directory);
+  const relative = path.relative(absoluteRoot, absoluteDirectory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Workspace tool path escaped the selected workspace.");
+  }
+  const bindings: WorkspaceDirectoryBinding[] = [];
+  let current = absoluteRoot;
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  try {
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      let metadata = await lstat(current).catch(() => undefined);
+      if (metadata === undefined) {
+        if (!allowCreate) throw new Error("Workspace tool directory is missing.");
+        await mkdir(current);
+        metadata = await lstat(current).catch(() => undefined);
+      }
+      if (metadata === undefined || metadata.isSymbolicLink() || !metadata.isDirectory()) {
+        throw new Error("Workspace tool directories cannot be symbolic links.");
+      }
+      const handle = await open(
+        current,
+        fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+      );
+      try {
+        const opened = await handle.stat();
+        if (!opened.isDirectory() || !sameDirectoryIdentity(metadata, opened)) {
+          throw new Error("Workspace directory changed while it was being opened.");
+        }
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        throw error;
+      }
+      bindings.push({ absolute: current, handle });
+    }
+  } catch (error) {
+    await closeWorkspaceDirectoryChain(bindings);
+    throw error;
+  }
+  return bindings;
+}
+
+async function assertWorkspaceDirectoryChainUnchanged(
+  bindings: readonly WorkspaceDirectoryBinding[],
+): Promise<void> {
+  for (const binding of bindings) {
+    const opened = await binding.handle.stat();
+    const current = await lstat(binding.absolute).catch(() => undefined);
+    if (
+      current === undefined ||
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      !sameDirectoryIdentity(opened, current)
+    ) {
+      throw new Error("Workspace directory changed while the operation was in progress.");
+    }
+  }
+}
+
+async function closeWorkspaceDirectoryChain(
+  bindings: readonly WorkspaceDirectoryBinding[],
+): Promise<void> {
+  for (const binding of bindings) {
+    await binding.handle.close().catch(() => undefined);
+  }
+}
+
 interface WorkspaceRootBinding {
   readonly absolutePath: string;
   readonly canonicalPath: string;
@@ -1800,16 +2224,29 @@ async function assertOpenedWorkspaceFile(
 async function readWorkspaceFile(root: string, absolutePath: string): Promise<Buffer> {
   const binding = await bindWorkspaceRoot(root);
   await assertWorkspacePath(root, absolutePath, false);
-  const handle = await open(absolutePath, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  const directoryBindings = await openWorkspaceDirectoryChain(
+    root,
+    path.dirname(absolutePath),
+    false,
+  );
+  let handle: Awaited<ReturnType<typeof open>>;
   try {
-    const opened = await handle.stat();
-    if (!opened.isFile()) throw new Error("Workspace reads require a regular file.");
-    if (opened.size > MAX_WORKSPACE_FILE_BYTES)
-      throw new Error(`Workspace reads are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
-    await assertOpenedWorkspaceFile(binding, absolutePath, opened);
-    return await handle.readFile();
+    await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+    handle = await open(absolutePath, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile()) throw new Error("Workspace reads require a regular file.");
+      if (opened.size > MAX_WORKSPACE_FILE_BYTES)
+        throw new Error(`Workspace reads are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
+      await assertOpenedWorkspaceFile(binding, absolutePath, opened);
+      const content = await handle.readFile();
+      await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+      return content;
+    } finally {
+      await handle.close();
+    }
   } finally {
-    await handle.close();
+    await closeWorkspaceDirectoryChain(directoryBindings);
   }
 }
 
@@ -1822,19 +2259,31 @@ async function writeWorkspaceFile(
     throw new Error(`Workspace writes are limited to ${MAX_WORKSPACE_FILE_BYTES} bytes.`);
   const binding = await bindWorkspaceRoot(root);
   await assertWorkspacePath(root, path.dirname(absolutePath), false);
-  const handle = await open(
-    absolutePath,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | NO_FOLLOW_FINAL_PATH,
-    0o666,
+  const directoryBindings = await openWorkspaceDirectoryChain(
+    root,
+    path.dirname(absolutePath),
+    false,
   );
+  let handle: Awaited<ReturnType<typeof open>>;
   try {
-    const opened = await handle.stat();
-    if (!opened.isFile()) throw new Error("Workspace writes require a regular file.");
-    await assertOpenedWorkspaceFile(binding, absolutePath, opened);
-    await handle.truncate(0);
-    await handle.writeFile(content, "utf8");
+    await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+    handle = await open(
+      absolutePath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | NO_FOLLOW_FINAL_PATH,
+      0o666,
+    );
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile()) throw new Error("Workspace writes require a regular file.");
+      await assertOpenedWorkspaceFile(binding, absolutePath, opened);
+      await handle.truncate(0);
+      await handle.writeFile(content, "utf8");
+      await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+    } finally {
+      await handle.close();
+    }
   } finally {
-    await handle.close();
+    await closeWorkspaceDirectoryChain(directoryBindings);
   }
 }
 
@@ -1849,24 +2298,12 @@ async function ensureWorkspaceDirectory(root: string, directory: string): Promis
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
     throw new Error("The selected workspace must be a real directory.");
   }
-  let current = absoluteRoot;
-  await assertCanonicalWorkspacePath(absoluteRoot, current);
-  for (const segment of relative ? relative.split(path.sep) : []) {
-    current = path.join(current, segment);
-    try {
-      const existing = await lstat(current);
-      if (existing.isSymbolicLink() || !existing.isDirectory()) {
-        throw new Error("Symbolic links are not allowed in workspace directories.");
-      }
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
-      await mkdir(current);
-    }
-    const checked = await lstat(current);
-    if (checked.isSymbolicLink() || !checked.isDirectory()) {
-      throw new Error("Workspace directory changed while it was being created.");
-    }
-    await assertCanonicalWorkspacePath(absoluteRoot, current);
+  const bindings = await openWorkspaceDirectoryChain(absoluteRoot, absoluteDirectory, true);
+  try {
+    await assertCanonicalWorkspacePath(absoluteRoot, absoluteDirectory);
+    await assertWorkspaceDirectoryChainUnchanged(bindings);
+  } finally {
+    await closeWorkspaceDirectoryChain(bindings);
   }
 }
 
@@ -1916,14 +2353,118 @@ async function ensureNoSymlinkDirectory(directory: string): Promise<string> {
   return absolute;
 }
 
+interface SessionDirectoryBinding {
+  readonly absolute: string;
+  readonly handle: Awaited<ReturnType<typeof open>>;
+}
+
+/**
+ * Hold no-follow directory handles for every component from the Candy session
+ * root down to `child`. The caller revalidates the same identities around Pi's
+ * SessionManager calls so a symlink or same-path replacement fails closed.
+ */
+async function openSessionDirectoryChain(
+  anchor: string,
+  child: string,
+  allowCreate: boolean,
+): Promise<readonly SessionDirectoryBinding[]> {
+  const absoluteAnchor = path.resolve(anchor);
+  const absoluteChild = path.isAbsolute(child)
+    ? path.resolve(child)
+    : path.resolve(absoluteAnchor, child);
+  const relative = path.relative(absoluteAnchor, absoluteChild);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("Candy session directory escaped the session root.");
+  }
+  const bindings: SessionDirectoryBinding[] = [];
+  let current = absoluteAnchor;
+  const segments = relative === "" ? [] : relative.split(path.sep);
+  try {
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      let metadata = await lstat(current).catch(() => undefined);
+      if (metadata === undefined) {
+        if (!allowCreate) throw new Error("Candy session directory is missing.");
+        await mkdir(current);
+        metadata = await lstat(current).catch(() => undefined);
+      }
+      if (metadata === undefined || metadata.isSymbolicLink() || !metadata.isDirectory()) {
+        throw new Error("Candy session paths cannot contain symbolic links.");
+      }
+      const handle = await open(
+        current,
+        fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH | O_DIRECTORY_PATH_FLAG,
+      );
+      try {
+        const opened = await handle.stat();
+        if (!opened.isDirectory() || !sameDirectoryIdentity(metadata, opened)) {
+          throw new Error("Candy session directory changed while it was being prepared.");
+        }
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        throw error;
+      }
+      bindings.push({ absolute: current, handle });
+    }
+  } catch (error) {
+    await closeSessionDirectoryChain(bindings);
+    throw error;
+  }
+  return bindings;
+}
+
+async function assertSessionDirectoryChainUnchanged(
+  bindings: readonly SessionDirectoryBinding[],
+): Promise<void> {
+  for (const binding of bindings) {
+    const opened = await binding.handle.stat();
+    const current = await lstat(binding.absolute).catch(() => undefined);
+    if (
+      current === undefined ||
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      !sameDirectoryIdentity(opened, current)
+    ) {
+      throw new Error("Candy session directory changed while the operation was in progress.");
+    }
+  }
+}
+
+async function closeSessionDirectoryChain(
+  bindings: readonly SessionDirectoryBinding[],
+): Promise<void> {
+  for (const binding of bindings) {
+    await binding.handle.close().catch(() => undefined);
+  }
+}
+
 async function ensureSessionDirectory(sessionRoot: string, taskId: string): Promise<string> {
   const root = await ensureNoSymlinkDirectory(sessionRoot);
-  return ensureNoSymlinkDirectory(path.join(root, taskId));
+  const target = path.join(root, taskId);
+  const bindings = await openSessionDirectoryChain(root, target, true);
+  await assertSessionDirectoryChainUnchanged(bindings);
+  await closeSessionDirectoryChain(bindings);
+  return target;
+}
+
+async function bindSessionDirectory(
+  sessionRoot: string,
+  directory: string,
+): Promise<readonly SessionDirectoryBinding[]> {
+  const root = await ensureNoSymlinkDirectory(sessionRoot);
+  return openSessionDirectoryChain(root, directory, false);
 }
 
 async function assertSessionFile(sessionRoot: string, sessionFile: string): Promise<void> {
   const root = path.resolve(sessionRoot);
-  const absolute = path.resolve(sessionFile);
+  const absolute = path.isAbsolute(sessionFile)
+    ? path.resolve(sessionFile)
+    : path.resolve(root, sessionFile);
   const relative = path.relative(root, absolute);
   if (
     relative === "" ||
@@ -1933,29 +2474,41 @@ async function assertSessionFile(sessionRoot: string, sessionFile: string): Prom
   ) {
     throw new Error("Candy session file escaped the session root.");
   }
-  await ensureNoSymlinkDirectory(path.dirname(absolute));
-  const before = await lstat(absolute);
-  if (before.isSymbolicLink() || !before.isFile()) {
-    throw new Error("Candy session files must be regular files.");
-  }
-  const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  const directoryBindings = await openSessionDirectoryChain(root, path.dirname(absolute), false);
   try {
-    const opened = await handle.stat();
-    if (!opened.isFile()) throw new Error("Candy session files must be regular files.");
-    const after = await lstat(absolute);
-    if (after.isSymbolicLink() || !after.isFile() || !sameFileSnapshot(opened, after)) {
-      throw new Error("Candy session file changed while it was being opened.");
+    await assertSessionDirectoryChainUnchanged(directoryBindings);
+    const before = await lstat(absolute);
+    if (before.isSymbolicLink() || !before.isFile()) {
+      throw new Error("Candy session files must be regular files.");
     }
+    const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile()) throw new Error("Candy session files must be regular files.");
+      const after = await lstat(absolute);
+      if (after.isSymbolicLink() || !after.isFile() || !sameFileSnapshot(opened, after)) {
+        throw new Error("Candy session file changed while it was being opened.");
+      }
+    } finally {
+      await handle.close();
+    }
+    await assertSessionDirectoryChainUnchanged(directoryBindings);
   } finally {
-    await handle.close();
+    await closeSessionDirectoryChain(directoryBindings);
   }
 }
 
 async function readSessionFile(sessionRoot: string, sessionFile: string): Promise<string> {
   await assertSessionFile(sessionRoot, sessionFile);
-  const handle = await open(path.resolve(sessionFile), fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
+  const root = path.resolve(sessionRoot);
+  const absolute = path.isAbsolute(sessionFile)
+    ? path.resolve(sessionFile)
+    : path.resolve(root, sessionFile);
+  const handle = await open(absolute, fsConstants.O_RDONLY | NO_FOLLOW_FINAL_PATH);
   try {
-    return await handle.readFile("utf8");
+    const content = await handle.readFile("utf8");
+    await assertSessionFile(sessionRoot, sessionFile);
+    return content;
   } finally {
     await handle.close();
   }
@@ -1980,7 +2533,15 @@ export class CandyPiSessionStore {
   public async create(taskId: string, cwd: string): Promise<PiSessionHandle> {
     assertSafeTaskId(taskId);
     const directory = await ensureSessionDirectory(this.sessionRoot, taskId);
-    const manager = piSdk.SessionManager.create(cwd, directory);
+    const directoryBindings = await bindSessionDirectory(this.sessionRoot, directory);
+    let manager: piSdk.SessionManager;
+    try {
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+      manager = piSdk.SessionManager.create(cwd, directory);
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+    } finally {
+      await closeSessionDirectoryChain(directoryBindings);
+    }
     manager.appendCustomEntry("candy.session.created", { taskId });
     manager.appendMessage({
       role: "user",
@@ -2006,21 +2567,33 @@ export class CandyPiSessionStore {
     } satisfies PiMessage);
     const sessionFile = manager.getSessionFile();
     if (!sessionFile) throw new Error("Pi did not create a persisted session file.");
+    await assertSessionFile(this.sessionRoot, sessionFile);
     return { sessionFile, sessionId: manager.getSessionId(), cwd };
   }
 
   public async reload(handle: PiSessionHandle, remappedCwd: string): Promise<PiSessionHandle> {
-    const content = await readSessionFile(this.sessionRoot, handle.sessionFile);
+    const sessionFile = path.isAbsolute(handle.sessionFile)
+      ? path.resolve(handle.sessionFile)
+      : path.resolve(this.sessionRoot, handle.sessionFile);
+    const content = await readSessionFile(this.sessionRoot, sessionFile);
     if (!content.includes('"type":"session"')) {
       throw new Error("Candy session does not contain a Pi session header.");
     }
-    const manager = piSdk.SessionManager.open(
-      handle.sessionFile,
-      path.dirname(handle.sessionFile),
-      remappedCwd,
+    const directoryBindings = await bindSessionDirectory(
+      this.sessionRoot,
+      path.dirname(sessionFile),
     );
+    let manager: piSdk.SessionManager;
+    try {
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+      manager = piSdk.SessionManager.open(sessionFile, path.dirname(sessionFile), remappedCwd);
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+    } finally {
+      await closeSessionDirectoryChain(directoryBindings);
+    }
+    await assertSessionFile(this.sessionRoot, sessionFile);
     return {
-      sessionFile: handle.sessionFile,
+      sessionFile,
       sessionId: manager.getSessionId(),
       cwd: remappedCwd,
     };
@@ -2228,12 +2801,27 @@ export class PiAgentEngine {
   public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
     assertSafeTaskId(taskId);
     const sessionDirectory = await ensureSessionDirectory(this.sessionRoot, taskId);
-    const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
-      (left, right) => right.modified.getTime() - left.modified.getTime(),
-    )[0];
+    const directoryBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
+    let existing: Awaited<ReturnType<typeof piSdk.SessionManager.listAll>>[number] | undefined;
+    try {
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+      existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
+        (left, right) => right.modified.getTime() - left.modified.getTime(),
+      )[0];
+      await assertSessionDirectoryChainUnchanged(directoryBindings);
+    } finally {
+      await closeSessionDirectoryChain(directoryBindings);
+    }
     if (!existing) return undefined;
     const content = await readSessionFile(this.sessionRoot, existing.path);
-    void piSdk.SessionManager.open(existing.path, sessionDirectory, cwd);
+    const openBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
+    try {
+      await assertSessionDirectoryChainUnchanged(openBindings);
+      void piSdk.SessionManager.open(existing.path, sessionDirectory, cwd);
+      await assertSessionDirectoryChainUnchanged(openBindings);
+    } finally {
+      await closeSessionDirectoryChain(openBindings);
+    }
     const entries = content
       .split(/\r?\n/u)
       .map((line) => {
@@ -2341,13 +2929,30 @@ export class PiAgentEngine {
           "provider_error",
         );
       }
-      const existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
-        (left, right) => right.modified.getTime() - left.modified.getTime(),
-      )[0];
+      const listBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
+      let existing: Awaited<ReturnType<typeof piSdk.SessionManager.listAll>>[number] | undefined;
+      try {
+        await assertSessionDirectoryChainUnchanged(listBindings);
+        existing = (await piSdk.SessionManager.listAll(sessionDirectory)).sort(
+          (left, right) => right.modified.getTime() - left.modified.getTime(),
+        )[0];
+        await assertSessionDirectoryChainUnchanged(listBindings);
+      } finally {
+        await closeSessionDirectoryChain(listBindings);
+      }
       if (existing) await assertSessionFile(this.sessionRoot, existing.path);
-      const sessionManager = existing
-        ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
-        : piSdk.SessionManager.create(input.cwd, sessionDirectory);
+      const managerBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
+      let sessionManager: piSdk.SessionManager;
+      try {
+        await assertSessionDirectoryChainUnchanged(managerBindings);
+        sessionManager = existing
+          ? piSdk.SessionManager.open(existing.path, sessionDirectory, input.cwd)
+          : piSdk.SessionManager.create(input.cwd, sessionDirectory);
+        await assertSessionDirectoryChainUnchanged(managerBindings);
+      } finally {
+        await closeSessionDirectoryChain(managerBindings);
+      }
+      if (existing) await assertSessionFile(this.sessionRoot, existing.path);
       const settingsManager = piSdk.SettingsManager.inMemory({}, { projectTrusted: false });
       const resourceLoader = new CandyRestrictedResourceLoader(
         input.cwd,
@@ -2375,18 +2980,30 @@ export class PiAgentEngine {
         input.fileDeleteApproval,
         activeSecrets,
       );
-      const created = await piSdk.createAgentSession({
-        cwd: input.cwd,
-        agentDir: agentDirectory,
-        modelRuntime,
-        model,
-        sessionManager,
-        noTools: "builtin",
-        tools: workspaceTools.map((tool) => tool.name),
-        customTools: workspaceTools,
-        resourceLoader,
-        settingsManager,
-      });
+      const sessionBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
+      const agentBindings = await bindSessionDirectory(this.sessionRoot, agentDirectory);
+      let created: Awaited<ReturnType<typeof piSdk.createAgentSession>>;
+      try {
+        await assertSessionDirectoryChainUnchanged(sessionBindings);
+        await assertSessionDirectoryChainUnchanged(agentBindings);
+        created = await piSdk.createAgentSession({
+          cwd: input.cwd,
+          agentDir: agentDirectory,
+          modelRuntime,
+          model,
+          sessionManager,
+          noTools: "builtin",
+          tools: workspaceTools.map((tool) => tool.name),
+          customTools: workspaceTools,
+          resourceLoader,
+          settingsManager,
+        });
+        await assertSessionDirectoryChainUnchanged(sessionBindings);
+        await assertSessionDirectoryChainUnchanged(agentBindings);
+      } finally {
+        await closeSessionDirectoryChain(sessionBindings);
+        await closeSessionDirectoryChain(agentBindings);
+      }
       session = created.session;
       this.#activeSessions.set(input.taskId, session);
       if (input.thinkingLevel !== undefined) {
