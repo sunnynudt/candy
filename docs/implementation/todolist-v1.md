@@ -1,10 +1,19 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-17
+更新日期：2026-08-18
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 checkpoint `b0a5e30` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **241/241**、真实 PTY terminal matrix 和 macOS strict containment matrix。最新 checkpoint 修正了 macOS Sandbox Runner smoke fixture，使其传入真实 Candy-approved Git common directory；生产 Trusted Shell 校验仍保持 fail-closed。最新标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 绑定前一生产代码 checkpoint `50074c2`，报告 **4 个开放 finding（全部 medium）**，本次 fixture-only 修复不构成 security clearance。该扫描使用 parent validation fallback；本工作包按用户指示暂不执行 Windows 11；macOS 独立 G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 checkpoint `9009ac1` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **247/247**、真实 PTY terminal matrix 和 macOS strict containment matrix。该 security checkpoint 关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings：Git worktree path-check/use race、workspace intermediate-component race、residual Pi session-manager path race、conditional Trusted Shell descendant-publication risk；每项均补回归测试。生产 Trusted Shell 校验仍保持 fail-closed，等待独立 reviewer 或用户确认 macOS G2 后再翻转 attestation。本会话无法重跑外部标准扫描器，独立扫描重跑仍是 evidence gate，本 checkpoint 不构成 security clearance。本工作包按用户指示暂不执行 Windows 11；macOS G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+
+## 2026-08-18 Issue #4 macOS security hardening checkpoint（`9009ac1`）
+
+- `GitWorktreeManager` 对 worktree root 与每个已存在路径组件做 no-follow directory-handle identity binding，并在每次 Git 操作前后复核；同路径目录替换（inode 变化）或 symlink swap 一律 fail closed。`nativeGitPathSeam.canonicalize` 改为解析最长已存在前缀，避免 `/var` 与 `/private/var` alias 混用。
+- Workspace read/write/mkdir/access/delete 持有从 workspace root 到目标父目录的目录 handle 链并在操作前后复核；session 目录同样绑定，Pi `SessionManager.create/open/listAll` 前后均复核，相对 session 文件按 Candy session root 解析。
+- `candy_bash_network` 不再通过 shell 执行：只接受 `git ls-remote`、`curl` GET/HEAD、`wget` GET 直连工具，`allowProcessExec: false`，后代无法执行 publication 工具；`containsShellPublicationAction` 同时拒绝 `sh -c`、`python3 -c`、`node -e`、`perl -e`、`ruby -e`、`php -r`、`env`、`xargs`、`find -exec`、`make`、`npm run`、`npx`、`sudo`、`su`、`ssh`、`docker`、`awk system(...)` 等嵌套解释器/执行器形态。
+- 新增回归：worktree create/inspect 同路径替换、delete 审批期间父目录替换、相对 session 文件 reload、shell/network 嵌套解释器拒绝、network 直连工具策略（含 `allowProcessExec: false` 断言）。
+- 验证：`npm run check` **247/247**、`npm run check:native`、`npm run smoke:sandbox:macos` strict matrix、`npm run acceptance:macos` **14/14**（`realPty=true`）；staged diff 已做 credential-shaped 扫描；push 后本地与远程 SHA 均为 `9009ac1`。
+- 剩余：独立标准扫描重跑（0 open findings）、macOS G2 确认（独立 reviewer 或用户）、Trusted Shell attestation 翻转与 trusted-shell 回归、current-HEAD live gates、3 次真实旅程与 3 类 dogfood、文档/Issue #4 收尾与最终个人验收结论。
 
 标记约定：`☑️` 已完成；`◐` 已完成一部分（后续条件明确列出）；`⬜` 未开始或尚未达到可验收状态。
 
