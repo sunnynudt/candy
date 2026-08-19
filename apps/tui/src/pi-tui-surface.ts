@@ -84,6 +84,7 @@ export class CandyTuiSurface {
     };
     this.#tui.addChild(this.#transcript);
     this.#tui.addChild(new Spacer(1));
+    this.#tui.addChild(new Text("输入 Input >（最底部输入行，回车提交）"));
     this.#tui.addChild(this.#editor);
     this.#tui.setFocus(this.#editor);
     this.#removeInterruptListener = this.#tui.addInputListener(
