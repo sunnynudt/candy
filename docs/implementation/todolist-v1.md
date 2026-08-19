@@ -1,10 +1,17 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-18
+更新日期：2026-08-19
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
-当前代码 checkpoint `9009ac1` + 锚点根绑定 follow-up `3408413` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**（报告 source revision 为 `3408413`），内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。该 security checkpoint 关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings：Git worktree path-check/use race、workspace intermediate-component race、residual Pi session-manager path race、conditional Trusted Shell descendant-publication risk；每项均补回归测试，workspace/session 链同时绑定锚点根目录。G2 评审证据包已整理为 `docs/implementation/macos-g2-review-3408413.md`，等待独立 reviewer 或用户审阅确认。生产 Trusted Shell 校验仍保持 fail-closed，确认前不翻转 attestation。本会话无法重跑外部标准扫描器，独立扫描重跑仍是 evidence gate，本 checkpoint 不构成 security clearance。本工作包按用户指示暂不执行 Windows 11；macOS G2、签名和最终 V1 acceptance 仍待完成；`.omo/` 保持 user-owned 未跟踪。
+当前代码 checkpoint `2e8ee6b` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。macOS G2 已于 2026-08-19 经产品负责人确认通过：`MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.approved = true`（提交 `926bc1a`），composition root 接线修复；真实 DeepSeek Trusted Shell 旅程 attempt 1–3 全部通过，dogfood 3/3（仓库理解、小修复、失败测试诊断），live DeepSeek **7/7**、国内 MiniMax **8/8**，报告均脱敏并绑定 `2e8ee6b`。安全修复（`9009ac1` + `3408413`）关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings，每项均有回归测试。Trusted Shell harness 的两处过期断言已修复（`0c78f3b`、`2e8ee6b`）。剩余非阻塞项：外部标准扫描重跑（本会话无扫描器）、Apple 签名/公证、Windows 11（本工作包按指示暂缓）。`.omo/` 保持 user-owned 未跟踪。
+
+## 2026-08-19 Issue #4 macOS G2 确认与真实旅程 checkpoint（`2e8ee6b`）
+
+- 产品负责人确认 G2 通过；attestation 翻转并修复 composition root 能力接线，`npm run check` 保持 **248/248**。
+- Trusted Shell harness 修复：expect 工具事件正则匹配当前带 args 的渲染格式；网络命令计数只统计 `candy_bash_network:ok` 完成条目。
+- 真实证据（均绑定 `2e8ee6b`）：3 次真实 DeepSeek Trusted Shell 旅程通过（含取消/审批/重启/Apply/凭据隔离）；dogfood 3/3、safetyFailures 0、offlineShellOnly=true；真实 PTY 中文矩阵通过；DeepSeek live gate 7/7；MiniMax live gate 8/8；acceptance 14/14。
+- 非阻塞收尾项：独立标准扫描重跑、签名/公证、Windows 11。
 
 ## 2026-08-18 Issue #4 macOS security hardening checkpoint（`9009ac1`）
 

@@ -48,7 +48,11 @@ The staged diff for each checkpoint was scanned for credential-shaped material b
 
 ### Sign-off
 
-Reviewer / product owner: ________________________
-Date: ________________________
-Decision (approve / reject): ________________________
-Notes: ________________________
+Reviewer / product owner: product owner (confirmed in session on 2026-08-19)
+Date: 2026-08-19
+Decision (approve / reject): approve
+Notes: Attestation flipped in `926bc1a`; composition-root capability wiring fixed.
+Trusted Shell journeys 1–3 and dogfood 3/3 passed with real DeepSeek at
+`2e8ee6b`; live DeepSeek 7/7 and MiniMax 8/8; acceptance 14/14. Remaining
+non-blocking items: independent standard-scan rerun, signing/notarization,
+Windows 11 (deferred).
