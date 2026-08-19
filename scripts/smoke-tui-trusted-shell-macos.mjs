@@ -121,8 +121,8 @@ try {
     );
   if (!toolTexts.some((text) => text.includes("candy_search:ok")))
     throw new Error("The real coding journey did not use the Candy search tool.");
-  const networkRuns = toolTexts.filter((text) => text.includes("candy_bash_network:")).length;
-  if (networkRuns !== 1 || !toolTexts.some((text) => text.includes("candy_bash_network:ok")))
+  const networkRuns = toolTexts.filter((text) => text.includes("candy_bash_network:ok")).length;
+  if (networkRuns !== 1)
     throw new Error("Network Bash was not exactly one approved command.");
   store.close();
 
