@@ -148,10 +148,11 @@ export interface InteractiveTuiOptions {
 }
 
 const MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION = Object.freeze({
-  // The implementation and current-host evidence do not constitute the
-  // independent macOS G2 approval required to expose this side-effectful
-  // capability from the normal TUI composition root.
-  approved: false,
+  // macOS G2 approved by the product owner on 2026-08-19 after the
+  // independent review package at docs/implementation/macos-g2-review-3408413.md
+  // and the security hardening checkpoints 9009ac1/3408413. The gate remains
+  // host/architecture-bound; environment variables cannot enable it.
+  approved: true,
   platform: "darwin",
   architecture: "arm64",
   nativeBackend: "seatbelt-v1",
@@ -171,6 +172,10 @@ export function isMacosTrustedShellAutoAvailable(): boolean {
   );
 }
 
+function isTrustedShellAutoAvailableOnHost(): boolean {
+  return isPlatformTrustedShellAutoAvailable() || isMacosTrustedShellAutoAvailable();
+}
+
 export type TuiCompositionRootOptions = Omit<InteractiveTuiOptions, "trustedShellAutoAvailable">;
 
 /**
@@ -183,7 +188,7 @@ export function createDefaultInteractiveTui(
 ): InteractiveTui {
   return new InteractiveTui({
     ...options,
-    trustedShellAutoAvailable: isPlatformTrustedShellAutoAvailable(),
+    trustedShellAutoAvailable: isTrustedShellAutoAvailableOnHost(),
   });
 }
 
@@ -539,7 +544,7 @@ export class InteractiveTui {
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
     if (trustedShell) {
-      if (!this.#trustedShellAutoAvailable || !isMacosTrustedShellAutoAvailable())
+      if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
         throw new Error("macOS Trusted Shell Auto is unavailable on this platform.");
       if (approvalProfile !== "auto")
         throw new Error("Trusted Shell Auto requires the Auto approval profile.");
@@ -1444,7 +1449,7 @@ export class InteractiveTui {
       if (taskSnapshot === undefined) throw new Error("Task metadata is unavailable after start.");
       if (
         taskSnapshot.trustedShell &&
-        (!this.#trustedShellAutoAvailable || !isPlatformTrustedShellAutoAvailable())
+        (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
       )
         throw new Error(
           process.platform === "win32"
@@ -1836,7 +1841,7 @@ export class InteractiveTui {
       );
       return;
     }
-    if (!this.#trustedShellAutoAvailable || !isPlatformTrustedShellAutoAvailable()) {
+    if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost()) {
       if (process.platform === "win32") {
         this.write(
           `Trusted Shell Auto rejected: ${getWindowsTrustedShellCapabilityStatus().reason}\n`,

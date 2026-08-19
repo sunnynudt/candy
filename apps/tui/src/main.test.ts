@@ -576,8 +576,9 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
   }
 });
 
-test("macOS Trusted Shell Auto remains fail-closed until independent G2 approval", () => {
-  assert.equal(isMacosTrustedShellAutoAvailable(), false);
+test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () => {
+  const expected = process.platform === "darwin" && process.arch === "arm64";
+  assert.equal(isMacosTrustedShellAutoAvailable(), expected);
 });
 
 test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
