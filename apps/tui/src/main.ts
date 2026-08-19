@@ -369,13 +369,26 @@ export class InteractiveTui {
       },
       onInterrupt: (): void => this.requestExit(),
     });
-    this.write("Candy TUI — local-first, one agent per task\n");
     this.write(
-      "Enter a prompt, :new [prompt], :workspace [absolute-path], :use <task-id>, :transcript [task-id], :resources, :prompts, :prompt <name> [args], :credentials, :credential set|replace|delete <deepseek|minimax-cn>, :model [deepseek-flash|deepseek-pro|minimax-m3], :attach <path>, :attachments, :profile read-only|auto, :trusted-shell on|off, :validator <absolute-executable> [args], :changes, :diff [path], :apply, :discard, :validate, :tasks, :prioritize <task-id>, :pause <task-id>, :resume <task-id> <continuation>, :steer <text>, :follow-up <text>, :cancel <task-id>, or :quit.\n",
+      [
+        "Candy TUI — local-first, one agent per task",
+        "",
+        "Start       type a prompt, or :new [prompt]",
+        "Workspace   :workspace <path> · :use <task-id> · :tasks",
+        "Provider    :model deepseek-flash|deepseek-pro|minimax-m3",
+        "            :credentials set|replace|delete <deepseek|minimax-cn>",
+        "Attach      :attach <path> · :attachments",
+        "Review      :changes · :diff [path] · :apply · :discard · :validate",
+        "Control     :steer <text> · :follow-up <text> · :cancel <task-id>",
+        "            :pause/:resume <task-id> <text> · :prioritize <task-id>",
+        "Personal    :prompts · :prompt <name> [args] · :resources · :transcript [task-id]",
+        "Modes       :profile read-only|auto · :trusted-shell on|off",
+        "            :validator <absolute-executable> [args]",
+        "Quit        :quit",
+        "",
+      ].join("\n") + "\n",
     );
-    this.write(
-      "Profile: read-only. Auto uses a Task Worktree for Git edits; review with :changes and :diff, then :apply or :discard. Trusted Shell Auto is off.\n",
-    );
+    this.write("Profile: read-only · Trusted Shell Auto: off\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
