@@ -373,6 +373,14 @@ export class InteractiveTui {
       [
         "Candy TUI — local-first, one agent per task",
         "",
+        "你好，这是 Candy 本地编码助手（本地优先，无需云端）。",
+        "- 直接输入任务描述即可开始；:new <描述> 新建任务",
+        "- :profile auto 允许编辑文件；:trusted-shell on 启用本地 Shell（网络命令需逐条确认）",
+        "- 改动不会自动提交/推送：先用 :changes、:diff 查看，再 :apply 应用",
+        "- :model 切换模型（DeepSeek / MiniMax），:attach 添加图片",
+        "- :tasks 查看任务，:pause/:resume/:cancel 控制，:quit 退出",
+        "",
+        "命令参考（Commands）:",
         "Start       type a prompt, or :new [prompt]",
         "Workspace   :workspace <path> · :use <task-id> · :tasks",
         "Provider    :model deepseek-flash|deepseek-pro|minimax-m3",
@@ -388,7 +396,7 @@ export class InteractiveTui {
         "",
       ].join("\n") + "\n",
     );
-    this.write("Profile: read-only · Trusted Shell Auto: off\n");
+    this.write("Profile: read-only（只读）· Trusted Shell Auto: off（关闭）\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
