@@ -25,7 +25,7 @@ This package lets an independent reviewer (or the product owner) decide the macO
 | `npm run check` | 248/248 (241 baseline + 7 new security regressions) | Embedded in acceptance report below |
 | `npm run check:native` | Pass | `out/acceptance/macos/latest.md` |
 | `npm run smoke:sandbox:macos` | Pass, strict containment matrix | `out/acceptance/macos/latest.md` |
-| `npm run acceptance:macos` | 14/14, `realPty=true`, real-PTY terminal matrix passes | `out/acceptance/macos/latest.md`, source revision `3408413e001fcd83d32211a8ceed86ccf8149bf4` |
+| `npm run acceptance:macos` | 14/14, `realPty=true`, real-PTY terminal matrix passes | `out/acceptance/macos/latest.md`, source revision `dff727219dcd41d96e986b32340fb20b4982df6b` |
 | Live DeepSeek gate | 7/7 (historical source `a523aa2`; current-HEAD rerun pending user authorization) | `out/acceptance/live/deepseek-latest.md` |
 | Live MiniMax gate | 8/8 (historical source `a523aa2`; current-HEAD rerun pending user authorization) | `out/acceptance/live/minimax-cn-latest.md` |
 | Independent standard scan rerun | Not available in this session; scan `721c4ab5` remains the last external scan | Pending |
