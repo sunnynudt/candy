@@ -1465,6 +1465,7 @@ export class InteractiveTui {
       if (prompt === undefined)
         throw new Error("Explicit continuation required; the interrupted prompt was not replayed.");
       if (explicitPrompt !== undefined) {
+        this.write(`\n[user] ${transcriptText(explicitPrompt)}\n`);
         this.#store.appendTranscript(taskId, [
           { role: "user", text: transcriptText(explicitPrompt) },
         ]);
@@ -1691,6 +1692,7 @@ export class InteractiveTui {
           text: transcriptText(`[${mode === "steer" ? "steer" : "follow-up"}] ${text}`),
         },
       ]);
+      this.write(`\n[${mode === "steer" ? "steer" : "follow-up"}] ${transcriptText(text)}\n`);
       this.write(`${snapshot.taskId} ${mode === "steer" ? "steering" : "follow-up"} queued\n`);
     } catch (error) {
       this.write(

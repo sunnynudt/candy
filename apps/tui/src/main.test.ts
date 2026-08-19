@@ -98,6 +98,7 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
     terminal.emitInput("inspect fixture");
     terminal.emitInput("\r");
     const output: string = await waitForOutput(terminal, /completed/u);
+    assert.match(output, /\[user\] inspect fixture/u);
     terminal.emitInput(":tasks");
     terminal.emitInput("\r");
     terminal.emitInput(":quit");
@@ -420,10 +421,12 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     assert.ok(taskId);
     terminal.emitInput(":steer focus on the failing test");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /steering queued/u);
+    const steeringOutput = await waitForOutput(terminal, /steering queued/u);
+    assert.match(steeringOutput, /\[steer\] focus on the failing test/u);
     terminal.emitInput(":follow-up report only after validation");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /follow-up queued/u);
+    const followUpOutput = await waitForOutput(terminal, /follow-up queued/u);
+    assert.match(followUpOutput, /\[follow-up\] report only after validation/u);
     terminal.emitInput(`:steer ${"x".repeat(4_097)}`);
     terminal.emitInput("\r");
     await waitForOutput(terminal, /turn message rejected: text exceeds 4096 characters/u);
