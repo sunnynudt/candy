@@ -1,4 +1,5 @@
 import path from "node:path";
+import { appendFileSync } from "node:fs";
 import {
   Editor,
   ProcessTerminal,
@@ -8,6 +9,7 @@ import {
   matchesKey,
   type EditorTheme,
 } from "@earendil-works/pi-tui";
+import { containsCredentialMaterial } from "@candy/platform";
 
 const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_TUI_WRITE_LOG",
@@ -61,6 +63,7 @@ export class CandyTuiSurface {
   readonly #onInterrupt: () => void;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #removeInterruptListener: () => void;
+  readonly #removeInputLogListener: (() => void) | undefined;
   public readonly logDirectory: string;
   #transcriptText: string = "";
   #started: boolean = false;
@@ -90,6 +93,27 @@ export class CandyTuiSurface {
         return { consume: true };
       },
     );
+    const inputLog = this.#environment.CANDY_TUI_INPUT_LOG;
+    this.#removeInputLogListener =
+      inputLog === undefined || inputLog.length === 0
+        ? undefined
+        : this.#tui.addInputListener((data: string) => {
+            // Opt-in raw-input diagnostics for terminal compatibility issues.
+            // The file path is chosen by the user; this listener never runs in
+            // normal operation and does not affect input handling. Credential-
+            // shaped input is never written to the diagnostic log.
+            try {
+              if (containsCredentialMaterial(data)) return undefined;
+              appendFileSync(
+                inputLog,
+                `${JSON.stringify({ at: Date.now(), data })}${"\n"}`,
+                "utf8",
+              );
+            } catch {
+              // Diagnostics must never break interactive input.
+            }
+            return undefined;
+          });
   }
 
   public appendTranscript(value: string): void {
@@ -108,6 +132,7 @@ export class CandyTuiSurface {
     const wasStarted: boolean = this.#started;
     this.#started = false;
     this.#removeInterruptListener();
+    this.#removeInputLogListener?.();
     let rendererStopped: boolean = false;
     try {
       if (wasStarted) {
