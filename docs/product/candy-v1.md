@@ -53,7 +53,7 @@ Candy TUI
   -> selected provider
 ```
 
-The TUI runs the runtime in-process. Candy owns command parsing, task state, scheduling, session ownership, approval decisions, workspace policy, and the user-facing transcript. Pi is used through a narrow adapter; Candy does not run Pi interactive mode or import Pi's client, protocol, plugin, or default session-store surfaces.
+The TUI runs the runtime in-process. Candy owns command parsing, task state, scheduling, session ownership, approval decisions, workspace policy, and the user-facing transcript. Pi is used through a narrow adapter; Candy does not run Pi interactive mode or import Pi's client, protocol, plugin, or default session-store surfaces. Built-in TUI commands use the slash-prefixed form (`/model`, `/new`, `/attach`, and so on) as the canonical syntax; the earlier colon-prefixed form remains a compatibility alias. This aligns the command entry convention with common coding-agent CLIs without promising full command parity.
 
 TUI and Desktop do not share a V1 client contract. A future Desktop client may use an app-server child process, but that is a V2 architecture and is not part of the V1 runtime topology.
 

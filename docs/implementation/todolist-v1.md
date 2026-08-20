@@ -1,10 +1,16 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-19
+更新日期：2026-08-20
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
 当前代码 checkpoint `2e8ee6b` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。macOS G2 已于 2026-08-19 经产品负责人确认通过：`MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.approved = true`（提交 `926bc1a`），composition root 接线修复；真实 DeepSeek Trusted Shell 旅程 attempt 1–3 全部通过，dogfood 3/3（仓库理解、小修复、失败测试诊断），live DeepSeek **7/7**、国内 MiniMax **8/8**，报告均脱敏并绑定 `2e8ee6b`。安全修复（`9009ac1` + `3408413`）关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings，每项均有回归测试。Trusted Shell harness 的两处过期断言已修复（`0c78f3b`、`2e8ee6b`）。剩余非阻塞项：外部标准扫描重跑（本会话无扫描器）、Apple 签名/公证、Windows 11（本工作包按指示暂缓）。`.omo/` 保持 user-owned 未跟踪。
+
+## 2026-08-20 TUI slash 命令约定
+
+- Candy TUI 内置命令统一以 `/` 前缀作为 canonical 用户入口，例如 `/model`、`/new`、`/attach`、`/resume`；原有 `:` 前缀继续作为兼容别名。
+- 帮助、模型/附件、审批和恢复提示统一展示 slash 形式；普通输入（包括 `/private/...` 这类绝对路径）仍按 prompt 处理。
+- 该项对齐常见编程 Agent CLI 的命令入口风格，不承诺 Pi、Codex、Claude Code、OpenCode 的完整命令集合兼容。
 
 ## 2026-08-19 Issue #4 macOS G2 确认与真实旅程 checkpoint（`2e8ee6b`）
 

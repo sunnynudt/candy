@@ -372,19 +372,19 @@ export class InteractiveTui {
     this.write(
       [
         "Candy TUI — local-first, one agent per task",
-        "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，:new 新建任务；",
-        ":profile auto 开启编辑，:trusted-shell on 开启本地 Shell，:quit 退出。",
+        "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，/new 新建任务；",
+        "/profile auto 开启编辑，/trusted-shell on 开启本地 Shell，/quit 退出。",
         "",
         "命令参考（Commands）:",
-        "Start       type a prompt, or :new [prompt]",
-        "Workspace   :workspace <path> · :use <task-id> · :tasks",
-        "Provider    :model deepseek-flash|deepseek-pro|minimax-m3 · :attach <path>",
-        "            :credentials set|replace|delete <deepseek|minimax-cn>",
-        "Review      :changes · :diff [path] · :apply · :discard · :validate",
-        "Control     :steer/:follow-up <text> · :pause/:resume/:cancel <task-id>",
-        "Personal    :prompts · :prompt <name> [args] · :resources · :transcript",
-        "Modes       :profile read-only|auto · :trusted-shell on|off · :validator <exec>",
-        "Quit        :quit",
+        "Start       type a prompt, or /new [prompt]",
+        "Workspace   /workspace <path> · /use <task-id> · /tasks",
+        "Provider    /model deepseek-flash|deepseek-pro|minimax-m3 · /attach <path>",
+        "            /credentials set|replace|delete <deepseek|minimax-cn>",
+        "Review      /changes · /diff [path] · /apply · /discard · /validate",
+        "Control     /steer /follow-up <text> · /pause /resume /cancel <task-id>",
+        "Personal    /prompts · /prompt <name> [args] · /resources · /transcript",
+        "Modes       /profile read-only|auto · /trusted-shell on|off · /validator <exec>",
+        "Quit        /quit",
         "",
       ].join("\n") + "\n",
     );
@@ -421,94 +421,95 @@ export class InteractiveTui {
   }
 
   private handleInput(value: string): void {
-    const trimmed: string = value.trim();
-    if (trimmed === ":quit") {
+    const raw: string = value.trim();
+    const trimmed: string = raw.startsWith(":") ? `/${raw.slice(1)}` : raw;
+    if (trimmed === "/quit") {
       this.requestExit();
     } else if (this.#creatingTask) {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
-    } else if (trimmed === ":new" || trimmed.startsWith(":new ")) {
+    } else if (trimmed === "/new" || trimmed.startsWith("/new ")) {
       this.newTask(trimmed.slice(4).trim());
-    } else if (trimmed.startsWith(":use ")) {
+    } else if (trimmed.startsWith("/use ")) {
       this.useTask(trimmed.slice(5).trim());
-    } else if (trimmed === ":workspace" || trimmed.startsWith(":workspace ")) {
+    } else if (trimmed === "/workspace" || trimmed.startsWith("/workspace ")) {
       void this.configureWorkspace(trimmed.slice(10).trim()).catch((error: unknown) => {
         this.write(`workspace rejected: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":transcript" || trimmed.startsWith(":transcript ")) {
+    } else if (trimmed === "/transcript" || trimmed.startsWith("/transcript ")) {
       this.showTranscript(trimmed.slice(11).trim());
-    } else if (trimmed === ":resources") {
+    } else if (trimmed === "/resources") {
       this.showResourceDiagnostics();
-    } else if (trimmed === ":prompts") {
+    } else if (trimmed === "/prompts") {
       this.listPromptTemplates();
-    } else if (trimmed === ":prompt" || trimmed.startsWith(":prompt ")) {
+    } else if (trimmed === "/prompt" || trimmed.startsWith("/prompt ")) {
       this.invokePromptTemplate(trimmed.slice(7).trim());
-    } else if (trimmed === ":credentials" || trimmed === ":credential") {
+    } else if (trimmed === "/credentials" || trimmed === "/credential") {
       this.showCredentials();
-    } else if (trimmed.startsWith(":credential ")) {
+    } else if (trimmed.startsWith("/credential ")) {
       this.configureCredential(trimmed.slice(12).trim());
-    } else if (trimmed === ":model" || trimmed.startsWith(":model ")) {
+    } else if (trimmed === "/model" || trimmed.startsWith("/model ")) {
       this.configureModel(trimmed.slice(6).trim());
-    } else if (trimmed === ":attach" || trimmed.startsWith(":attach ")) {
+    } else if (trimmed === "/attach" || trimmed.startsWith("/attach ")) {
       void this.attachPath(trimmed.slice(7).trim()).catch((error: unknown) => {
         this.write(`attachment rejected: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":attachments") {
+    } else if (trimmed === "/attachments") {
       void this.showAttachments().catch((error: unknown) => {
         this.write(`attachments unavailable: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":tasks") {
+    } else if (trimmed === "/tasks") {
       this.printTasks();
-    } else if (trimmed.startsWith(":profile ")) {
+    } else if (trimmed.startsWith("/profile ")) {
       this.setProfile(trimmed.slice(9).trim());
-    } else if (trimmed === ":trusted-shell" || trimmed.startsWith(":trusted-shell ")) {
+    } else if (trimmed === "/trusted-shell" || trimmed.startsWith("/trusted-shell ")) {
       this.setTrustedShell(trimmed.slice(14).trim());
-    } else if (trimmed === ":shell" || trimmed.startsWith(":shell ")) {
+    } else if (trimmed === "/shell" || trimmed.startsWith("/shell ")) {
       this.setTrustedShell(trimmed.slice(6).trim());
-    } else if (trimmed === ":validator" || trimmed.startsWith(":validator ")) {
+    } else if (trimmed === "/validator" || trimmed.startsWith("/validator ")) {
       this.configureValidator(trimmed.slice(10).trim());
-    } else if (trimmed === ":changes") {
+    } else if (trimmed === "/changes") {
       void this.showChanges().catch((error: unknown) => {
         this.write(`changes rejected: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":diff" || trimmed.startsWith(":diff ")) {
+    } else if (trimmed === "/diff" || trimmed.startsWith("/diff ")) {
       void this.showDiff(trimmed.slice(5).trim()).catch((error: unknown) => {
         this.write(`diff rejected: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":apply") {
+    } else if (trimmed === "/apply") {
       void this.applyCurrent().catch((error: unknown) => {
         this.write(`apply blocked: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":discard") {
+    } else if (trimmed === "/discard") {
       void this.discardCurrent().catch((error: unknown) => {
         this.write(`discard blocked: ${safeError(error)}\n`);
       });
-    } else if (trimmed === ":validate") {
+    } else if (trimmed === "/validate") {
       this.validateCurrent();
-    } else if (trimmed.startsWith(":approve ")) {
+    } else if (trimmed.startsWith("/approve ")) {
       this.resolveDeleteApproval(trimmed.slice(9).trim(), true);
-    } else if (trimmed.startsWith(":deny ")) {
+    } else if (trimmed.startsWith("/deny ")) {
       this.resolveDeleteApproval(trimmed.slice(6).trim(), false);
-    } else if (trimmed.startsWith(":prioritize ")) {
+    } else if (trimmed.startsWith("/prioritize ")) {
       this.prioritize(trimmed.slice(12).trim());
-    } else if (trimmed.startsWith(":pause ")) {
+    } else if (trimmed.startsWith("/pause ")) {
       this.pause(trimmed.slice(7).trim());
-    } else if (trimmed.startsWith(":resume ")) {
+    } else if (trimmed.startsWith("/resume ")) {
       const resumeValue = trimmed.slice(8).trim();
       const separator = resumeValue.indexOf(" ");
       this.resume(
         separator < 0 ? resumeValue : resumeValue.slice(0, separator),
         separator < 0 ? undefined : resumeValue.slice(separator + 1).trim(),
       );
-    } else if (trimmed.startsWith(":steer ")) {
+    } else if (trimmed.startsWith("/steer ")) {
       void this.queueActiveTurnMessage("steer", trimmed.slice(7).trim());
-    } else if (trimmed.startsWith(":follow-up ")) {
+    } else if (trimmed.startsWith("/follow-up ")) {
       void this.queueActiveTurnMessage("followUp", trimmed.slice(11).trim());
-    } else if (trimmed.startsWith(":cancel ")) {
+    } else if (trimmed.startsWith("/cancel ")) {
       void this.cancel(trimmed.slice(8).trim()).catch((error: unknown) => {
         this.write(`cancel rejected: ${safeError(error)}\n`);
       });
-    } else if (trimmed.length > 0) {
-      this.submitPrompt(trimmed);
+    } else if (raw.length > 0) {
+      this.submitPrompt(raw);
     }
   }
 
@@ -541,7 +542,7 @@ export class InteractiveTui {
     }
     if (this.#selectedAttachmentIds.length > 0 && this.#selectedModel !== "MiniMax-M3") {
       this.write(
-        "image attachments require explicit :model minimax-m3; switch models before creating the task\n",
+        "image attachments require explicit /model minimax-m3; switch models before creating the task\n",
       );
       return;
     }
@@ -668,7 +669,7 @@ export class InteractiveTui {
     }
     const task = this.ensureController(currentTaskId);
     if (!task) {
-      this.write(`current task ${currentTaskId} is unavailable; use :new\n`);
+      this.write(`current task ${currentTaskId} is unavailable; use /new\n`);
       return;
     }
     const snapshot = task.snapshot();
@@ -677,7 +678,7 @@ export class InteractiveTui {
         this.write(`task ${currentTaskId} is read-only: owned by ${snapshot.ownerId}\n`);
       } else {
         this.write(
-          `task ${currentTaskId} is already running; use :steer <text>, :follow-up <text>, or :cancel ${currentTaskId}\n`,
+          `task ${currentTaskId} is already running; use /steer <text>, /follow-up <text>, or /cancel ${currentTaskId}\n`,
         );
       }
       return;
@@ -687,7 +688,7 @@ export class InteractiveTui {
       return;
     }
     if (snapshot.state === "cancelled") {
-      this.write(`task ${currentTaskId} is cancelled; use :new to create another task\n`);
+      this.write(`task ${currentTaskId} is cancelled; use /new to create another task\n`);
       return;
     }
     task.queueForContinuation(snapshot.revision);
@@ -747,7 +748,7 @@ export class InteractiveTui {
     }
     const name = parseCredentialName(requestedName);
     if ((action !== "set" && action !== "replace" && action !== "delete") || name === undefined) {
-      this.write("credential usage: :credential set|replace|delete <deepseek|minimax-cn>\n");
+      this.write("credential usage: /credential set|replace|delete <deepseek|minimax-cn>\n");
       return;
     }
     try {
@@ -783,7 +784,7 @@ export class InteractiveTui {
       return;
     }
     if (this.#selectedAttachmentIds.length > 0 && model !== "MiniMax-M3" && current === undefined) {
-      this.write("model rejected: image attachments require explicit :model minimax-m3\n");
+      this.write("model rejected: image attachments require explicit /model minimax-m3\n");
       return;
     }
     if (current === undefined) {
@@ -806,7 +807,7 @@ export class InteractiveTui {
       return;
     }
     if (metadata.attachmentIds.length > 0 && model !== "MiniMax-M3") {
-      this.write("model rejected: image attachments require explicit :model minimax-m3\n");
+      this.write("model rejected: image attachments require explicit /model minimax-m3\n");
       return;
     }
     try {
@@ -834,7 +835,7 @@ export class InteractiveTui {
       if (snapshot.state === "queued")
         throw new Error("Attachments cannot change on a queued task.");
       if (snapshot.model !== "MiniMax-M3")
-        throw new Error("Image attachments require explicit :model minimax-m3.");
+        throw new Error("Image attachments require explicit /model minimax-m3.");
     }
     const candidate = path.resolve(value);
     const source = await lstat(candidate);
@@ -907,7 +908,7 @@ export class InteractiveTui {
     if (value === "") {
       this.write(
         this.#validatorCommand === undefined
-          ? "validator not configured; use :validator <absolute-executable> [args]\n"
+          ? "validator not configured; use /validator <absolute-executable> [args]\n"
           : `validator configured: ${this.#validatorCommand.executable} ${this.#validatorCommand.args.join(" ")}\n`,
       );
       return;
@@ -935,7 +936,7 @@ export class InteractiveTui {
   private async showChanges(): Promise<void> {
     const task = this.currentTask();
     if (task === undefined) {
-      this.write("no current task; use :use <task-id> or create a task first\n");
+      this.write("no current task; use /use <task-id> or create a task first\n");
       return;
     }
     const snapshot = this.#store.get(task.snapshot().taskId);
@@ -966,7 +967,7 @@ export class InteractiveTui {
     if (requestedPath !== "") assertSafeDiffPath(requestedPath);
     const task = this.currentTask();
     if (task === undefined) {
-      this.write("no current task; use :use <task-id> or create a task first\n");
+      this.write("no current task; use /use <task-id> or create a task first\n");
       return;
     }
     const snapshot = this.#store.get(task.snapshot().taskId);
@@ -1042,7 +1043,7 @@ export class InteractiveTui {
       review.untrackedFingerprint === undefined
     ) {
       throw new ApplyChangesBlockedError(
-        "Review the complete current change list with :changes and the full diff with :diff before Apply.",
+        "Review the complete current change list with /changes and the full diff with /diff before Apply.",
       );
     }
     await this.withActiveSecrets(async (activeSecrets) => {
@@ -1186,7 +1187,7 @@ export class InteractiveTui {
   private validateCurrent(): void {
     const task = this.currentTask();
     if (task === undefined) {
-      this.write("no current task; use :use <task-id> or create a task first\n");
+      this.write("no current task; use /use <task-id> or create a task first\n");
       return;
     }
     const snapshot = task.snapshot();
@@ -1196,7 +1197,7 @@ export class InteractiveTui {
     }
     const metadata = this.#store.get(snapshot.taskId);
     if (metadata?.validator === undefined) {
-      this.write("validator not configured for this task; configure it before :new\n");
+      this.write("validator not configured for this task; configure it before /new\n");
       return;
     }
     if (this.#validator === undefined) {
@@ -1368,7 +1369,7 @@ export class InteractiveTui {
   private showTranscript(requestedTaskId: string): void {
     const taskId = requestedTaskId || this.#currentTaskId;
     if (taskId === undefined) {
-      this.write("no current task; use :use <task-id> or create a task first\n");
+      this.write("no current task; use /use <task-id> or create a task first\n");
       return;
     }
     const transcript = this.#store.transcript(taskId);
@@ -1422,7 +1423,7 @@ export class InteractiveTui {
     const name = separator < 0 ? value : value.slice(0, separator);
     const argumentText = separator < 0 ? "" : value.slice(separator).trim();
     if (name.length === 0) {
-      this.write("usage: :prompt <name> [arguments]\n");
+      this.write("usage: /prompt <name> [arguments]\n");
       return;
     }
     if (
@@ -1619,7 +1620,7 @@ export class InteractiveTui {
         }
         if (error instanceof ProviderContractError && stoppedState === "interrupted") {
           this.write(
-            `recovery: :resume ${taskId} <continuation>, :model deepseek-pro, or :cancel ${taskId}\n`,
+            `recovery: /resume ${taskId} <continuation>, /model deepseek-pro, or /cancel ${taskId}\n`,
           );
         }
       }
@@ -1789,7 +1790,7 @@ export class InteractiveTui {
           `${taskId} requires an explicit continuation; no interrupted prompt was replayed.\n`,
         );
         this.showTranscript(taskId);
-        this.write(`use :resume ${taskId} <continuation> after reviewing the saved evidence\n`);
+        this.write(`use /resume ${taskId} <continuation> after reviewing the saved evidence\n`);
         return;
       }
       if (containsCredentialMaterial(continuation) || this.hasActiveProviderSecret(continuation)) {
@@ -1859,7 +1860,7 @@ export class InteractiveTui {
       return;
     }
     if (this.#approvalProfile !== "auto") {
-      this.write("Trusted Shell Auto rejected: select :profile auto first\n");
+      this.write("Trusted Shell Auto rejected: select /profile auto first\n");
       return;
     }
     if (this.#shellRunner === undefined) {
@@ -1906,7 +1907,7 @@ export class InteractiveTui {
       signal.addEventListener("abort", denyOnAbort, { once: true });
       const safePath = redactSensitive(request.path, activeSecrets);
       this.write(
-        `\napproval required: delete ${safePath}\n:approve ${approvalId} or :deny ${approvalId}\n`,
+        `\napproval required: delete ${safePath}\n/approve ${approvalId} or /deny ${approvalId}\n`,
       );
     });
   }
@@ -1992,7 +1993,7 @@ export class InteractiveTui {
           `reason: ${formatApprovalField(request.reason)}`,
           `cwd: ${formatApprovalField(canonicalTaskWorktree)}`,
           `timeout: ${request.timeout === undefined ? "none" : `${request.timeout}s`}`,
-          `:approve ${approvalId} or :deny ${approvalId}`,
+          `/approve ${approvalId} or /deny ${approvalId}`,
           "",
         ].join("\n"),
       );

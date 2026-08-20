@@ -306,7 +306,7 @@ test("interactive TUI exposes sanitized provider recovery actions", async () => 
     assert.match(
       output,
       new RegExp(
-        `recovery: :resume ${taskId} <continuation>[\\s\\S]*deepseek-pro[\\s\\S]*:cancel`,
+        `recovery: /resume ${taskId} <continuation>[\\s\\S]*deepseek-pro[\\s\\S]*/cancel`,
         "u",
       ),
     );
@@ -360,10 +360,10 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     const approvalOutput = await waitForOutput(
       terminal,
-      /approval required: delete obsolete-\[REDACTED\]\.ts[\s\S]*:approve delete-[a-z0-9]+/u,
+      /approval required: delete obsolete-\[REDACTED\]\.ts[\s\S]*\/approve delete-[a-z0-9]+/u,
       5_000,
     );
-    const approvalId = approvalOutput.match(/:approve (delete-[a-z0-9]+)/u)?.[1];
+    const approvalId = approvalOutput.match(/\/approve (delete-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
     terminal.emitInput(`:approve ${approvalId}`);
     terminal.emitInput("\r");
@@ -810,7 +810,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
       terminal,
       /network approval required[\s\S]*git fetch origin/u,
     );
-    const approvalId = waiting.match(/:deny (network-[a-z0-9]+)/u)?.[1];
+    const approvalId = waiting.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
     terminal.emitInput(`:deny ${approvalId}`);
     terminal.emitInput("\r");
@@ -881,7 +881,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
       terminal,
       /network approval required[\s\S]*git ls-remote origin HEAD/u,
     );
-    const staleApprovalId = waiting.match(/:approve (network-[a-z0-9]+)/u)?.[1];
+    const staleApprovalId = waiting.match(/\/approve (network-[a-z0-9]+)/u)?.[1];
     assert.ok(staleApprovalId);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
@@ -2065,7 +2065,7 @@ const VALID_PNG = Buffer.from(
   "base64",
 );
 
-test("interactive TUI selects each explicit model and persists the canonical id", async () => {
+test("interactive TUI selects each explicit model through the slash command", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-models-"));
   const terminal = new FakeTerminal();
   const observed: string[] = [];
@@ -2092,7 +2092,8 @@ test("interactive TUI selects each explicit model and persists the canonical id"
       terminal.emitInput(":new");
       terminal.emitInput("\r");
       await waitForOutput(terminal, /new task ready/u);
-      terminal.emitInput(`:model ${alias}`);
+      assert.match(terminal.writes.join(""), /Provider\s+\/model/u);
+      terminal.emitInput(`/model ${alias}`);
       terminal.emitInput("\r");
       await waitForOutput(terminal, new RegExp(`model selected: ${model}`, "u"));
       terminal.emitInput(`run ${alias}`);

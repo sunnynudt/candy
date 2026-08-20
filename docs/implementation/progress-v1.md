@@ -1,6 +1,12 @@
 # Candy V1 Implementation Progress
 
-Updated: 2026-08-19
+Updated: 2026-08-20
+
+## 2026-08-20 TUI slash-command convention
+
+- Candy TUI built-in commands now use slash-prefixed syntax (`/model`, `/new`, `/attach`, `/resume`, and related commands) as the canonical user-facing form, matching the common coding-agent CLI convention.
+- Existing colon-prefixed inputs remain accepted as a compatibility alias and are normalized before dispatch. Ordinary prompts, including absolute paths such as `/private/...`, continue through the prompt path rather than being interpreted as commands.
+- Help text, model/attachment guidance, approval/recovery guidance, and the public product description use the slash form. This is command-prefix alignment, not a promise of full Pi/Codex/Claude Code/OpenCode command parity.
 
 Post-`2e8ee6b` current-host revalidation: `npm run acceptance:macos` passes **14/14** on macOS `26.6.1` arm64 with Node `22.23.2`/npm `10.9.8`; its embedded deterministic `npm run check` passes **248/248** (241 baseline + 7 new security regressions), and the real-PTY terminal matrix passes. The published code checkpoint is `2e8ee6b159c67627fad8039e7d2059a9084c9bf9` with matching remote SHA. macOS G2 was approved by the product owner on 2026-08-19 after the independent review package; `MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION` is enabled on darwin/arm64 and the normal TUI composition root now wires the host capability correctly. Three real DeepSeek Trusted Shell coding journeys and all three dogfood categories (repository understanding, small repair, failing-test diagnosis) pass at `2e8ee6b` with cancellation, one-command network approval, restart, Apply, worktree isolation, unchanged Git HEAD/index, and credential-free evidence. Live gates at the same revision pass DeepSeek **7/7** and domestic MiniMax **8/8** with sanitized presence-only evidence. The four medium findings from scan `721c4ab5-ccdf-4052-9a28-b695323b3b70` remain closed at the source level (worktree/workspace/session descriptor-relative binding and Trusted Shell read-only direct-tool network policy). The external standard scanner was not available in this session, so an independent scan rerun remains a non-blocking evidence item; signing/notarization and Windows execution remain separate non-blocking items for this macOS personal work packet. `.omo/` remains user-owned and untracked.
 
