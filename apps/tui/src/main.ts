@@ -653,7 +653,12 @@ export class InteractiveTui {
 
   private submitPrompt(prompt: string): void {
     if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
-      this.write("prompt rejected: credential material is forbidden\n");
+      this.write(
+        `\n[user] ${transcriptText(redactSensitive(prompt, this.activeSecretsSnapshot()))}\n`,
+      );
+      this.write(
+        "prompt rejected: credential-shaped content is forbidden; remove any token/api key/password before submitting\n",
+      );
       return;
     }
     const currentTaskId = this.#currentTaskId;
@@ -1669,7 +1674,14 @@ export class InteractiveTui {
       return;
     }
     if (containsCredentialMaterial(text) || this.hasActiveProviderSecret(text)) {
-      this.write("turn message rejected: credential material is forbidden\n");
+      this.write(
+        `\n[${mode === "steer" ? "steer" : "follow-up"}] ${transcriptText(
+          redactSensitive(text, this.activeSecretsSnapshot()),
+        )}\n`,
+      );
+      this.write(
+        "turn message rejected: credential-shaped content is forbidden; remove any token/api key/password\n",
+      );
       return;
     }
     const task = this.currentTask();

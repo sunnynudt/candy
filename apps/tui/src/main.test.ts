@@ -118,6 +118,41 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
   }
 });
 
+test("interactive TUI echoes a redacted line when a prompt contains credential-shaped content", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credential-echo-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn() {
+          yield { type: "turn.started", taskId: "rejected-prompt" };
+          throw new Error("the provider must not run for a rejected prompt");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(
+      "请分析 https://example.invalid/article?poc_token=HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn",
+    );
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /prompt rejected: credential-shaped content is forbidden/u,
+    );
+    assert.match(
+      output,
+      /\[user\] 请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
+    );
+    assert.doesNotMatch(output, /HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI strips terminal control sequences from assistant evidence", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-control-sequences-"));
   const terminal = new FakeTerminal();
