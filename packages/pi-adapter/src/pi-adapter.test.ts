@@ -180,16 +180,11 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
   }
 });
 
-test("Candy read-only tools expose an approved web fetch and bound untrusted page text", async () => {
+test("Candy read-only tools expose a default web fetch and bound untrusted page text", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-web-fetch-tools-"));
-  const approvals: { url: string; reason: string }[] = [];
   try {
     const tools = createCandyWorkspaceTools(root, "read-only", undefined, undefined, [], {
       webFetch: {
-        onApproval: async (request) => {
-          approvals.push({ url: request.url, reason: request.reason });
-          return true;
-        },
         transport: async (input, init) => {
           assert.equal(input, "https://cursor.com/cn/changelog/origin-code-hosting");
           assert.equal(init?.method, "GET");
@@ -226,12 +221,6 @@ test("Candy read-only tools expose an approved web fetch and bound untrusted pag
     assert.match(text, /Origin Code Hosting/u);
     assert.match(text, /Hosted repositories/u);
     assert.doesNotMatch(text, /ignore this script/u);
-    assert.deepEqual(approvals, [
-      {
-        url: "https://cursor.com/cn/changelog/origin-code-hosting",
-        reason: "Read the user-requested Cursor changelog.",
-      },
-    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -871,6 +860,7 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
       "candy_search",
       "candy_read",
       "candy_read_image",
+      "candy_web_fetch",
       "candy_edit",
       "candy_write",
       "candy_delete",
