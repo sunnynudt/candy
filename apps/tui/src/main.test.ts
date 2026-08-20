@@ -722,6 +722,60 @@ test("interactive TUI passes all active provider secrets to Trusted Shell redact
   }
 });
 
+test("interactive TUI exposes approved web reads to ordinary tasks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-web-fetch-"));
+  const workspace = await mkdtemp(path.join(root, "workspace-"));
+  const appData = await mkdtemp(path.join(root, "app-data-"));
+  const terminal = new FakeTerminal();
+  let observedApproval = false;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: appData,
+      workspacePath: workspace,
+      terminal,
+      engine: {
+        async *runTurn(input, signal) {
+          const approved = await input.webFetchApproval?.(
+            {
+              url: "https://cursor.com/cn/changelog/origin-code-hosting",
+              reason: "Read the user-requested changelog.",
+            },
+            signal,
+          );
+          observedApproval = approved === true;
+          if (!observedApproval) throw new Error("web read denied");
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_web_fetch",
+            ok: true,
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("read the Cursor changelog");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /network approval required[\s\S]*GET https:\/\/cursor\.com\/cn\/changelog\/origin-code-hosting/u,
+    );
+    const approvalId = waiting.match(/:approve (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(approvalId);
+    terminal.emitInput(`:approve ${approvalId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /candy_web_fetch:completed/u);
+    assert.equal(observedApproval, true);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI presents one-command network elevation and leaves the task resumable on denial", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-approval-"));

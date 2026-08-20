@@ -180,6 +180,126 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
   }
 });
 
+test("Candy read-only tools expose an approved web fetch and bound untrusted page text", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-web-fetch-tools-"));
+  const approvals: { url: string; reason: string }[] = [];
+  try {
+    const tools = createCandyWorkspaceTools(root, "read-only", undefined, undefined, [], {
+      webFetch: {
+        onApproval: async (request) => {
+          approvals.push({ url: request.url, reason: request.reason });
+          return true;
+        },
+        transport: async (input, init) => {
+          assert.equal(input, "https://cursor.com/cn/changelog/origin-code-hosting");
+          assert.equal(init?.method, "GET");
+          return new Response(
+            "<html><head><script>ignore this script</script></head><body><h1>Origin Code Hosting</h1><p>Hosted repositories.</p></body></html>",
+            { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+          );
+        },
+      },
+    });
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["candy_list", "candy_search", "candy_read", "candy_web_fetch"],
+    );
+    const tool = tools.find((candidate) => candidate.name === "candy_web_fetch");
+    assert.ok(tool);
+    const result = await tool.execute(
+      "fetch-cursor-changelog",
+      {
+        url: "https://cursor.com/cn/changelog/origin-code-hosting",
+        reason: "Read the user-requested Cursor changelog.",
+      },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const text = result.content
+      .filter(
+        (content): content is { readonly type: "text"; readonly text: string } =>
+          content.type === "text",
+      )
+      .map((content) => content.text)
+      .join("\n");
+    assert.match(text, /Origin Code Hosting/u);
+    assert.match(text, /Hosted repositories/u);
+    assert.doesNotMatch(text, /ignore this script/u);
+    assert.deepEqual(approvals, [
+      {
+        url: "https://cursor.com/cn/changelog/origin-code-hosting",
+        reason: "Read the user-requested Cursor changelog.",
+      },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy image tools return external user-provided images without widening workspace reads", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-image-tools-"));
+  const appData = await mkdtemp(path.join(tmpdir(), "candy-image-tools-app-data-"));
+  const external = await mkdtemp(path.join(tmpdir(), "candy-image-tools-external-"));
+  const imagePath = path.join(external, "pasted-image.png");
+  const workspaceImagePath = path.join(root, "workspace-image.png");
+  const validPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  try {
+    await writeFile(imagePath, validPng);
+    await writeFile(workspaceImagePath, validPng);
+    const tools = createCandyWorkspaceTools(root, "read-only", undefined, undefined, [], {
+      externalImageRoots: [appData],
+    });
+    const externalTool = tools.find((tool) => tool.name === "candy_read_image");
+    const workspaceTool = tools.find((tool) => tool.name === "candy_read");
+    assert.ok(externalTool);
+    assert.ok(workspaceTool);
+
+    const imageResult = await externalTool.execute(
+      "read-pasted-image",
+      { path: imagePath },
+      new AbortController().signal,
+      undefined,
+      {
+        model: { input: ["text", "image"] },
+      } as never,
+    );
+    const imageContent = imageResult.content.find((content) => content.type === "image");
+    assert.ok(imageContent);
+    assert.equal(imageContent.mimeType, "image/png");
+
+    const workspaceResult = await workspaceTool.execute(
+      "read-workspace-image",
+      { path: workspaceImagePath },
+      new AbortController().signal,
+      undefined,
+      {
+        model: { input: ["text", "image"] },
+      } as never,
+    );
+    assert.ok(workspaceResult.content.some((content) => content.type === "image"));
+    await assert.rejects(
+      externalTool.execute(
+        "read-workspace-through-external-tool",
+        { path: workspaceImagePath },
+        new AbortController().signal,
+        undefined,
+        {
+          model: { input: ["text", "image"] },
+        } as never,
+      ),
+      /workspace/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(appData, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
 test("Candy workspace tools redact reads and reject credential-bearing writes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-credential-tools-"));
   try {
@@ -750,6 +870,7 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
       "candy_list",
       "candy_search",
       "candy_read",
+      "candy_read_image",
       "candy_edit",
       "candy_write",
       "candy_delete",

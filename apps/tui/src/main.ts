@@ -10,6 +10,7 @@ import {
   PiAgentEngine,
   ProviderContractError,
   type CandyNetworkApprovalRequest,
+  type CandyWebFetchApprovalRequest,
   type CandyPromptTemplateInfo,
   loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
@@ -1512,6 +1513,8 @@ export class InteractiveTui {
                     this.requestFileDeleteApproval(taskId, request, signal, activeSecrets),
                 }
               : {}),
+            webFetchApproval: (request: CandyWebFetchApprovalRequest, signal: AbortSignal) =>
+              this.requestWebFetchApproval(taskId, request, signal),
             ...(taskSnapshot.trustedShell
               ? {
                   trustedShell: true,
@@ -1915,6 +1918,7 @@ export class InteractiveTui {
     taskId: string,
     request: CandyNetworkApprovalRequest,
     signal: AbortSignal,
+    requireTaskWorktree = true,
   ): Promise<boolean> {
     if (signal.aborted || this.#closing) return false;
     const task = this.ensureController(taskId);
@@ -1922,11 +1926,13 @@ export class InteractiveTui {
     const taskSnapshot = task.snapshot();
     if (taskSnapshot.state !== "running") return false;
     const taskMetadata = this.#store.get(taskId);
-    if (taskMetadata?.worktreePath === undefined) return false;
+    const approvalRoot =
+      taskMetadata?.worktreePath ?? (requireTaskWorktree ? undefined : taskMetadata?.workspacePath);
+    if (approvalRoot === undefined) return false;
     const [canonicalTaskWorktree, canonicalRequestCwd, taskRoot] = await Promise.all([
-      realpath(taskMetadata.worktreePath).catch(() => undefined),
+      realpath(approvalRoot).catch(() => undefined),
       realpath(request.cwd).catch(() => undefined),
-      lstat(taskMetadata.worktreePath).catch(() => undefined),
+      lstat(approvalRoot).catch(() => undefined),
     ]);
     if (
       canonicalTaskWorktree === undefined ||
@@ -1997,6 +2003,27 @@ export class InteractiveTui {
         ].join("\n"),
       );
     });
+  }
+
+  private requestWebFetchApproval(
+    taskId: string,
+    request: CandyWebFetchApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const taskMetadata = this.#store.get(taskId);
+    const approvalRoot = taskMetadata?.worktreePath ?? taskMetadata?.workspacePath;
+    if (approvalRoot === undefined) return Promise.resolve(false);
+    return this.requestNetworkApproval(
+      taskId,
+      {
+        command: `GET ${request.url}`,
+        cwd: approvalRoot,
+        reason: request.reason,
+        ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+      },
+      signal,
+      false,
+    );
   }
 
   private recoverStaleTuiOwners(): void {
