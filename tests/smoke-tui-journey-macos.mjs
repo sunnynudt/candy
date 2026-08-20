@@ -28,7 +28,7 @@ const imagePath = path.join(journeyRoot, "fixture.png");
 const outsideSentinel = path.join(journeyRoot, "outside-sentinel.txt");
 const ptyLog = path.join(journeyRoot, "pty.log");
 const resultPath = path.join(journeyRoot, "result.txt");
-const childPath = path.join(root, "scripts", "tui-journey-child.mjs");
+const childPath = path.join(root, "tests", "tui-journey-child.mjs");
 const expectPath = "/usr/bin/expect";
 const imageBytes = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -217,7 +217,7 @@ async function runExpect() {
   return await new Promise((resolve, reject) => {
     const child = execFile(
       expectPath,
-      ["-f", path.join(root, "scripts", "smoke-tui-journey-macos.exp")],
+      ["-f", path.join(root, "tests", "smoke-tui-journey-macos.exp")],
       {
         cwd: root,
         env: environment,

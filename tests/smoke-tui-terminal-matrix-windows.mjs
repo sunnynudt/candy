@@ -13,8 +13,8 @@ if (process.platform !== "win32" || process.arch !== "x64") {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const matrixRoot = await mkdtemp(path.join(os.tmpdir(), "candy-tui-terminal-matrix-"));
-const child = path.join(root, "scripts", "tui-terminal-matrix-child.mjs");
-const ptyHost = path.join(root, "scripts", "pty-host.ps1");
+const child = path.join(root, "tests", "tui-terminal-matrix-child.mjs");
+const ptyHost = path.join(root, "tests", "pty-host.ps1");
 const results = {};
 
 try {

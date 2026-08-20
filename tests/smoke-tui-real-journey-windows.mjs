@@ -16,7 +16,7 @@ const journeyRoot = await mkdtemp(path.join(os.tmpdir(), "candy-real-journey-"))
 const workspace = path.join(journeyRoot, "workspace with spaces");
 const appDataRoot = path.join(journeyRoot, "app-data");
 const ptyLog = path.join(journeyRoot, "journey.pty.log");
-const childPath = path.join(root, "scripts", "trusted-shell-journey-child.mjs");
+const childPath = path.join(root, "tests", "trusted-shell-journey-child.mjs");
 const environment = {
   ...cleanChildEnvironment(process.env),
   CANDY_APP_DATA_ROOT: appDataRoot,
@@ -87,7 +87,7 @@ async function runJourney() {
       "-ExecutionPolicy",
       "Bypass",
       "-File",
-      path.join(root, "scripts", "pty-host.ps1"),
+      path.join(root, "tests", "pty-host.ps1"),
     ],
     {
       cwd: root,

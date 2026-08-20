@@ -22,7 +22,7 @@ const temporaryRoot = path.join(journeyRoot, "tmp");
 const outsideSentinel = path.join(journeyRoot, "outside-sentinel.txt");
 const ptyLog = path.join(journeyRoot, "pty.log");
 const resultPath = path.join(journeyRoot, "result.txt");
-const childPath = path.join(root, "scripts", "trusted-shell-journey-child.mjs");
+const childPath = path.join(root, "tests", "trusted-shell-journey-child.mjs");
 const nativeRunnerPath = path.join(
   root,
   "native",
@@ -231,7 +231,7 @@ async function runExpect() {
   return await new Promise((resolve, reject) => {
     const child = execFile(
       "/usr/bin/expect",
-      ["-f", path.join(root, "scripts", "smoke-tui-trusted-shell-dogfood-macos.exp")],
+      ["-f", path.join(root, "tests", "smoke-tui-trusted-shell-dogfood-macos.exp")],
       { cwd: root, env: environment, maxBuffer: 128 * 1024 },
     );
     const stderr = [];

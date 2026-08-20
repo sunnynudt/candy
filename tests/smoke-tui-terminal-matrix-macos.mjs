@@ -12,8 +12,8 @@ if (process.platform !== "darwin" || process.arch !== "arm64") {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const matrixRoot = await mkdtemp(path.join(os.tmpdir(), "candy-tui-terminal-matrix-"));
-const child = path.join(root, "scripts", "tui-terminal-matrix-child.mjs");
-const expectScript = path.join(root, "scripts", "smoke-tui-terminal-matrix-macos.exp");
+const child = path.join(root, "tests", "tui-terminal-matrix-child.mjs");
+const expectScript = path.join(root, "tests", "smoke-tui-terminal-matrix-macos.exp");
 const results = {};
 
 try {
