@@ -10,6 +10,7 @@ import {
   type EditorTheme,
 } from "@earendil-works/pi-tui";
 import { containsCredentialMaterial } from "@candy/platform";
+import { createCandySlashCommandAutocompleteProvider } from "./slash-commands.js";
 
 const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_TUI_WRITE_LOG",
@@ -77,6 +78,7 @@ export class CandyTuiSurface {
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
     this.#transcript = new Text();
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
+    this.#editor.setAutocompleteProvider(createCandySlashCommandAutocompleteProvider());
     this.#editor.onSubmit = (text: string): void => {
       const submittedText: string = text.trim();
       this.#editor.setText("");

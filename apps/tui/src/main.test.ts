@@ -118,6 +118,35 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
   }
 });
 
+test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
+  const terminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new InteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "bare-slash" };
+          throw new Error("bare slash must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/");
+    await waitForOutput(terminal, /Choose the primary model/u);
+    terminal.emitInput("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(turnCount, 0);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI echoes a redacted line when a prompt contains credential-shaped content", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credential-echo-"));
   const terminal = new FakeTerminal();
