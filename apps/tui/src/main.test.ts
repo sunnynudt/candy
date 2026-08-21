@@ -641,6 +641,9 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
     terminal.emitInput("\r");
+    terminal.emitInput(":worktree on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /worktree on:/u);
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
     const output = await waitForOutput(
@@ -678,6 +681,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
       workspacePath: repository,
       terminal,
       shellRunner,
+      worktreeEnabled: true,
       trustedShellAutoAvailable: true,
       engine: {
         async *runTurn(input) {
@@ -731,6 +735,7 @@ test("interactive TUI passes all active provider secrets to Trusted Shell redact
       workspacePath: repository,
       terminal,
       activeSecrets: () => ["deepseek-secret", "minimax-secret"],
+      worktreeEnabled: true,
       shellRunner: {
         run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
       },
@@ -811,6 +816,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
+      worktreeEnabled: true,
       trustedShellAutoAvailable: true,
       shellRunner: {
         run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
@@ -880,6 +886,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
       appDataRoot,
       workspacePath: repository,
       terminal,
+      worktreeEnabled: true,
       trustedShellAutoAvailable: true,
       shellRunner: {
         run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
@@ -982,6 +989,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
       appDataRoot,
       workspacePath: repository,
       terminal,
+      worktreeEnabled: true,
       trustedShellAutoAvailable: true,
       shellRunner: {
         run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
@@ -1675,6 +1683,84 @@ test("interactive TUI reviews non-Git changed files and bounded diff without mut
   }
 });
 
+test("interactive TUI defaults to direct mode and edits the current Git workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "direct edit\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("edit directly");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(executionPath, repository);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "direct edit\n");
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.list()[0];
+    assert.equal(task?.worktreePath, undefined);
+    assert.equal(existsSync(path.join(repository, ".git", "candy-worktrees")), false);
+    store.close();
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /direct mode: changes are already in the local workspace/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects a direct-mode task when the Git workspace is dirty", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-dirty-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let engineCalls = 0;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      engineCalls += 1;
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await writeFile(path.join(repository, "dirty.txt"), "uncommitted\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("edit dirty workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /clean Git working tree/u);
+    assert.equal(engineCalls, 0);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed Apply", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-apply-"));
   const appDataRoot = path.join(root, "app-data");
@@ -1700,6 +1786,9 @@ test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed App
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
     terminal.emitInput("\r");
+    terminal.emitInput(":worktree on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /worktree on:/u);
     terminal.emitInput("edit in isolation");
     terminal.emitInput("\r");
     const created = await waitForOutput(terminal, /Task Worktree:/u);
@@ -1764,6 +1853,7 @@ test("interactive TUI explicitly discards a completed Task Worktree without touc
       workspacePath: repository,
       engine,
       terminal,
+      worktreeEnabled: true,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
@@ -1810,6 +1900,7 @@ test("interactive TUI persists reviewed workspace metadata across restart", asyn
       workspacePath: repository,
       engine: firstEngine,
       terminal: firstTerminal,
+      worktreeEnabled: true,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     firstTerminal.emitInput(":profile auto");
@@ -2159,6 +2250,150 @@ test("interactive TUI selects each explicit model through the slash command", as
       cases.map(([, model]) => model).sort(),
     );
     store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI lists available models for a bare /model", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-model-list-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/model");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Available models/u);
+    assert.match(output, /deepseek-flash/u);
+    assert.match(output, /deepseek-pro/u);
+    assert.match(output, /minimax-m3/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI /help lists the full command reference", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-help-"));
+  const terminal = new FakeTerminal({ rows: 60 });
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/help");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Candy commands/u);
+    assert.match(output, /\/model/u);
+    assert.match(output, /\/resume/u);
+    assert.match(output, /\/apply/u);
+    assert.match(output, /\/quit/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI lists resumable tasks for a bare /resume without submitting a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-resume-list-"));
+  const firstTerminal = new FakeTerminal();
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "partial side-effect evidence",
+          };
+          throw new Error("ambiguous side effect requires review");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("perform the original operation");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /ambiguous side effect/u);
+    const taskId = firstOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const calls: string[] = [];
+    const secondRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput("/resume");
+    secondTerminal.emitInput("\r");
+    const list = await waitForOutput(secondTerminal, /choose with \/resume <task-id>/u);
+    assert.match(list, new RegExp(taskId, "u"));
+    assert.equal(calls.length, 0);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI shows usage for bare required-argument commands and keeps prompts intact", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-usage-"));
+  const terminal = new FakeTerminal();
+  const calls: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "ok" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const command of [
+      "/cancel",
+      "/pause",
+      "/approve",
+      "/deny",
+      "/prioritize",
+      "/steer",
+      "/follow-up",
+    ]) {
+      terminal.emitInput(command);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`usage: ${command}`, "u"));
+    }
+    terminal.emitInput("/profile");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /profile: auto/u);
+    assert.equal(calls.length, 0);
+    terminal.emitInput("/private/tmp/probe");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /ok/u);
+    assert.deepEqual(calls, ["/private/tmp/probe"]);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

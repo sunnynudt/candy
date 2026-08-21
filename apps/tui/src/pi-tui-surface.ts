@@ -164,8 +164,8 @@ export function assertSafeTuiEnvironment(environment: NodeJS.ProcessEnv = proces
 
 export class FakeTerminal implements CandyTuiTerminal {
   public readonly writes: string[] = [];
-  public readonly columns: number = 80;
-  public readonly rows: number = 24;
+  public readonly columns: number;
+  public readonly rows: number;
   public readonly kittyProtocolActive: boolean = false;
   public started: boolean = false;
   public stopped: boolean = false;
@@ -174,6 +174,11 @@ export class FakeTerminal implements CandyTuiTerminal {
   public drainCalls: number = 0;
   #inputHandler: ((data: string) => void) | undefined = undefined;
   #resizeHandler: (() => void) | undefined = undefined;
+
+  public constructor(options: { readonly columns?: number; readonly rows?: number } = {}) {
+    this.columns = options.columns ?? 80;
+    this.rows = options.rows ?? 24;
+  }
 
   public start(onInput: (data: string) => void, onResize: () => void): void {
     this.started = true;

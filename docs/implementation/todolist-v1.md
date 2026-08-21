@@ -4,6 +4,14 @@
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
+## 2026-08-20 TUI 命令可用性改进 checkpoint
+
+- `/model` 无参时列出当前模型与全部可选模型（deepseek-flash / deepseek-pro / minimax-m3，单一来源 `CANDY_MODEL_CHOICES`）。
+- `/resume` 无参时列出 paused/interrupted 可恢复任务并要求显式 continuation；`/use` 无参列出任务；`/profile` 无参显示当前模式。
+- 裸已知必需参数命令（cancel/pause/approve/deny/prioritize/steer/follow-up 等）打印 usage，不再作为提示词发给模型；未知 `/...` 输入仍走提示词路径。
+- 新增 `/help` 与 `docs/usage/tui-commands.md`，命令元数据与 `CANDY_SLASH_COMMANDS` 单一来源。
+- 验证：`npm run check`（248 + 4 新回归）、`npm run smoke:tui`、`npm run smoke:tui:terminal:macos`、`npm run acceptance:macos`；staged diff 凭据扫描后 commit/push 并核对远程 SHA。
+
 当前代码 checkpoint `2e8ee6b` 已发布并完成 current-host macOS `26.6.1` arm64 acceptance **14/14**，内含 `npm run check` **248/248**、真实 PTY terminal matrix 和 macOS strict containment matrix。macOS G2 已于 2026-08-19 经产品负责人确认通过：`MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION.approved = true`（提交 `926bc1a`），composition root 接线修复；真实 DeepSeek Trusted Shell 旅程 attempt 1–3 全部通过，dogfood 3/3（仓库理解、小修复、失败测试诊断），live DeepSeek **7/7**、国内 MiniMax **8/8**，报告均脱敏并绑定 `2e8ee6b`。安全修复（`9009ac1` + `3408413`）关闭标准扫描 `721c4ab5-ccdf-4052-9a28-b695323b3b70` 的 4 个 medium findings，每项均有回归测试。Trusted Shell harness 的两处过期断言已修复（`0c78f3b`、`2e8ee6b`）。剩余非阻塞项：外部标准扫描重跑（本会话无扫描器）、Apple 签名/公证、Windows 11（本工作包按指示暂缓）。`.omo/` 保持 user-owned 未跟踪。
 
 ## 2026-08-20 TUI slash 命令约定

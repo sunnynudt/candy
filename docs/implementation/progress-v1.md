@@ -2,6 +2,14 @@
 
 Updated: 2026-08-20
 
+## 2026-08-20 TUI 命令可用性改进 checkpoint
+
+- `/model` 无参时列出当前模型与全部可选模型（deepseek-flash / deepseek-pro / minimax-m3，单一来源 `CANDY_MODEL_CHOICES`）。
+- `/resume` 无参时列出 paused/interrupted 可恢复任务并要求显式 continuation；`/use` 无参列出任务；`/profile` 无参显示当前模式。
+- 裸已知必需参数命令（cancel/pause/approve/deny/prioritize/steer/follow-up 等）打印 usage，不再作为提示词发给模型；未知 `/...` 输入仍走提示词路径。
+- 新增 `/help` 与 `docs/usage/tui-commands.md`，命令元数据与 `CANDY_SLASH_COMMANDS` 单一来源。
+- 验证：`npm run check`（248 + 4 新回归）、`npm run smoke:tui`、`npm run smoke:tui:terminal:macos`、`npm run acceptance:macos`；staged diff 凭据扫描后 commit/push 并核对远程 SHA。
+
 ## 2026-08-20 TUI slash-command convention
 
 - Candy TUI built-in commands now use slash-prefixed syntax (`/model`, `/new`, `/attach`, `/resume`, and related commands) as the canonical user-facing form, matching the common coding-agent CLI convention.

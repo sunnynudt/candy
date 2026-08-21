@@ -16,21 +16,21 @@ This document defines when the Candy V1 TUI is complete. Product scope comes fro
 
 ## Result classifications
 
-| Result | Meaning |
-| --- | --- |
-| Pass | All stated outcomes and evidence requirements are satisfied. |
-| Controlled failure | A stated dependency failure is preserved safely and produces the specified actionable state. |
-| Blocked | Required credential, entitlement, or target platform is unavailable. A blocked required scenario prevents release. |
-| Fail | An observable outcome differs from the contract. |
+| Result             | Meaning                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Pass               | All stated outcomes and evidence requirements are satisfied.                                                       |
+| Controlled failure | A stated dependency failure is preserved safely and produces the specified actionable state.                       |
+| Blocked            | Required credential, entitlement, or target platform is unavailable. A blocked required scenario prevents release. |
+| Fail               | An observable outcome differs from the contract.                                                                   |
 
 V1 requires zero open P0/P1 defects. P2 items require explicit product-owner acceptance and release-note disclosure.
 
 ## Acceptance environments
 
-| ID | Environment | Required V1 scope |
-| --- | --- | --- |
-| ENV-MAC | Current macOS Tahoe `26.x` Apple Silicon, currently `26.6.1` | TUI, app-data, Keychain, workspace, session, native adapter where enabled |
-| ENV-WIN | Current supported Windows 11 x64 | TUI, app-data, Credential Manager, workspace, session, native adapter where enabled |
+| ID      | Environment                                                  | Required V1 scope                                                                   |
+| ------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| ENV-MAC | Current macOS Tahoe `26.x` Apple Silicon, currently `26.6.1` | TUI, app-data, Keychain, workspace, session, native adapter where enabled           |
+| ENV-WIN | Current supported Windows 11 x64                             | TUI, app-data, Credential Manager, workspace, session, native adapter where enabled |
 
 No current macOS run proves Windows behavior. Unsupported operating systems must fail clearly rather than partially execute.
 
@@ -95,6 +95,7 @@ Required outcomes:
 
 - Read-only mode rejects mutations and shell execution.
 - Auto mode exposes only the contracted, containment-checked workspace tools.
+- Direct mode is the Auto default for Git workspaces and requires a clean working tree; worktree isolation is opt-in via `/worktree on`.
 - Tool names and output are bounded; control characters, credential-shaped values, arguments, and unbounded output do not leak into the TUI evidence.
 - Workspace escape, traversal, symlink/reparse-point, invalid-path, and race fixtures fail closed.
 - Git Task Worktrees, when used, are Candy-owned, task-bound, and isolated for concurrent writable tasks.
@@ -124,13 +125,13 @@ Required outcomes:
 
 Targets are measured over ten runs on each required platform, excluding provider and public-network latency:
 
-| Metric | V1 target |
-| --- | --- |
-| TUI cold start to usable prompt | p95 at or below 2 seconds |
-| Local Runtime event to visible TUI projection | p95 at or below 200 ms |
-| User cancellation to provider stream stop request | at or below 2 seconds |
-| User cancellation to task-owned process-tree termination | at or below 5 seconds where Shell is enabled |
-| Three concurrent tasks | no presentation freeze longer than 1 second and no event loss |
+| Metric                                                   | V1 target                                                     |
+| -------------------------------------------------------- | ------------------------------------------------------------- |
+| TUI cold start to usable prompt                          | p95 at or below 2 seconds                                     |
+| Local Runtime event to visible TUI projection            | p95 at or below 200 ms                                        |
+| User cancellation to provider stream stop request        | at or below 2 seconds                                         |
+| User cancellation to task-owned process-tree termination | at or below 5 seconds where Shell is enabled                  |
+| Three concurrent tasks                                   | no presentation freeze longer than 1 second and no event loss |
 
 Provider first-token and completion time are reported separately and are not attributed to Candy.
 

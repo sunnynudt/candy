@@ -468,6 +468,7 @@ export {
   ProviderConcurrencyGate,
   SerialMutationLane,
   WorkspaceHandoff,
+  isGitWorkspaceClean,
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,

@@ -62,11 +62,13 @@ import {
   type ValidatorResult,
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
+  isGitWorkspaceClean,
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
+import { CANDY_MODEL_CHOICES, CANDY_SLASH_COMMANDS } from "./slash-commands.js";
 
 export interface TuiSmokeResult {
   readonly piVersion: string;
@@ -144,6 +146,7 @@ export interface InteractiveTuiOptions {
   readonly credentialStore?: CredentialStore;
   readonly credentialEnvironment?: NodeJS.ProcessEnv;
   readonly shellRunner?: TuiShellRunner;
+  readonly worktreeEnabled?: boolean;
   /** Set only by a composition root after the platform-specific G2 gate passes. */
   readonly trustedShellAutoAvailable?: boolean;
 }
@@ -282,6 +285,7 @@ export class InteractiveTui {
   #creatingTask = false;
   #pendingTaskCreation: Promise<void> | undefined;
   #approvalProfile: "read-only" | "auto" = "auto";
+  #worktreeEnabled = false;
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
   #trustedShellEnabled = false;
@@ -305,6 +309,7 @@ export class InteractiveTui {
       );
     this.#worktreeRoot = paths.worktrees;
     this.#worktreeManager = new GitWorktreeManager(this.#worktreeRoot);
+    this.#worktreeEnabled = options.worktreeEnabled ?? false;
     this.#changeTracker =
       options.changeTracker ??
       new ResolvedWorkspaceChangeTracker(
@@ -374,7 +379,7 @@ export class InteractiveTui {
       [
         "Candy TUI — local-first, one agent per task",
         "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，/new 新建任务；",
-        "/profile read-only 切换只读，/trusted-shell on 开启本地 Shell，/quit 退出。",
+        "/profile read-only 切换只读，/worktree on 隔离任务，/quit 退出。",
         "",
         "命令参考（Commands）:",
         "Start       type a prompt, or /new [prompt]",
@@ -384,12 +389,15 @@ export class InteractiveTui {
         "Review      /changes · /diff [path] · /apply · /discard · /validate",
         "Control     /steer /follow-up <text> · /pause /resume /cancel <task-id>",
         "Personal    /prompts · /prompt <name> [args] · /resources · /transcript",
-        "Modes       /profile read-only|auto · /trusted-shell on|off · /validator <exec>",
+        "Modes       /profile read-only|auto · /worktree on|off · /trusted-shell on|off · /validator <exec>",
+        "Help        /help — 完整命令参考（full command reference）",
         "Quit        /quit",
         "",
       ].join("\n") + "\n",
     );
-    this.write("Profile: auto（可增删查改）· Trusted Shell Auto: off（关闭）\n");
+    this.write(
+      `Profile: auto（可增删查改）· Worktree: ${this.#worktreeEnabled ? "on（隔离）" : "off（直接模式）"}· Trusted Shell Auto: off（关闭）\n`,
+    );
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
@@ -426,10 +434,15 @@ export class InteractiveTui {
     const trimmed: string = raw.startsWith(":") ? `/${raw.slice(1)}` : raw;
     if (trimmed === "/quit") {
       this.requestExit();
+    } else if (trimmed === "/help") {
+      this.showHelp();
     } else if (this.#creatingTask) {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
     } else if (trimmed === "/new" || trimmed.startsWith("/new ")) {
       this.newTask(trimmed.slice(4).trim());
+    } else if (trimmed === "/use") {
+      this.printTasks();
+      this.write("choose with /use <task-id>\n");
     } else if (trimmed.startsWith("/use ")) {
       this.useTask(trimmed.slice(5).trim());
     } else if (trimmed === "/workspace" || trimmed.startsWith("/workspace ")) {
@@ -460,8 +473,12 @@ export class InteractiveTui {
       });
     } else if (trimmed === "/tasks") {
       this.printTasks();
+    } else if (trimmed === "/profile") {
+      this.write(`profile: ${this.#approvalProfile}\n`);
     } else if (trimmed.startsWith("/profile ")) {
       this.setProfile(trimmed.slice(9).trim());
+    } else if (trimmed === "/worktree" || trimmed.startsWith("/worktree ")) {
+      this.setWorktree(trimmed.slice(9).trim());
     } else if (trimmed === "/trusted-shell" || trimmed.startsWith("/trusted-shell ")) {
       this.setTrustedShell(trimmed.slice(14).trim());
     } else if (trimmed === "/shell" || trimmed.startsWith("/shell ")) {
@@ -494,6 +511,8 @@ export class InteractiveTui {
       this.prioritize(trimmed.slice(12).trim());
     } else if (trimmed.startsWith("/pause ")) {
       this.pause(trimmed.slice(7).trim());
+    } else if (trimmed === "/resume") {
+      this.showResumableTasks();
     } else if (trimmed.startsWith("/resume ")) {
       const resumeValue = trimmed.slice(8).trim();
       const separator = resumeValue.indexOf(" ");
@@ -510,6 +529,16 @@ export class InteractiveTui {
         this.write(`cancel rejected: ${safeError(error)}\n`);
       });
     } else if (raw.length > 0) {
+      if (trimmed.startsWith("/")) {
+        const name = trimmed.slice(1).split(/\s+/u, 1)[0] ?? "";
+        const command = CANDY_SLASH_COMMANDS.find((entry) => entry.name === name);
+        if (command !== undefined && command.requiredArgument === true) {
+          this.write(
+            `usage: ${command.usage ?? `/${command.name} ${command.argumentHint ?? "<required>"}`}\n`,
+          );
+          return;
+        }
+      }
       this.submitPrompt(raw);
     }
   }
@@ -565,11 +594,35 @@ export class InteractiveTui {
         throw new Error("Trusted Shell Auto requires the Auto approval profile.");
       if (this.#shellRunner === undefined)
         throw new Error("Trusted Shell Auto is unavailable on this installation.");
+      if (!this.#worktreeEnabled) throw new Error("Trusted Shell Auto requires /worktree on.");
       if (workspaceBaseline === undefined)
         throw new Error("Trusted Shell Auto requires a Git-backed Task Worktree.");
     }
+    if (approvalProfile === "auto" && workspaceBaseline !== undefined && !this.#worktreeEnabled) {
+      if (!(await isGitWorkspaceClean(workspacePath)))
+        throw new Error(
+          "Direct-mode tasks require a clean Git working tree; commit or stash local changes first.",
+        );
+      const directTaskActive = this.#store
+        .list()
+        .some(
+          (task) =>
+            task.workspacePath === workspacePath &&
+            task.approvalProfile === "auto" &&
+            task.worktreePath === undefined &&
+            (task.state === "queued" ||
+              task.state === "running" ||
+              task.state === "waiting_approval" ||
+              task.state === "paused" ||
+              task.state === "interrupted"),
+        );
+      if (directTaskActive)
+        throw new Error(
+          "A direct-mode task is already active in this workspace; finish or cancel it first.",
+        );
+    }
     let worktreePath: string | undefined;
-    if (approvalProfile === "auto" && workspaceBaseline !== undefined) {
+    if (approvalProfile === "auto" && workspaceBaseline !== undefined && this.#worktreeEnabled) {
       const plan = this.planForTask(taskId, workspacePath, workspaceBaseline);
       try {
         await this.#worktreeManager.create(plan);
@@ -777,6 +830,10 @@ export class InteractiveTui {
     const currentModel = current?.snapshot().model ?? this.#selectedModel;
     if (value === "") {
       this.write(`model: ${currentModel}\n`);
+      this.write("Available models (choose with /model <name>):\n");
+      for (const choice of CANDY_MODEL_CHOICES) {
+        this.write(`  ${choice.value}  ${choice.description ?? ""}\n`);
+      }
       return;
     }
     const model = parseModelId(value);
@@ -1033,6 +1090,19 @@ export class InteractiveTui {
   }
 
   private async applyCurrent(): Promise<void> {
+    const currentTask = this.currentTask();
+    const currentMetadata =
+      currentTask === undefined ? undefined : this.#store.get(currentTask.snapshot().taskId);
+    if (
+      currentMetadata !== undefined &&
+      currentMetadata.state === "completed" &&
+      currentMetadata.worktreePath === undefined
+    ) {
+      this.write(
+        "direct mode: changes are already in the local workspace; review with /changes and /diff, then commit them with git\n",
+      );
+      return;
+    }
     const snapshot = this.requireCompletedWorktree("Apply Changes");
     const review =
       this.#workspaceReviews.get(snapshot.taskId) ?? this.#store.getReview(snapshot.taskId);
@@ -1096,6 +1166,19 @@ export class InteractiveTui {
   }
 
   private async discardCurrent(): Promise<void> {
+    const currentTask = this.currentTask();
+    const currentMetadata =
+      currentTask === undefined ? undefined : this.#store.get(currentTask.snapshot().taskId);
+    if (
+      currentMetadata !== undefined &&
+      currentMetadata.state === "completed" &&
+      currentMetadata.worktreePath === undefined
+    ) {
+      this.write(
+        "direct mode: Candy does not reset local changes; review with /changes and /diff, then use git restore/clean to discard them\n",
+      );
+      return;
+    }
     const snapshot = this.requireCompletedWorktree("Discard");
     try {
       await this.#worktreeManager.discard(this.planFromMetadata(snapshot));
@@ -1809,6 +1892,34 @@ export class InteractiveTui {
     }
   }
 
+  private showHelp(): void {
+    this.write("Candy commands: full reference in docs/usage/tui-commands.md\n");
+    for (const command of CANDY_SLASH_COMMANDS) {
+      const syntax =
+        command.usage ??
+        `/${command.name}${command.argumentHint === undefined ? "" : ` ${command.argumentHint}`}`;
+      this.write(
+        `  ${syntax}${command.description === undefined ? "" : ` — ${command.description}`}\n`,
+      );
+    }
+  }
+
+  private showResumableTasks(): void {
+    const resumable = this.#store
+      .list()
+      .filter((task) => task.state === "paused" || task.state === "interrupted");
+    if (resumable.length === 0) {
+      this.write("no paused or interrupted tasks to resume\n");
+      return;
+    }
+    for (const task of resumable) {
+      this.write(
+        `${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\n`,
+      );
+    }
+    this.write("choose with /resume <task-id> <continuation> after reviewing the saved evidence\n");
+  }
+
   private printTasks(): void {
     for (const task of this.#store.list()) {
       const current = task.taskId === this.#currentTaskId ? "*" : " ";
@@ -1845,6 +1956,20 @@ export class InteractiveTui {
     );
   }
 
+  private setWorktree(value: string): void {
+    if (value !== "on" && value !== "off") {
+      this.write("worktree must be on or off\n");
+      return;
+    }
+    this.#worktreeEnabled = value === "on";
+    if (value === "off") this.#trustedShellEnabled = false;
+    this.write(
+      value === "on"
+        ? "worktree on: Auto Git tasks run in an isolated Task Worktree\n"
+        : "worktree off: Auto tasks edit the current workspace directly; commit with git after review\n",
+    );
+  }
+
   private setTrustedShell(value: string): void {
     if (value === "") {
       this.write(`Trusted Shell Auto: ${this.#trustedShellEnabled ? "on" : "off"}\n`);
@@ -1865,6 +1990,10 @@ export class InteractiveTui {
     }
     if (this.#approvalProfile !== "auto") {
       this.write("Trusted Shell Auto rejected: select /profile auto first\n");
+      return;
+    }
+    if (!this.#worktreeEnabled) {
+      this.write("Trusted Shell Auto rejected: select /worktree on first\n");
       return;
     }
     if (this.#shellRunner === undefined) {

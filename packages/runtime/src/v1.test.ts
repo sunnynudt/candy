@@ -43,6 +43,7 @@ import {
   ProviderConcurrencyGate,
   SerialMutationLane,
   WorkspaceHandoff,
+  isGitWorkspaceClean,
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,
@@ -82,6 +83,35 @@ test("Task Worktree root prefers the project .git directory and falls back other
 
     rmSync(path.join(repository, ".git"));
     assert.equal(resolveTaskWorktreeRoot(repository, fallback), fallback);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("isGitWorkspaceClean detects tracked and untracked changes", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "candy-git-clean-"));
+  try {
+    const repository = path.join(root, "repo");
+    mkdirSync(repository);
+    execFileSync("git", ["init", "-q"], { cwd: repository });
+    writeFileSync(path.join(repository, "README.md"), "base\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repository });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Candy Fixture",
+        "-c",
+        "user.email=candy-fixture@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      { cwd: repository },
+    );
+    assert.equal(await isGitWorkspaceClean(repository), true);
+    writeFileSync(path.join(repository, "dirty.txt"), "dirty\n");
+    assert.equal(await isGitWorkspaceClean(repository), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

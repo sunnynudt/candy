@@ -967,6 +967,18 @@ export async function resolveGitCommonDirectory(
   return directory;
 }
 
+/** True when a Git working tree has no tracked or untracked changes. */
+export async function isGitWorkspaceClean(
+  workspace: string,
+  runner: GitCommandRunner = new NodeGitCommandRunner(),
+): Promise<boolean> {
+  try {
+    return (await runner.run(["status", "--porcelain=v1", "-z"], workspace)).length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Reads a task workspace without mutating Git state or exposing command errors. */
 export class GitWorkspaceChangeTracker implements WorkspaceChangeTracker {
   readonly #runner: GitCommandRunner;

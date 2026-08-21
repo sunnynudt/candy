@@ -5,7 +5,15 @@ import {
   type SlashCommand,
 } from "@earendil-works/pi-tui";
 
-const MODEL_COMPLETIONS: readonly AutocompleteItem[] = [
+/** A Candy slash command with optional usage metadata for /help and bare-command guards. */
+export interface CandySlashCommand extends SlashCommand {
+  /** True when the command is inert without its required argument. */
+  readonly requiredArgument?: boolean;
+  /** Canonical syntax shown by /help, including the leading "/". */
+  readonly usage?: string;
+}
+
+export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
   {
     value: "deepseek-flash",
     label: "deepseek-flash",
@@ -19,18 +27,22 @@ const MODEL_COMPLETIONS: readonly AutocompleteItem[] = [
   {
     value: "minimax-m3",
     label: "minimax-m3",
-    description: "MiniMax M3",
+    description: "MiniMax M3 (native image)",
   },
 ];
 
 function completeModels(argumentPrefix: string): AutocompleteItem[] {
   const prefix = argumentPrefix.trim().toLowerCase();
-  return MODEL_COMPLETIONS.filter((item: AutocompleteItem): boolean =>
+  return CANDY_MODEL_CHOICES.filter((item: AutocompleteItem): boolean =>
     item.value.toLowerCase().startsWith(prefix),
   );
 }
 
-export const CANDY_SLASH_COMMANDS: readonly SlashCommand[] = [
+export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
+  {
+    name: "help",
+    description: "Show the Candy command reference",
+  },
   {
     name: "model",
     argumentHint: "<model>",
@@ -51,6 +63,15 @@ export const CANDY_SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "profile",
     argumentHint: "read-only|auto",
     description: "Choose the approval profile",
+    requiredArgument: true,
+    usage: "/profile read-only|auto",
+  },
+  {
+    name: "worktree",
+    argumentHint: "on|off",
+    description: "Isolate Auto Git tasks in a Task Worktree",
+    requiredArgument: true,
+    usage: "/worktree on|off",
   },
   {
     name: "tasks",
@@ -60,6 +81,8 @@ export const CANDY_SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "use",
     argumentHint: "<task-id>",
     description: "Select a task",
+    requiredArgument: true,
+    usage: "/use <task-id>",
   },
   {
     name: "transcript",
@@ -87,11 +110,13 @@ export const CANDY_SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "credential",
     argumentHint: "set|replace|delete <provider>",
     description: "Manage a provider credential",
+    usage: "/credential set|replace|delete <deepseek|minimax-cn>",
   },
   {
     name: "attach",
     argumentHint: "<path>",
     description: "Attach an image to the next task",
+    usage: "/attach <absolute-path>",
   },
   {
     name: "attachments",
@@ -137,41 +162,57 @@ export const CANDY_SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "approve",
     argumentHint: "<approval-id>",
     description: "Approve a pending action",
+    requiredArgument: true,
+    usage: "/approve <approval-id>",
   },
   {
     name: "deny",
     argumentHint: "<approval-id>",
     description: "Deny a pending action",
+    requiredArgument: true,
+    usage: "/deny <approval-id>",
   },
   {
     name: "prioritize",
     argumentHint: "<task-id>",
     description: "Prioritize a queued task",
+    requiredArgument: true,
+    usage: "/prioritize <task-id>",
   },
   {
     name: "pause",
     argumentHint: "<task-id>",
     description: "Pause a task",
+    requiredArgument: true,
+    usage: "/pause <task-id>",
   },
   {
     name: "resume",
     argumentHint: "<task-id> <prompt>",
     description: "Continue a task with a new prompt",
+    requiredArgument: true,
+    usage: "/resume <task-id> <continuation>",
   },
   {
     name: "steer",
     argumentHint: "<text>",
     description: "Queue steering for the active turn",
+    requiredArgument: true,
+    usage: "/steer <text>",
   },
   {
     name: "follow-up",
     argumentHint: "<text>",
     description: "Queue a follow-up for the active turn",
+    requiredArgument: true,
+    usage: "/follow-up <text>",
   },
   {
     name: "cancel",
     argumentHint: "<task-id>",
     description: "Cancel a task",
+    requiredArgument: true,
+    usage: "/cancel <task-id>",
   },
   {
     name: "quit",
