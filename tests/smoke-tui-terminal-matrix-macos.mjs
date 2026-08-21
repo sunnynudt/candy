@@ -56,9 +56,22 @@ try {
           `Normal terminal matrix tasks did not complete: ${JSON.stringify(tasks)}\nPTY log:\n${await readFile(ptyLog, "utf8").catch(() => "<missing>")}`,
         );
       const log = await readFile(ptyLog, "utf8");
-      if (!log.includes("terminal-matrix-first-ok") || !log.includes("terminal-matrix-paste-ok"))
+      const commandReferenceEvidence =
+        log.includes("Available models") &&
+        log.includes("deepseek-flash") &&
+        log.includes("deepseek-pro") &&
+        log.includes("minimax-m3") &&
+        log.includes("no paused or interrupted tasks to resume") &&
+        log.includes("usage: /cancel <task-id>") &&
+        log.includes("/quit — Exit Candy");
+      if (
+        !log.includes("terminal-matrix-first-ok") ||
+        !log.includes("terminal-matrix-paste-ok") ||
+        !commandReferenceEvidence
+      )
         throw new Error("Normal terminal matrix output was missing.");
       results.normalInputPasteResize = true;
+      results.commandReference = true;
     } else if (mode === "startup-failure") {
       if (tasks.length !== 0)
         throw new Error("Startup-failure matrix unexpectedly created a task.");

@@ -149,7 +149,7 @@ try {
   );
   assert.doesNotMatch(transcript, new RegExp(fixtureSecret, "u"));
   send(secondTerminal, ":apply");
-  await waitForOutput(secondTerminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+  await waitForOutput(secondTerminal, /direct mode: changes are already in the local workspace/u);
   assert.equal(
     await readFile(path.join(repository, "generated.txt"), "utf8"),
     "Pi tool coding fixture\n",

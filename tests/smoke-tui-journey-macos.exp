@@ -21,7 +21,7 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_JOURNEY_LAUNCH_DIR)
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {Candy TUI} "TUI startup"
+wait_for {命令参考（Commands）:} "TUI startup"
 
 send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
@@ -53,7 +53,7 @@ wait_for {\[tool candy_write\]} "create tool"
 wait_for {\[tool candy_edit\]} "edit tool"
 wait_for {approval required: delete remove-deny\.txt} "denial approval"
 expect {
-  -re {:approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
+  -re {/approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
   timeout { fail "timed out waiting for denial approval id" }
   eof { fail "TUI exited while waiting for denial approval id" }
 }
@@ -65,7 +65,7 @@ send_command "repair the remaining fixture"
 wait_for "continuing ${task_id}" "same-task continuation"
 wait_for {approval required: delete remove-approve\.txt} "approval request"
 expect {
-  -re {:approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
+  -re {/approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
   timeout { fail "timed out waiting for approval id" }
   eof { fail "TUI exited while waiting for approval id" }
 }
@@ -109,7 +109,7 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {Candy TUI} "TUI restart"
+wait_for {命令参考（Commands）:} "TUI restart"
 send_command ":use $task_id"
 wait_for "current task: ${task_id} \\(completed\\)" "task selection after restart"
 send_command ":transcript"
