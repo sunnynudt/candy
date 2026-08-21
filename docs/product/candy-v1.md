@@ -30,7 +30,7 @@ Candy V1 includes the following user journey:
 6. review changes and explicitly apply or discard them where the selected workspace mode supports it;
 7. restart Candy, inspect persisted evidence, and continue only with a new explicit prompt.
 
-The TUI starts in a safe, fail-closed mode. Shell and other side-effectful capabilities remain unavailable unless their platform-specific security and approval gates pass; a disabled or unverified capability is not V1 acceptance evidence.
+The TUI starts in the Auto profile: file read/create/edit are enabled inside the selected workspace, deletes require explicit confirmation, and Git-backed tasks run in Candy-owned Task Worktrees under the workspace's `.git/candy-worktrees/` directory (falling back to the Candy application-data directory when `.git` is a file, such as in submodules). Shell and other side-effectful capabilities remain unavailable unless their platform-specific security and approval gates pass; a disabled or unverified capability is not V1 acceptance evidence.
 
 Candy V1 does not include:
 

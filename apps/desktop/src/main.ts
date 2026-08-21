@@ -506,7 +506,7 @@ function emptyProjection(taskId: string): RendererTaskProjection {
     taskId,
     state: "idle",
     revision: 0,
-    approvalProfile: "read-only",
+    approvalProfile: "auto",
     model: DEFAULT_CANDY_MODEL,
     trustedShell: false,
     workspaceState: "local",

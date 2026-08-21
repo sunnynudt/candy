@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { ProviderContractError } from "@candy/pi-adapter";
 import { InMemoryCredentialStore, resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
 import type {
@@ -26,9 +26,22 @@ import {
   createDefaultInteractiveTui,
   InteractiveTui,
   isMacosTrustedShellAutoAvailable,
+  type InteractiveTuiOptions,
   type TuiAgentEngine,
 } from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
+
+const testWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-"));
+
+class TestInteractiveTui extends InteractiveTui {
+  public constructor(options: InteractiveTuiOptions = {}) {
+    super({ workspacePath: testWorkspace, ...options });
+  }
+}
+
+after(async () => {
+  await rm(testWorkspace, { recursive: true, force: true });
+});
 
 async function waitForOutput(
   terminal: FakeTerminal,
@@ -87,7 +100,7 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
     },
   };
   try {
-    const runPromise: Promise<void> = new InteractiveTui({
+    const runPromise: Promise<void> = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
@@ -123,7 +136,7 @@ test("interactive TUI does not submit a bare slash as an agent prompt", async ()
   const terminal = new FakeTerminal();
   let turnCount = 0;
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -151,7 +164,7 @@ test("interactive TUI echoes a redacted line when a prompt contains credential-s
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credential-echo-"));
   const terminal = new FakeTerminal();
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -186,7 +199,7 @@ test("interactive TUI strips terminal control sequences from assistant evidence"
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-control-sequences-"));
   const terminal = new FakeTerminal();
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -238,7 +251,7 @@ test("interactive TUI manages OS credential presence without reading back secret
   const credentials = new InMemoryCredentialStore();
   const environment = { [["CANDY", "DEEPSEEK", "API", "KEY"].join("_")]: "test-secret" };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       credentialStore: credentials,
@@ -287,7 +300,7 @@ test("interactive TUI restores the terminal after a task error and Ctrl+C", asyn
     },
   };
   try {
-    const runPromise: Promise<void> = new InteractiveTui({
+    const runPromise: Promise<void> = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
@@ -319,7 +332,7 @@ test("interactive TUI exposes sanitized provider recovery actions", async () => 
     },
   };
   try {
-    const runPromise: Promise<void> = new InteractiveTui({
+    const runPromise: Promise<void> = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
@@ -374,7 +387,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     },
   };
   try {
-    const runPromise: Promise<void> = new InteractiveTui({
+    const runPromise: Promise<void> = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
@@ -467,7 +480,7 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
         followUps.push(text);
       },
     };
-    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("start a long turn");
     terminal.emitInput("\r");
@@ -540,7 +553,7 @@ test("interactive TUI projects retry and compaction until the turn settles", asy
         yield { type: "turn.completed", taskId: input.taskId };
       },
     };
-    const runPromise = new InteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal, engine }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("recover the turn");
     terminal.emitInput("\r");
@@ -586,7 +599,7 @@ test("interactive TUI cancels a turn while compaction is in progress", async () 
         });
       },
     };
-    const runPromise = new InteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal, engine }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("recover during compaction");
     terminal.emitInput("\r");
@@ -660,7 +673,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
   };
   let observedTrustedShell = false;
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
@@ -713,7 +726,7 @@ test("interactive TUI passes all active provider secrets to Trusted Shell redact
   const terminal = new FakeTerminal();
   let observedSecrets: readonly string[] | undefined;
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
@@ -757,7 +770,7 @@ test("interactive TUI exposes web reads to ordinary tasks without an approval pa
   const appData = await mkdtemp(path.join(root, "app-data-"));
   const terminal = new FakeTerminal();
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: appData,
       workspacePath: workspace,
       terminal,
@@ -794,7 +807,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
   const terminal: FakeTerminal = new FakeTerminal();
   const decisions: boolean[] = [];
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
@@ -863,7 +876,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
   const decisions: boolean[] = [];
   let firstEngineCalls = 0;
   try {
-    const firstRun = new InteractiveTui({
+    const firstRun = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       terminal,
@@ -928,7 +941,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
 
     const secondTerminal = new FakeTerminal();
     let secondEngineCalls = 0;
-    const secondRun = new InteractiveTui({
+    const secondRun = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       terminal: secondTerminal,
@@ -965,7 +978,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
   const terminal = new FakeTerminal();
   const decisions: boolean[] = [];
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       terminal,
@@ -1045,7 +1058,7 @@ test("interactive TUI recovers a dead owner without replaying a waiting network 
     repository,
     undefined,
     undefined,
-    path.join(resolveAppPaths(appDataRoot).worktrees, "task-dead-owner"),
+    path.join(repository, ".git", "candy-worktrees", "task-dead-owner"),
     true,
   );
   store.transition("task-dead-owner", 0, "waiting_approval", "tui:999999");
@@ -1053,7 +1066,7 @@ test("interactive TUI recovers a dead owner without replaying a waiting network 
   const terminal = new FakeTerminal();
   let engineCalls = 0;
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       terminal,
@@ -1085,8 +1098,8 @@ test("interactive TUI recovers a dead owner without replaying a waiting network 
   }
 });
 
-test("interactive TUI keeps file mutation disabled until Auto is selected", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-read-only-"));
+test("interactive TUI starts in the Auto profile with file mutation enabled", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-auto-default-"));
   const terminal: FakeTerminal = new FakeTerminal();
   let observedProfile: "read-only" | "auto" | undefined;
   const engine: TuiAgentEngine = {
@@ -1097,7 +1110,7 @@ test("interactive TUI keeps file mutation disabled until Auto is selected", asyn
     },
   };
   try {
-    const runPromise: Promise<void> = new InteractiveTui({
+    const runPromise: Promise<void> = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
@@ -1111,7 +1124,7 @@ test("interactive TUI keeps file mutation disabled until Auto is selected", asyn
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
-    assert.equal(observedProfile, "read-only");
+    assert.equal(observedProfile, "auto");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1134,7 +1147,7 @@ test("interactive TUI continues the current task and :new starts a different tas
     },
   };
   try {
-    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     terminal.emitInput("first request");
@@ -1187,7 +1200,7 @@ test("interactive TUI reports malformed and conflicting Candy resource diagnosti
       path.join(root, "prompts", "second.md"),
       "---\nname: duplicate\n---\nSecond prompt\n",
     );
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -1232,7 +1245,7 @@ test("interactive TUI lists and invokes Candy-owned prompt templates", async () 
       path.join(root, "prompts", "review.md"),
       "---\nname: review\ndescription: Review a change\nargument-hint: <path>\n---\nReview $1\nKeep fixture-secret private.\n",
     );
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       activeSecrets: () => ["fixture-secret"],
       engine,
@@ -1262,7 +1275,7 @@ test("interactive TUI rejects unknown or unsafe prompt template invocations", as
   try {
     await mkdir(path.join(root, "prompts"), { recursive: true });
     await writeFile(path.join(root, "prompts", "review.md"), "Review $1\n");
-    const runPromise = new InteractiveTui({ appDataRoot: root, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     terminal.emitInput(":prompt missing value");
@@ -1298,7 +1311,7 @@ test("interactive TUI selects an existing workspace for new tasks", async () => 
     },
   };
   try {
-    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     terminal.emitInput(":workspace relative");
@@ -1356,7 +1369,7 @@ test("interactive TUI rejects workspaces overlapping Candy application data", as
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-overlap-safe-"));
   const terminal = new FakeTerminal();
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       workspacePath: workspace,
       terminal,
@@ -1387,7 +1400,7 @@ test("interactive TUI restores a task and its transcript before continuing after
     },
   };
   try {
-    const firstRun = new InteractiveTui({
+    const firstRun = new TestInteractiveTui({
       appDataRoot: root,
       engine: firstEngine,
       terminal: firstTerminal,
@@ -1419,7 +1432,7 @@ test("interactive TUI restores a task and its transcript before continuing after
         yield { type: "turn.completed", taskId: input.taskId };
       },
     };
-    const secondRun = new InteractiveTui({
+    const secondRun = new TestInteractiveTui({
       appDataRoot: root,
       engine: secondEngine,
       terminal: secondTerminal,
@@ -1468,7 +1481,7 @@ test("interactive TUI never replays an interrupted prompt and requires explicit 
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-explicit-recovery-"));
   const firstTerminal = new FakeTerminal();
   try {
-    const firstRun = new InteractiveTui({
+    const firstRun = new TestInteractiveTui({
       appDataRoot: root,
       terminal: firstTerminal,
       engine: {
@@ -1496,7 +1509,7 @@ test("interactive TUI never replays an interrupted prompt and requires explicit 
     const secondTerminal = new FakeTerminal();
     const calls: string[] = [];
     let recoverPromptCalls = 0;
-    const secondRun = new InteractiveTui({
+    const secondRun = new TestInteractiveTui({
       appDataRoot: root,
       terminal: secondTerminal,
       engine: {
@@ -1564,7 +1577,7 @@ test("interactive TUI rejects a second input while the current turn owns executi
     },
   };
   try {
-    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("long turn");
     terminal.emitInput("\r");
@@ -1597,7 +1610,7 @@ test("interactive TUI may inspect but cannot control a task owned by another cli
   };
   let external: SQLiteTaskStore | undefined;
   try {
-    const runPromise = new InteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     external = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     external.create("foreign-task", "read-only", 1, "deepseek-v4-flash", [], process.cwd());
@@ -1633,7 +1646,7 @@ test("interactive TUI reviews non-Git changed files and bounded diff without mut
   };
   try {
     await writeFile(path.join(workspace, "obsolete.ts"), "before\n");
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       workspacePath: workspace,
       engine,
@@ -1678,7 +1691,7 @@ test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed App
     },
   };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       engine,
@@ -1693,7 +1706,7 @@ test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed App
     const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
-    assert.ok(executionPath?.startsWith(resolveAppPaths(appDataRoot).worktrees));
+    assert.ok(executionPath?.startsWith(path.join(repository, ".git", "candy-worktrees")));
     assert.notEqual(executionPath, repository);
     assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
     assert.equal(existsSync(path.join(repository, "new.txt")), false);
@@ -1746,7 +1759,7 @@ test("interactive TUI explicitly discards a completed Task Worktree without touc
     },
   };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       engine,
@@ -1792,7 +1805,7 @@ test("interactive TUI persists reviewed workspace metadata across restart", asyn
     },
   };
   try {
-    const firstRun = new InteractiveTui({
+    const firstRun = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       engine: firstEngine,
@@ -1831,7 +1844,7 @@ test("interactive TUI persists reviewed workspace metadata across restart", asyn
         throw new Error("review restart unexpectedly started a provider turn");
       },
     };
-    const secondRun = new InteractiveTui({
+    const secondRun = new TestInteractiveTui({
       appDataRoot,
       workspacePath: repository,
       engine: secondEngine,
@@ -1900,13 +1913,15 @@ test("interactive TUI reviews Git tracked, untracked, removed files and filters 
     },
   };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       engine,
       terminal,
       changeTracker,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/profile read-only");
+    terminal.emitInput("\r");
     terminal.emitInput("review git workspace");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /completed/u);
@@ -1948,7 +1963,7 @@ test("interactive TUI bounds a large diff before rendering it", async () => {
     },
   };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       changeTracker,
       engine: {
@@ -1960,6 +1975,8 @@ test("interactive TUI bounds a large diff before rendering it", async () => {
       terminal,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/profile read-only");
+    terminal.emitInput("\r");
     terminal.emitInput("review large diff");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /completed/u);
@@ -2042,7 +2059,7 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
     return taskId;
   };
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       engine: {
         async *runTurn(input) {
@@ -2104,7 +2121,7 @@ test("interactive TUI selects each explicit model through the slash command", as
     ["minimax-m3", "MiniMax-M3"],
   ] as const;
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -2158,7 +2175,7 @@ test("interactive TUI rejects a model switch during an active turn", async () =>
     release = resolve;
   });
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
       engine: {
@@ -2199,7 +2216,7 @@ test("interactive TUI sends Candy-owned image attachments and recovers them afte
   const firstImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
   let taskId: string | undefined;
   try {
-    const firstRun = new InteractiveTui({
+    const firstRun = new TestInteractiveTui({
       appDataRoot: root,
       workspacePath: workspace,
       terminal: firstTerminal,
@@ -2244,7 +2261,7 @@ test("interactive TUI sends Candy-owned image attachments and recovers them afte
 
     const secondTerminal = new FakeTerminal();
     const secondImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
-    const secondRun = new InteractiveTui({
+    const secondRun = new TestInteractiveTui({
       appDataRoot: root,
       workspacePath: workspace,
       terminal: secondTerminal,
@@ -2305,7 +2322,7 @@ test("interactive TUI rejects unsafe or invalid attachment paths", async () => {
     // Windows test hosts may not grant symlink creation; the other path gates remain covered.
   }
   try {
-    const runPromise = new InteractiveTui({
+    const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       workspacePath: workspace,
       terminal,

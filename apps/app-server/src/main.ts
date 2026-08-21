@@ -51,6 +51,7 @@ import {
   type WorkspaceChangeTracker,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -339,7 +340,7 @@ export class AppServerController {
             taskId: message.taskId,
             revision: message.expectedRevision,
             state: "queued",
-            approvalProfile: "read-only",
+            approvalProfile: "auto",
             model: DEFAULT_CANDY_MODEL,
             workspacePath: "",
           },
@@ -994,11 +995,13 @@ export class AppServerController {
   private planForTask(taskId: string, workspacePath: string, baseCommit: string): GitWorktreePlan {
     if (this.#worktreeRoot === undefined)
       throw new Error("Task Worktree root is unavailable on this installation.");
+    const worktreeRoot = resolveTaskWorktreeRoot(workspacePath, this.#worktreeRoot);
     return planGitWorktree(
       workspacePath,
-      path.join(this.#worktreeRoot, taskId),
+      path.join(worktreeRoot, taskId),
       taskId,
       baseCommit,
+      worktreeRoot,
     );
   }
 
@@ -1012,6 +1015,7 @@ export class AppServerController {
       metadata.worktreePath,
       metadata.taskId,
       metadata.workspaceBaseline,
+      path.dirname(metadata.worktreePath),
     );
   }
 

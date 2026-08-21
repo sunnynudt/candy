@@ -1285,6 +1285,7 @@ test("app-server runs an auto Git task in a Task Worktree and hands off reviewed
   const worktreeRoot = path.join(root, "worktrees");
   try {
     const { repository, base } = createGitFixture(root);
+    const expectedWorktreeRoot = path.join(repository, ".git", "candy-worktrees");
     const controller = new AppServerController({
       engine: worktreeEditingEngine(),
       worktreeRoot,
@@ -1303,10 +1304,13 @@ test("app-server runs an auto Git task in a Task Worktree and hands off reviewed
       assert.ok(createdSnapshot?.kind === "event" && createdSnapshot.event.type === "snapshot");
       if (createdSnapshot?.kind === "event" && createdSnapshot.event.type === "snapshot") {
         assert.equal(createdSnapshot.event.snapshot.workspaceState, "worktree");
-        assert.equal(createdSnapshot.event.snapshot.worktreePath?.startsWith(worktreeRoot), true);
+        assert.equal(
+          createdSnapshot.event.snapshot.worktreePath?.startsWith(expectedWorktreeRoot),
+          true,
+        );
         assert.equal(createdSnapshot.event.snapshot.workspaceBaseline, base);
       }
-      assert.equal(existsSync(path.join(worktreeRoot, "task-worktree", "README.md")), true);
+      assert.equal(existsSync(path.join(expectedWorktreeRoot, "task-worktree", "README.md")), true);
       assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
 
       await controller.dispatch(
@@ -1338,7 +1342,7 @@ test("app-server runs an auto Git task in a Task Worktree and hands off reviewed
         assert.equal(appliedSnapshot.event.snapshot.workspaceState, "local");
         assert.equal(appliedSnapshot.event.snapshot.worktreePath, undefined);
       }
-      assert.equal(existsSync(path.join(worktreeRoot, "task-worktree")), false);
+      assert.equal(existsSync(path.join(expectedWorktreeRoot, "task-worktree")), false);
       assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed by task\n");
       assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "untracked by task\n");
       assert.equal(
@@ -1407,6 +1411,7 @@ test("app-server restores the Task Worktree association after restart and can st
   const databasePath = path.join(root, "state", "tasks.sqlite");
   try {
     const { repository, base } = createGitFixture(root);
+    const expectedWorktreeRoot = path.join(repository, ".git", "candy-worktrees");
     const first = new AppServerController({
       databasePath,
       engine: worktreeEditingEngine(),
@@ -1446,7 +1451,7 @@ test("app-server restores the Task Worktree association after restart and can st
         assert.equal(snapshot.event.snapshot.workspaceState, "worktree");
         assert.equal(
           snapshot.event.snapshot.worktreePath,
-          path.join(worktreeRoot, "task-restart-wt"),
+          path.join(expectedWorktreeRoot, "task-restart-wt"),
         );
         assert.equal(snapshot.event.snapshot.workspaceBaseline, base);
       }

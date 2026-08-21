@@ -64,6 +64,7 @@ import {
   type WorkspaceChangeTracker,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
 
@@ -280,7 +281,7 @@ export class InteractiveTui {
   #closing = false;
   #creatingTask = false;
   #pendingTaskCreation: Promise<void> | undefined;
-  #approvalProfile: "read-only" | "auto" = "read-only";
+  #approvalProfile: "read-only" | "auto" = "auto";
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
   #trustedShellEnabled = false;
@@ -373,7 +374,7 @@ export class InteractiveTui {
       [
         "Candy TUI — local-first, one agent per task",
         "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，/new 新建任务；",
-        "/profile auto 开启编辑，/trusted-shell on 开启本地 Shell，/quit 退出。",
+        "/profile read-only 切换只读，/trusted-shell on 开启本地 Shell，/quit 退出。",
         "",
         "命令参考（Commands）:",
         "Start       type a prompt, or /new [prompt]",
@@ -388,7 +389,7 @@ export class InteractiveTui {
         "",
       ].join("\n") + "\n",
     );
-    this.write("Profile: read-only（只读）· Trusted Shell Auto: off（关闭）\n");
+    this.write("Profile: auto（可增删查改）· Trusted Shell Auto: off（关闭）\n");
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
@@ -1124,11 +1125,13 @@ export class InteractiveTui {
   }
 
   private planForTask(taskId: string, workspacePath: string, baseCommit: string): GitWorktreePlan {
+    const worktreeRoot = resolveTaskWorktreeRoot(workspacePath, this.#worktreeRoot);
     return planGitWorktree(
       workspacePath,
-      path.join(this.#worktreeRoot, taskId),
+      path.join(worktreeRoot, taskId),
       taskId,
       baseCommit,
+      worktreeRoot,
     );
   }
 
@@ -1138,6 +1141,7 @@ export class InteractiveTui {
       snapshot.worktreePath!,
       snapshot.taskId,
       snapshot.workspaceBaseline!,
+      path.dirname(snapshot.worktreePath!),
     );
   }
 

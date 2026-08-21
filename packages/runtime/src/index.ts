@@ -244,7 +244,7 @@ export class TaskController {
 
   public constructor(
     taskId: string,
-    approvalProfile: ApprovalProfile = "read-only",
+    approvalProfile: ApprovalProfile = "auto",
     private readonly persistence?: TaskMetadataStore,
   ) {
     this.#snapshot = persistence?.get(taskId) ??
@@ -470,6 +470,7 @@ export {
   WorkspaceHandoff,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeRoot,
 } from "./v1.js";
 export type {
   ActionKind,

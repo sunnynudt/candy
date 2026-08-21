@@ -45,6 +45,7 @@ import {
   WorkspaceHandoff,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeRoot,
 } from "./v1.js";
 
 test("Git common directory is resolved from the original repository seam", async () => {
@@ -62,6 +63,28 @@ test("Git common directory is resolved from the original repository seam", async
     await realpath(path.join(repository, ".git")),
   );
   assert.deepEqual(calls, [["rev-parse", "--git-common-dir", repository]]);
+});
+
+test("Task Worktree root prefers the project .git directory and falls back otherwise", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "candy-worktree-root-"));
+  try {
+    const repository = path.join(root, "repo");
+    mkdirSync(path.join(repository, ".git"), { recursive: true });
+    const fallback = path.join(root, "fallback", "worktrees");
+    assert.equal(
+      resolveTaskWorktreeRoot(repository, fallback),
+      path.join(repository, ".git", "candy-worktrees"),
+    );
+
+    rmSync(path.join(repository, ".git"), { recursive: true, force: true });
+    writeFileSync(path.join(repository, ".git"), "gitdir: /elsewhere/.git\n");
+    assert.equal(resolveTaskWorktreeRoot(repository, fallback), fallback);
+
+    rmSync(path.join(repository, ".git"));
+    assert.equal(resolveTaskWorktreeRoot(repository, fallback), fallback);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("approval policy keeps read-only strict and shell unavailable before native G2", () => {

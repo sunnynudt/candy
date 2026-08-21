@@ -3529,7 +3529,7 @@ export class PiAgentEngine {
       );
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
-        input.approvalProfile ?? "read-only",
+        input.approvalProfile ?? "auto",
         input.trustedShell && this.bashRunner !== undefined
           ? {
               runner: this.bashRunner,
