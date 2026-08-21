@@ -85,6 +85,7 @@ async function measureProjection() {
   const samples = [];
   for (let index = 0; index < runs; index += 1) {
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-projection-"));
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-projection-workspace-"));
     const terminal = new FakeTerminal();
     const marker = `projection-marker-${index}`;
     let emittedAt = 0;
@@ -99,6 +100,7 @@ async function measureProjection() {
       };
       const runPromise = new InteractiveTui({
         appDataRoot: rootPath,
+        workspacePath,
         terminal,
         engine,
       }).run();
@@ -111,6 +113,7 @@ async function measureProjection() {
       await runPromise;
     } finally {
       await rm(rootPath, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
     }
   }
   return summarize(samples, 200);
@@ -120,6 +123,7 @@ async function measureCancellation() {
   const samples = [];
   for (let index = 0; index < runs; index += 1) {
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-cancel-"));
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-cancel-workspace-"));
     const terminal = new FakeTerminal();
     let stopRequestedAt = 0;
     try {
@@ -140,6 +144,7 @@ async function measureCancellation() {
       };
       const runPromise = new InteractiveTui({
         appDataRoot: rootPath,
+        workspacePath,
         terminal,
         engine,
       }).run();
@@ -160,6 +165,7 @@ async function measureCancellation() {
       await runPromise;
     } finally {
       await rm(rootPath, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
     }
   }
   return summarize(samples, 2_000);
@@ -171,6 +177,7 @@ async function measureConcurrency() {
   let completedRuns = 0;
   for (let index = 0; index < runs; index += 1) {
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-concurrency-"));
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-concurrency-workspace-"));
     const terminal = new FakeTerminal();
     let active = 0;
     let release;
@@ -195,6 +202,7 @@ async function measureConcurrency() {
       };
       const runPromise = new InteractiveTui({
         appDataRoot: rootPath,
+        workspacePath,
         terminal,
         engine,
       }).run();
@@ -207,11 +215,15 @@ async function measureConcurrency() {
           const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)].map(
             (match) => match[1],
           );
-          return matches.length > createdIds.length;
+          return new Set(matches).size > createdIds.length;
         });
-        const ids = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)].map(
-          (match) => match[1],
-        );
+        const ids = [
+          ...new Set(
+            [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)].map(
+              (match) => match[1],
+            ),
+          ),
+        ];
         createdIds.push(ids.at(-1));
       }
       const markerTimes = [];
@@ -245,6 +257,7 @@ async function measureConcurrency() {
       await runPromise;
     } finally {
       await rm(rootPath, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
     }
   }
   if (gaps.length !== runs)

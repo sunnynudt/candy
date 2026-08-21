@@ -8,7 +8,7 @@ Updated: 2026-08-20
 - `/resume` 无参时列出 paused/interrupted 可恢复任务并要求显式 continuation；`/use` 无参列出任务；`/profile` 无参显示当前模式。
 - 裸已知必需参数命令（cancel/pause/approve/deny/prioritize/steer/follow-up 等）打印 usage，不再作为提示词发给模型；未知 `/...` 输入仍走提示词路径。
 - 新增 `/help` 与 `docs/usage/tui-commands.md`，命令元数据与 `CANDY_SLASH_COMMANDS` 单一来源。
-- 验证：`npm run check` **264 项**（260 基线 + 4 新回归）；agent 沙箱内 4 项 native/sandbox-exec 测试受环境限制（`sandbox_apply: Operation not permitted`），真实主机上通过。`npm run smoke:tui`、`npm run smoke:tui:terminal:macos`（realPty，`commandReference: true`，覆盖 `/model`、`/resume`、裸 `/cancel` usage、`/help`）、`npm run smoke:tui:pi:coding`（direct-mode apply 契约）通过；`smoke:tui:journey:macos` 在环境受限的 validator 步骤前全部通过。acceptance 的 Keychain 步骤同样受沙箱授权限制，需真实主机复验。staged diff 凭据扫描后 commit/push 并核对远程 SHA。
+- 验证：`npm run check` **264 项**（260 基线 + 4 新回归）；agent 沙箱内 4 项 native/sandbox-exec 测试受环境限制（`sandbox_apply: Operation not permitted`），真实主机上通过。`npm run smoke:tui`、`npm run smoke:tui:terminal:macos`（realPty，`commandReference: true`，覆盖 `/model`、`/resume`、裸 `/cancel` usage、`/help`）、`npm run smoke:tui:pi:coding`（direct-mode apply 契约）、`npm run measure:tui:responsiveness`（注入干净临时工作区并去重 created 计数）通过；`smoke:tui:journey:macos` 在环境受限的 validator 步骤前全部通过。agent 沙箱 acceptance **11/14**，失败 3 项均为环境限制（native check、Keychain 写入授权、journey native validator），真实主机复验可恢复 14/14。staged diff 凭据扫描后 commit/push 并核对远程 SHA。
 
 ## 2026-08-20 TUI slash-command convention
 
