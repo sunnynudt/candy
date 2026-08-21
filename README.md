@@ -19,16 +19,15 @@ npm run check
 
 ## Personal Preview TUI
 
-From a built source checkout, install the local command once and launch the TUI on macOS or Windows with:
+Install the local command once and launch the TUI on macOS or Windows with:
 
 ```bash
 nvm use
-npm run build
 npm link
 candy
 ```
 
-The npm link creates the platform-appropriate command shim (`candy` on macOS and `candy.cmd` on Windows). Pass TUI smoke flags directly when verifying the launcher, for example `candy --smoke`.
+The npm link creates the platform-appropriate command shim (`candy` on macOS and `candy.cmd` on Windows). Each `candy` launch rebuilds the repository and starts the latest TUI, so it is the iteration command while developing Candy; pass TUI smoke flags directly when verifying the launcher, for example `candy --smoke`. If you prefer not to install a global command, `npm run candy` in the repository works the same way.
 
 Candy reads only Candy-owned DeepSeek or MiniMax credentials from the operating-system credential store (or the documented temporary development environment). Select a workspace with `:workspace /absolute/path`, choose `:profile auto` to allow file edits, and enter a prompt. Auto tasks in a Git repository execute in a Candy-owned Task Worktree; use `:changes` and the full `:diff` before the explicit `:apply`, or use `:discard` to leave the Local Workspace unchanged. Shell remains disabled until its native security gate passes.
 

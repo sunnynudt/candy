@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc -b --pretty false",
     "candy": "node scripts/candy.mjs",
-    "tui": "npm run build && node apps/tui/dist/main.js",
+    "tui": "node scripts/candy.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:boundaries && npm run check:pi-versions && npm run check:lifecycle-scripts",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:lifecycle-scripts": "node scripts/check-lifecycle-scripts.mjs",
@@ -49,7 +49,7 @@
     "lint": "eslint apps packages scripts tests",
     "smoke:tui": "npm run build && node apps/tui/dist/main.js --smoke",
     "smoke:tui-task": "npm run build && node apps/tui/dist/main.js --smoke-task",
-    "smoke:tui:launcher": "npm run build && node scripts/candy.mjs --smoke",
+    "smoke:tui:launcher": "node scripts/candy.mjs --smoke",
     "smoke:tui:credentials": "npm run build && node tests/smoke-tui-credentials.mjs",
     "smoke:tui:credential-revocation": "npm run build && node tests/smoke-tui-credential-revocation.mjs",
     "smoke:tui:pi": "npm run build && node tests/smoke-tui-pi-journey.mjs",
