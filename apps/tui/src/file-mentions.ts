@@ -131,7 +131,7 @@ async function listMentionSuggestions(
   const separator = mentionPath.lastIndexOf("/");
   const parentText = separator < 0 ? "" : mentionPath.slice(0, separator);
   const query = separator < 0 ? mentionPath : mentionPath.slice(separator + 1);
-  const normalizedParent = normalizeMentionPath(parentText);
+  const normalizedParent = parentText.length === 0 ? "" : normalizeMentionPath(parentText);
   if (normalizedParent === undefined) return [];
   const parentPath = path.resolve(root, normalizedParent || ".");
   if (!isInside(root, parentPath)) return [];

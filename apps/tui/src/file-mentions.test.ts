@@ -74,3 +74,23 @@ test("workspace @ autocomplete lists files and directories inside the selected w
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("workspace @ autocomplete lists entries from the workspace root", async () => {
+  const root = await mkdtemp(path.join(process.cwd(), "candy-root-autocomplete-mention-"));
+  try {
+    await mkdir(path.join(root, "apps"), { recursive: true });
+    await writeFile(path.join(root, "README.md"), "# Candy\n", "utf8");
+
+    const provider = createWorkspaceMentionAutocompleteProvider(() => root);
+    const suggestions = await provider.getSuggestions(["@"], 0, 1, {
+      signal: new AbortController().signal,
+    });
+
+    assert.ok(suggestions);
+    assert.equal(suggestions.prefix, "@");
+    assert.ok(suggestions.items.some((candidate) => candidate.value === "@README.md"));
+    assert.ok(suggestions.items.some((candidate) => candidate.value === "@apps/"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
