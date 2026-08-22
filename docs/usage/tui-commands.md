@@ -27,6 +27,15 @@
 | `/attach` | `/attach <absolute-path>` | 为下一个任务附加图片（仅 MiniMax M3） |
 | `/attachments` | `/attachments` | 列出已选择附件 |
 
+## 工作区上下文
+
+在普通提示词中输入 `@`，然后使用补全选择当前 Local Workspace 内的文件或目录：
+
+- `@src/index.ts` 会把该文本文件内容注入本次 prompt。
+- `@src` 会递归注入目录下的有限数量文本文件；`.git`、`node_modules`、符号链接、二进制文件和超出大小限制的文件不会进入上下文。
+- 只有选中的工作区路径可被补全和读取；越界或不可读路径会被跳过。
+- 文件内容在进入模型上下文前会做凭据脱敏；图片仍使用 `/attach`，不会通过 `@` 读取。
+
 ## 凭据
 
 | 命令 | 语法 | 说明 |
@@ -76,6 +85,7 @@
 - 直接模式（`/worktree off`）允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成；`/worktree on` 时才使用 `/apply` 合入。
 - 普通开发无需配置：启动后默认就是 Auto + 直接模式；只有需要隔离或 Shell 时才需要额外命令。
 - `/trusted-shell on` 会自动切换到 Worktree；如果平台 Trusted Shell 能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
+- `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。
 - Shell 仅在平台 G2 通过后可用；未启用时显示为不可用能力而非隐藏。

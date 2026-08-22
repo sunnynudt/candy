@@ -67,6 +67,7 @@ import {
   resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
+import { expandWorkspaceMentionPrompt } from "./file-mentions.js";
 import { CANDY_MODEL_CHOICES, CANDY_SLASH_COMMANDS } from "./slash-commands.js";
 
 export interface TuiSmokeResult {
@@ -364,6 +365,7 @@ export class InteractiveTui {
   public async run(): Promise<void> {
     this.#surface = new CandyTuiSurface({
       appDataRoot: this.#appDataRoot,
+      workspacePath: () => this.#workspacePath,
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -384,6 +386,7 @@ export class InteractiveTui {
         "",
         "命令参考（Commands）:",
         "Start       type a prompt, or /new [prompt]",
+        "Context     type @file or @directory to attach workspace context",
         "Workspace   /workspace <path> · /use <task-id> · /tasks",
         "Provider    /model deepseek-flash|deepseek-pro|minimax-m3 · /attach <path>",
         "            /credentials set|replace|delete <deepseek|minimax-cn>",
@@ -1583,10 +1586,22 @@ export class InteractiveTui {
         throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
       }
       const runEngineTurn = async (activeSecrets: readonly string[]): Promise<void> => {
+        const expandedPrompt = await expandWorkspaceMentionPrompt(
+          prompt,
+          taskSnapshot.workspacePath,
+          activeSecrets,
+        );
+        if (expandedPrompt.skippedPaths.length > 0) {
+          this.write(
+            `workspace mentions skipped: ${expandedPrompt.skippedPaths
+              .map((value) => redactSensitive(value, activeSecrets))
+              .join(", ")}\n`,
+          );
+        }
         for await (const observation of this.#engine.runTurn(
           {
             taskId,
-            prompt,
+            prompt: expandedPrompt.prompt,
             model: taskSnapshot.model,
             cwd: executionPath,
             approvalProfile: taskSnapshot.approvalProfile,

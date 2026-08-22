@@ -1136,6 +1136,43 @@ test("interactive TUI starts in the Auto profile with file mutation enabled", as
   }
 });
 
+test("interactive TUI expands @file context before starting an agent turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-file-mention-"));
+  const appDataRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-file-mention-app-"));
+  const terminal = new FakeTerminal();
+  let observedPrompt: string | undefined;
+  let runPromise: Promise<void> | undefined;
+  try {
+    await writeFile(path.join(root, "README.md"), "# Candy context\n", "utf8");
+    runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          observedPrompt = input.prompt;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("Review @README.md");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(
+      observedPrompt,
+      'Review [workspace file: README.md]\n\n<workspace-context>\n<file path="README.md">\n# Candy context\n</file>\n</workspace-context>',
+    );
+  } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise?.catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+    await rm(appDataRoot, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI continues the current task and :new starts a different task", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-continuation-"));
   const terminal: FakeTerminal = new FakeTerminal();

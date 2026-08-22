@@ -4,6 +4,7 @@ import {
   type AutocompleteProvider,
   type SlashCommand,
 } from "@earendil-works/pi-tui";
+import { createWorkspaceMentionAutocompleteProvider } from "./file-mentions.js";
 
 /** A Candy slash command with optional usage metadata for /help and bare-command guards. */
 export interface CandySlashCommand extends SlashCommand {
@@ -225,20 +226,32 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
  * filesystem discovery surface to the editor, so non-command input returns no
  * suggestions before Pi's combined provider can inspect a path.
  */
-export function createCandySlashCommandAutocompleteProvider(): AutocompleteProvider {
+export function createCandySlashCommandAutocompleteProvider(
+  workspacePath: () => string = () => process.cwd(),
+): AutocompleteProvider {
   const commands = new CombinedAutocompleteProvider([...CANDY_SLASH_COMMANDS], ".");
+  const mentions = createWorkspaceMentionAutocompleteProvider(workspacePath);
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const currentLine = lines[cursorLine] ?? "";
       const beforeCursor = currentLine.slice(0, cursorCol);
+      const mentionSuggestions = await mentions.getSuggestions(
+        lines,
+        cursorLine,
+        cursorCol,
+        options,
+      );
+      if (mentionSuggestions !== null) return mentionSuggestions;
       if (!beforeCursor.trimStart().startsWith("/")) return null;
       return commands.getSuggestions(lines, cursorLine, cursorCol, options);
     },
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      if (prefix.startsWith("@"))
+        return mentions.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
       return commands.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
-    shouldTriggerFileCompletion(): boolean {
-      return false;
+    shouldTriggerFileCompletion(lines, cursorLine, cursorCol): boolean {
+      return mentions.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? false;
     },
   };
 }

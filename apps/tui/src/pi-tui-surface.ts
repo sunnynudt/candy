@@ -49,6 +49,7 @@ export interface CandyTuiTerminal {
 
 export interface CandyTuiSurfaceOptions {
   readonly appDataRoot: string;
+  readonly workspacePath?: () => string;
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -78,7 +79,9 @@ export class CandyTuiSurface {
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
     this.#transcript = new Text();
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
-    this.#editor.setAutocompleteProvider(createCandySlashCommandAutocompleteProvider());
+    this.#editor.setAutocompleteProvider(
+      createCandySlashCommandAutocompleteProvider(options.workspacePath ?? (() => process.cwd())),
+    );
     this.#editor.onSubmit = (text: string): void => {
       const submittedText: string = text.trim();
       this.#editor.setText("");
