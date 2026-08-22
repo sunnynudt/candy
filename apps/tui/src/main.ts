@@ -378,7 +378,9 @@ export class InteractiveTui {
       [
         "Candy TUI — local-first, one agent per task",
         "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，/new 新建任务；",
-        "/profile read-only 切换只读，/worktree on 隔离任务，/quit 退出。",
+        "默认使用 Auto + 当前工作区（允许已有未提交修改）；/worktree on 可启用隔离。",
+        "/profile read-only 切换只读；支持的平台上 /trusted-shell on 会自动启用隔离。",
+        "/quit 退出。",
         "",
         "命令参考（Commands）:",
         "Start       type a prompt, or /new [prompt]",
@@ -2006,6 +2008,12 @@ export class InteractiveTui {
         this.write("Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build\n");
       }
       return;
+    }
+    if (!this.#worktreeEnabled) {
+      this.#worktreeEnabled = true;
+      this.write(
+        "Trusted Shell Auto requires isolation; Worktree enabled automatically for new tasks\n",
+      );
     }
     this.#trustedShellEnabled = true;
     this.write(

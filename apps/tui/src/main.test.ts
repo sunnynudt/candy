@@ -641,15 +641,13 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
     terminal.emitInput("\r");
-    terminal.emitInput(":worktree on");
-    terminal.emitInput("\r");
-    await waitForOutput(terminal, /worktree on:/u);
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
     const output = await waitForOutput(
       terminal,
       /Trusted Shell Auto enabled for the next Auto Git Task/u,
     );
+    assert.match(output, /Worktree enabled automatically for new tasks/u);
     assert.match(output, /Trusted Shell Auto enabled for the next Auto Git Task/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");

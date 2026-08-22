@@ -69,7 +69,7 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "worktree",
     argumentHint: "on|off",
-    description: "Isolate Auto Git tasks in a Task Worktree",
+    description: "Opt into an isolated Task Worktree (default is direct workspace)",
     requiredArgument: true,
     usage: "/worktree on|off",
   },
@@ -125,7 +125,7 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "trusted-shell",
     argumentHint: "on|off",
-    description: "Configure Trusted Shell Auto",
+    description: "Enable Trusted Shell Auto (automatically enables Worktree)",
   },
   {
     name: "shell",
