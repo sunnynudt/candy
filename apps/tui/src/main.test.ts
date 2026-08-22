@@ -1728,7 +1728,7 @@ test("interactive TUI defaults to direct mode and edits the current Git workspac
   }
 });
 
-test("interactive TUI rejects a direct-mode task when the Git workspace is dirty", async () => {
+test("interactive TUI allows direct-mode tasks when the Git workspace is dirty", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-dirty-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
@@ -1736,6 +1736,7 @@ test("interactive TUI rejects a direct-mode task when the Git workspace is dirty
   const engine: TuiAgentEngine = {
     async *runTurn(input) {
       engineCalls += 1;
+      await writeFile(path.join(input.cwd, "README.md"), "candy edit\n");
       yield { type: "turn.started", taskId: input.taskId };
       yield { type: "turn.completed", taskId: input.taskId };
     },
@@ -1751,8 +1752,10 @@ test("interactive TUI rejects a direct-mode task when the Git workspace is dirty
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("edit dirty workspace");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /clean Git working tree/u);
-    assert.equal(engineCalls, 0);
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(engineCalls, 1);
+    assert.equal(await readFile(path.join(repository, "dirty.txt"), "utf8"), "uncommitted\n");
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "candy edit\n");
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

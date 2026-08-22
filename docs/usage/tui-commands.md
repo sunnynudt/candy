@@ -63,7 +63,7 @@
 | 命令 | 语法 | 说明 |
 | --- | --- | --- |
 | `/profile` | `/profile read-only|auto` | 审批模式；`auto` 开放文件读写（删除仍需逐次审批） |
-| `/worktree` | `/worktree on|off` | 默认 `off` 直接编辑当前工作区（要求 Git 工作区干净）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/` |
+| `/worktree` | `/worktree on|off` | 默认 `off` 直接编辑当前工作区（允许已有未提交修改）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/` |
 | `/trusted-shell`（`/shell`） | `/trusted-shell on|off` | 开启/关闭 Trusted Shell Auto（平台 G2 通过后可用；macOS arm64 已批准） |
 | `/prompt` | `/prompt <name> [args]` | 运行 Candy 自有提示词模板 |
 | `/prompts` | `/prompts` | 列出提示词模板 |
@@ -73,7 +73,7 @@
 ## 安全边界
 
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
-- 直接模式（`/worktree off`）的改动已在本地工作区，提交由用户用 git 完成；`/worktree on` 时才使用 `/apply` 合入。
+- 直接模式（`/worktree off`）允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成；`/worktree on` 时才使用 `/apply` 合入。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。
 - Shell 仅在平台 G2 通过后可用；未启用时显示为不可用能力而非隐藏。

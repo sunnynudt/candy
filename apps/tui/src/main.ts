@@ -62,7 +62,6 @@ import {
   type ValidatorResult,
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
-  isGitWorkspaceClean,
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,
@@ -599,10 +598,6 @@ export class InteractiveTui {
         throw new Error("Trusted Shell Auto requires a Git-backed Task Worktree.");
     }
     if (approvalProfile === "auto" && workspaceBaseline !== undefined && !this.#worktreeEnabled) {
-      if (!(await isGitWorkspaceClean(workspacePath)))
-        throw new Error(
-          "Direct-mode tasks require a clean Git working tree; commit or stash local changes first.",
-        );
       const directTaskActive = this.#store
         .list()
         .some(

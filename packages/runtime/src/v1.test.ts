@@ -729,6 +729,7 @@ test("Git worktree planning uses argument arrays and handoff blocks unsafe trans
 });
 
 test("Git worktree inspection uses an injected Windows path seam on macOS", async () => {
+  if (process.platform !== "darwin") return;
   const plan = planGitWorktree(
     "C:\\repo",
     "C:\\Candy Data\\worktrees\\task-1",

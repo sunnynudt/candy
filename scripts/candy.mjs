@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const pinnedNode = "22.23.2";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tuiEntrypoint = path.join(root, "apps", "tui", "dist", "main.js");
+const invocationCwd = process.cwd();
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -53,7 +54,10 @@ function runWithPinnedNode() {
 
   const env = { ...process.env };
   env.PATH = `${path.dirname(node)}${path.delimiter}${env.PATH ?? ""}`;
-  return run(node, [process.argv[1], ...process.argv.slice(2)], { env });
+  return run(node, [process.argv[1], ...process.argv.slice(2)], {
+    cwd: invocationCwd,
+    env,
+  });
 }
 
 function buildCandy() {
@@ -71,6 +75,8 @@ if (process.versions.node !== pinnedNode) {
     console.error(`Candy build finished but ${tuiEntrypoint} is missing.`);
     process.exitCode = 1;
   } else {
-    process.exitCode = run(process.execPath, [tuiEntrypoint, ...process.argv.slice(2)]);
+    process.exitCode = run(process.execPath, [tuiEntrypoint, ...process.argv.slice(2)], {
+      cwd: invocationCwd,
+    });
   }
 }
