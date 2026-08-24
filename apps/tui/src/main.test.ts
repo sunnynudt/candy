@@ -415,20 +415,24 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     );
     const approvalId = approvalOutput.match(/\/approve (delete-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
+    const taskId = approvalOutput.match(/任务：(task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
     terminal.emitInput("what needs my attention?");
     terminal.emitInput("\r");
-    const guidanceOutput = await waitForOutput(
-      terminal,
-      new RegExp(
-        `task (task-[a-z0-9]+) is waiting for your approval; /approve ${approvalId} or /deny ${approvalId}`,
-        "u",
-      ),
-      5_000,
+    const waitingGuidance = new RegExp(
+      `task ${taskId} is waiting for your approval;[\\s\\S]*?/approve[\\s\\S]*?${approvalId}[\\s\\S]*?/deny[\\s\\S]*?${approvalId}`,
+      "u",
     );
-    assert.match(guidanceOutput, /waiting for your approval/u);
+    const guidanceOutput = await waitForOutput(terminal, waitingGuidance, 5_000);
+    assert.match(guidanceOutput, waitingGuidance);
     terminal.emitInput(`:approve ${approvalId}`);
     terminal.emitInput("\r");
-    const completedOutput = await waitForOutput(terminal, /completed/u);
+    const completedOutput = await waitForOutput(
+      terminal,
+      new RegExp(`${taskId} completed`, "u"),
+      5_000,
+    );
+    assert.match(completedOutput, new RegExp(`${taskId} completed`, "u"));
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
