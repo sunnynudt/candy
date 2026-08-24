@@ -190,6 +190,8 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
       attachmentIds: [],
       workspacePath: process.cwd(),
       trustedShell: false,
+      createdAt: created.createdAt,
+      updatedAt: created.updatedAt,
     });
     const running = first.transition("task-1", 0, "running", "owner-1");
     assert.equal(running.revision, 1);
@@ -409,7 +411,7 @@ test("sqlite task store rejects unknown future schema", async () => {
   try {
     mkdirSync(path.dirname(databasePath), { recursive: true });
     const raw = new DatabaseSync(databasePath);
-    raw.exec("PRAGMA user_version = 13");
+    raw.exec("PRAGMA user_version = 14");
     raw.close();
     assert.throws(
       () => new SQLiteTaskStore(databasePath),

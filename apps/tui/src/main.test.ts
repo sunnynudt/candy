@@ -410,11 +410,22 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     const approvalOutput = await waitForOutput(
       terminal,
-      /approval required: delete obsolete-\[REDACTED\]\.ts[\s\S]*\/approve delete-[a-z0-9]+/u,
+      /=== 等待你的确认 ===[\s\S]*操作：删除文件[\s\S]*文件：obsolete-\[REDACTED\]\.ts[\s\S]*状态：任务已暂停[\s\S]*\/approve delete-[a-z0-9]+[\s\S]*删除此文件并继续任务/u,
       5_000,
     );
     const approvalId = approvalOutput.match(/\/approve (delete-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
+    terminal.emitInput("what needs my attention?");
+    terminal.emitInput("\r");
+    const guidanceOutput = await waitForOutput(
+      terminal,
+      new RegExp(
+        `task (task-[a-z0-9]+) is waiting for your approval; /approve ${approvalId} or /deny ${approvalId}`,
+        "u",
+      ),
+      5_000,
+    );
+    assert.match(guidanceOutput, /waiting for your approval/u);
     terminal.emitInput(`:approve ${approvalId}`);
     terminal.emitInput("\r");
     const completedOutput = await waitForOutput(terminal, /completed/u);
@@ -900,7 +911,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /network approval required[\s\S]*git fetch origin/u,
+      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git fetch origin[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+[\s\S]*执行此命令并继续任务/u,
     );
     const approvalId = waiting.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
@@ -972,7 +983,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /network approval required[\s\S]*git ls-remote origin HEAD/u,
+      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
     );
     const staleApprovalId = waiting.match(/\/approve (network-[a-z0-9]+)/u)?.[1];
     assert.ok(staleApprovalId);
@@ -1065,7 +1076,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /network approval required[\s\S]*git ls-remote origin HEAD/u,
+      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
     );
     const taskId = waiting.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
@@ -2269,6 +2280,72 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
     );
     assert.doesNotMatch(terminal.writes.join(""), /fixture-secret/u);
     store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI identifies tasks and supports one-shot /new validator configuration", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-task-status-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(`/new --validator ${process.execPath} --strict -- Repair task list display`);
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /completed/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const task = store.get(taskId);
+    assert.equal(task?.title, "Repair task list display");
+    assert.deepEqual(task?.validator, { executable: process.execPath, args: ["--strict"] });
+    assert.equal(typeof task?.createdAt, "number");
+    assert.equal(typeof task?.updatedAt, "number");
+    store.close();
+
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    const tasks = await waitForOutput(
+      terminal,
+      /title=Repair task list display[\s\S]*created=[^\t]+\tupdated=/u,
+    );
+    assert.match(tasks, /workspace=local/u);
+    assert.match(tasks, /validator=configured/u);
+
+    terminal.emitInput(":status");
+    terminal.emitInput("\r");
+    const status = await waitForOutput(
+      terminal,
+      new RegExp(`status ${taskId}[\\s\\S]*phase: completed`, "u"),
+    );
+    assert.match(status, /profile: auto/u);
+    assert.match(status, /approval: none/u);
+    assert.match(status, /run: none/u);
+
+    terminal.emitInput(":new --validator relative-executable -- invalid validator");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /usage: \/new \[prompt\]/u);
+    const afterInvalid = new SQLiteTaskStore(
+      path.join(resolveAppPaths(root).state, "tasks.sqlite"),
+    );
+    assert.equal(afterInvalid.list().length, 1);
+    afterInvalid.close();
+
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

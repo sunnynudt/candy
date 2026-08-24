@@ -46,6 +46,7 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   },
   {
     name: "status",
+    argumentHint: "[task-id]",
     description: "Show the current task status",
   },
   {

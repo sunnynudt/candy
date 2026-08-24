@@ -33,6 +33,7 @@ import {
   resolveDefaultAppDataRoot,
   resolveNativeProcessRunnerPath,
   redactCredentialMaterial,
+  deriveTaskTitle,
   SQLiteTaskStore,
   SystemClock,
   type TaskMetadata,
@@ -266,15 +267,24 @@ export class InteractiveTui {
   readonly #ownerWatchers = new Map<string, ReturnType<typeof setInterval>>();
   readonly #validatorStops = new Map<string, "cancelled" | "timeout">();
   readonly #validatorStates = new Map<string, TuiValidatorState>();
+  readonly #taskPhases = new Map<string, string>();
   readonly #workspaceReviews = new Map<string, TuiWorkspaceReview>();
   readonly #requestedStops = new Map<string, "paused" | "cancelled" | "interrupted">();
   readonly #deleteApprovals = new Map<
     string,
-    { readonly taskId: string; readonly settle: (approved: boolean) => void }
+    {
+      readonly taskId: string;
+      readonly summary: string;
+      readonly settle: (approved: boolean) => void;
+    }
   >();
   readonly #networkApprovals = new Map<
     string,
-    { readonly taskId: string; readonly settle: (approved: boolean) => void }
+    {
+      readonly taskId: string;
+      readonly summary: string;
+      readonly settle: (approved: boolean) => void;
+    }
   >();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}:${randomUUID()}`;
@@ -440,6 +450,8 @@ export class InteractiveTui {
       this.requestExit();
     } else if (trimmed === "/help") {
       this.showHelp();
+    } else if (trimmed === "/status" || trimmed.startsWith("/status ")) {
+      this.showStatus(trimmed.slice(7).trim());
     } else if (this.#creatingTask) {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
     } else if (trimmed === "/new" || trimmed.startsWith("/new ")) {
@@ -551,13 +563,13 @@ export class InteractiveTui {
     this.#resolveExit?.();
   }
 
-  private create(prompt: string): void {
+  private create(prompt: string, validatorOverride?: CommandValidatorCommand): void {
     if (this.#creatingTask) {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
       return;
     }
     this.#creatingTask = true;
-    const operation = this.createTask(prompt);
+    const operation = this.createTask(prompt, validatorOverride);
     this.#pendingTaskCreation = operation;
     void operation
       .catch((error: unknown) => {
@@ -569,7 +581,10 @@ export class InteractiveTui {
       });
   }
 
-  private async createTask(prompt: string): Promise<void> {
+  private async createTask(
+    prompt: string,
+    validatorOverride?: CommandValidatorCommand,
+  ): Promise<void> {
     if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
       this.write("prompt rejected: credential-shaped content is forbidden\n");
       return;
@@ -587,7 +602,8 @@ export class InteractiveTui {
     const approvalProfile = this.#approvalProfile;
     const selectedModel = this.#selectedModel;
     const attachmentIds = [...this.#selectedAttachmentIds];
-    const validatorCommand = this.#validatorCommand;
+    const validatorCommand = validatorOverride ?? this.#validatorCommand;
+    const title = deriveTaskTitle(prompt);
     const trustedShell = this.#trustedShellEnabled;
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
@@ -644,6 +660,7 @@ export class InteractiveTui {
         workspaceBaseline,
         worktreePath,
         trustedShell,
+        title,
       );
     } catch (error) {
       if (worktreePath !== undefined) {
@@ -727,7 +744,16 @@ export class InteractiveTui {
       return;
     }
     const snapshot = task.snapshot();
-    if (snapshot.state === "running" || snapshot.state === "waiting_approval") {
+    if (snapshot.state === "waiting_approval") {
+      const pendingActions = this.pendingApprovalActions(currentTaskId);
+      this.write(
+        pendingActions.length === 0
+          ? `task ${currentTaskId} is waiting for an approval decision; use /status ${currentTaskId} for details\n`
+          : `task ${currentTaskId} is waiting for your approval; ${pendingActions.join("; ")}\n`,
+      );
+      return;
+    }
+    if (snapshot.state === "running") {
       if (snapshot.ownerId !== undefined && snapshot.ownerId !== this.#ownerId) {
         this.write(`task ${currentTaskId} is read-only: owned by ${snapshot.ownerId}\n`);
       } else {
@@ -751,13 +777,20 @@ export class InteractiveTui {
     this.drain(new Map([[currentTaskId, prompt]]));
   }
 
-  private newTask(prompt: string): void {
+  private newTask(value: string): void {
+    const parsed = parseNewTaskInput(value);
+    if (parsed === undefined) {
+      this.write(
+        "usage: /new [prompt] or /new --validator <absolute-executable> [args] -- <goal>\n",
+      );
+      return;
+    }
     this.#currentTaskId = undefined;
-    if (prompt.length === 0) {
+    if (parsed.prompt.length === 0) {
       this.write("new task ready; enter a prompt\n");
       return;
     }
-    this.create(prompt);
+    this.create(parsed.prompt, parsed.validator);
   }
 
   private async configureWorkspace(value: string): Promise<void> {
@@ -976,19 +1009,13 @@ export class InteractiveTui {
       this.write("validator cleared for new tasks\n");
       return;
     }
-    const parts = value.split(/\s+/u).filter((part) => part.length > 0);
-    const executable = parts.shift();
-    if (
-      executable === undefined ||
-      !isAbsoluteCommandPath(executable) ||
-      parts.some((part) => containsControlCharacter(part)) ||
-      containsCredentialMaterial(value)
-    ) {
+    const command = parseValidatorCommand(value);
+    if (command === undefined) {
       this.write("validator rejected: use an absolute executable and safe direct arguments\n");
       return;
     }
-    this.#validatorCommand = { executable, args: parts };
-    this.write(`validator configured for new tasks: ${executable}\n`);
+    this.#validatorCommand = command;
+    this.write(`validator configured for new tasks: ${command.executable}\n`);
   }
 
   private async showChanges(): Promise<void> {
@@ -1292,6 +1319,7 @@ export class InteractiveTui {
         status: "blocked",
         evidence: "native runner unavailable",
       });
+      this.#taskPhases.set(snapshot.taskId, "validator blocked");
       this.write("validator blocked: native Sandbox Runner is unavailable on this installation\n");
       return;
     }
@@ -1302,6 +1330,7 @@ export class InteractiveTui {
     const abort = new AbortController();
     this.#validatorAbortControllers.set(snapshot.taskId, abort);
     this.#validatorStates.set(snapshot.taskId, { status: "running" });
+    this.#taskPhases.set(snapshot.taskId, "validator running");
     this.write(`validator running: ${snapshot.taskId}\n`);
     const operation = this.runValidator(metadata, abort);
     this.#validatorRuns.set(snapshot.taskId, operation);
@@ -1382,6 +1411,7 @@ export class InteractiveTui {
       evidence: boundedEvidence,
       ...(durationMs === undefined ? {} : { durationMs }),
     });
+    this.#taskPhases.set(taskId, `validator ${status}`);
     this.#store.recordRun({
       taskId,
       rounds: 1,
@@ -1394,7 +1424,7 @@ export class InteractiveTui {
     this.#store.appendTranscript(taskId, [
       { role: "tool", text: transcriptText(`validator ${status}: ${boundedEvidence}`) },
     ]);
-    this.write(`validator ${status}: ${boundedEvidence}\n`);
+    this.write(`validator ${status}: ${boundedEvidence}\n${validatorRecoveryHint(taskId, status)}`);
   }
 
   private async withActiveSecrets<T>(
@@ -1548,6 +1578,7 @@ export class InteractiveTui {
     explicitPrompt?: string,
   ): Promise<void> {
     const taskId = task.snapshot().taskId;
+    this.#taskPhases.set(taskId, "starting");
     try {
       this.#workspaceReviews.delete(taskId);
       this.#store.clearReview(taskId);
@@ -1587,6 +1618,7 @@ export class InteractiveTui {
         throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
       }
       const runEngineTurn = async (activeSecrets: readonly string[]): Promise<void> => {
+        this.#taskPhases.set(taskId, "turn running");
         const expandedPrompt = await expandWorkspaceMentionPrompt(
           prompt,
           taskSnapshot.workspacePath,
@@ -1644,6 +1676,7 @@ export class InteractiveTui {
           }
           if (observation.type === "tool.started") {
             const tool = boundedToolName(observation.tool, activeSecrets);
+            this.#taskPhases.set(taskId, `tool ${formatToolLabel(tool)}`);
             const activity = formatToolActivity(tool, observation.args, activeSecrets);
             this.write(`\n[工具] ${activity}…\n`);
             this.#store.appendTranscript(taskId, [
@@ -1656,6 +1689,7 @@ export class InteractiveTui {
           }
           if (observation.type === "tool.completed") {
             const tool = boundedToolName(observation.tool, activeSecrets);
+            this.#taskPhases.set(taskId, "turn running");
             const summary = `${formatToolLabel(tool)} ${observation.ok ? "完成" : "失败"}`;
             this.write(`\n[工具] ${observation.ok ? "✓" : "✗"} ${summary}\n`);
             this.#store.appendTranscript(taskId, [
@@ -1666,11 +1700,16 @@ export class InteractiveTui {
             ]);
           }
           if (observation.type === "turn.retrying") {
+            this.#taskPhases.set(
+              taskId,
+              `provider retry ${observation.attempt}/${observation.maxAttempts}`,
+            );
             this.write(
               `\n[provider retry ${observation.attempt}/${observation.maxAttempts}; waiting ${observation.delayMs}ms]\n`,
             );
           }
           if (observation.type === "turn.retry.completed") {
+            this.#taskPhases.set(taskId, "turn running");
             this.write(
               observation.ok
                 ? `\n[provider retry ${observation.attempt} succeeded]\n`
@@ -1678,13 +1717,20 @@ export class InteractiveTui {
             );
           }
           if (observation.type === "turn.compaction") {
+            this.#taskPhases.set(
+              taskId,
+              observation.phase === "started" ? "context compaction" : "turn running",
+            );
             this.write(
               observation.phase === "started"
                 ? `\n[context compaction: ${observation.reason}]\n`
                 : `\n[context compaction ${observation.aborted ? "cancelled" : "settled"}: ${observation.reason}]\n`,
             );
           }
-          if (observation.type === "turn.settled") this.write("\n[turn settled]\n");
+          if (observation.type === "turn.settled") {
+            this.#taskPhases.set(taskId, "turn settled");
+            this.write("\n[turn settled]\n");
+          }
         }
       };
       await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
@@ -1693,6 +1739,7 @@ export class InteractiveTui {
       const current = task.snapshot();
       if (current.state === "running") {
         const completed = task.transition("completed", current.revision);
+        this.#taskPhases.set(taskId, "completed");
         this.write(`\n${completed.taskId} completed\n`);
       }
     } catch (error) {
@@ -1704,6 +1751,7 @@ export class InteractiveTui {
         try {
           const stopped = task.transition(nextState, current.revision);
           stoppedState = nextState;
+          this.#taskPhases.set(taskId, nextState);
           this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
         } catch {
           const persisted = this.#store.get(taskId);
@@ -1936,9 +1984,69 @@ export class InteractiveTui {
       const validator = this.validatorStatus(task);
       const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
       this.write(
-        `${current}${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tvalidator=${validator}\n`,
+        `${current}${task.taskId}\ttitle=${task.title ?? task.taskId}\t${task.state}\tcreated=${formatTaskTimestamp(task.createdAt)}\tupdated=${formatTaskTimestamp(task.updatedAt)}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tvalidator=${validator}\n`,
       );
     }
+  }
+
+  private showStatus(requestedTaskId: string): void {
+    const taskId = requestedTaskId || this.#currentTaskId;
+    if (taskId === undefined) {
+      this.write("no current task; use /new or /use <task-id> first\n");
+      return;
+    }
+    const task = this.#store.get(taskId);
+    if (task === undefined) {
+      this.write(`task ${taskId} does not exist\n`);
+      return;
+    }
+    const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
+    const pendingApprovals = [
+      ...[...this.#deleteApprovals.entries()]
+        .filter(([, approval]) => approval.taskId === task.taskId)
+        .map(([id, approval]) => `delete ${id} (${approval.summary})`),
+      ...[...this.#networkApprovals.entries()]
+        .filter(([, approval]) => approval.taskId === task.taskId)
+        .map(([id, approval]) => `network ${id} (${approval.summary})`),
+    ];
+    const run = this.#store.getRun(task.taskId);
+    const validator = this.validatorStatus(task);
+    const lines = [
+      `status ${task.taskId}`,
+      `title: ${task.title ?? task.taskId}`,
+      `state: ${task.state}`,
+      `phase: ${this.#taskPhases.get(task.taskId) ?? task.state}`,
+      `profile: ${task.approvalProfile}`,
+      `workspace: ${workspaceState} ${task.worktreePath ?? task.workspacePath}`,
+      `model: ${task.model}`,
+      `revision: r${task.revision}`,
+      `created: ${formatTaskTimestamp(task.createdAt)}`,
+      `updated: ${formatTaskTimestamp(task.updatedAt)}`,
+      `owner: ${task.ownerId ?? "none"}`,
+      `approval: ${pendingApprovals.length === 0 ? "none" : pendingApprovals.join(", ")}`,
+      `validator: ${validator}`,
+      `run: ${
+        run === undefined
+          ? "none"
+          : `${run.stopReason}, rounds=${run.rounds}, evidence=${run.evidenceCount}${
+              run.evidenceSummary === undefined
+                ? ""
+                : `, summary=${redactSensitive(run.evidenceSummary, this.activeSecretsSnapshot())}`
+            }`
+      }`,
+    ];
+    const recovery =
+      task.state === "waiting_approval"
+        ? this.pendingApprovalActions(task.taskId).length === 0
+          ? "action required: an approval is pending; wait for the active TUI owner or use /cancel"
+          : `action required: ${this.pendingApprovalActions(task.taskId).join("; ")}`
+        : task.state === "paused" || task.state === "interrupted"
+          ? `recovery: /resume ${task.taskId} <continuation> (explicit; no replay) or /cancel ${task.taskId}`
+          : validator === "fail" || validator === "timeout" || validator === "cancelled"
+            ? `recovery: fix the workspace, then /validate; or /resume ${task.taskId} <continuation>`
+            : undefined;
+    if (recovery !== undefined) lines.push(recovery);
+    this.write(`${lines.join("\n")}\n`);
   }
 
   private validatorStatus(task: TaskMetadata): string {
@@ -2037,6 +2145,11 @@ export class InteractiveTui {
     activeSecrets: readonly string[],
   ): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
+    const task = this.ensureController(taskId);
+    if (task === undefined) return Promise.resolve(false);
+    const snapshot = task.snapshot();
+    if (snapshot.state !== "running" || snapshot.ownerId !== this.#ownerId)
+      return Promise.resolve(false);
     const approvalId = `delete-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     return new Promise<boolean>((resolve) => {
       let settled = false;
@@ -2045,15 +2158,51 @@ export class InteractiveTui {
         settled = true;
         signal.removeEventListener("abort", denyOnAbort);
         this.#deleteApprovals.delete(approvalId);
-        resolve(approved);
+        const persisted = this.#store.get(taskId);
+        const ownsWaitingTask =
+          !this.#closing &&
+          persisted?.state === "waiting_approval" &&
+          persisted.ownerId === this.#ownerId;
+        if (ownsWaitingTask) {
+          try {
+            const latest = task.snapshot();
+            if (latest.state === "waiting_approval") task.transition("running", latest.revision);
+            this.#taskPhases.set(taskId, "turn running");
+          } catch {
+            // A concurrent owner fence wins over a pending approval.
+          }
+        }
+        resolve(approved && ownsWaitingTask && !signal.aborted);
       };
       const denyOnAbort = (): void => settle(false);
-      this.#deleteApprovals.set(approvalId, { taskId, settle });
-      signal.addEventListener("abort", denyOnAbort, { once: true });
       const safePath = redactSensitive(request.path, activeSecrets);
-      this.write(
-        `\napproval required: delete ${safePath}\n/approve ${approvalId} or /deny ${approvalId}\n`,
-      );
+      this.#deleteApprovals.set(approvalId, { taskId, summary: safePath, settle });
+      signal.addEventListener("abort", denyOnAbort, { once: true });
+      const latest = task.snapshot();
+      if (
+        signal.aborted ||
+        this.#closing ||
+        latest.state !== "running" ||
+        latest.ownerId !== this.#ownerId
+      ) {
+        settle(false);
+        return;
+      }
+      try {
+        task.transition("waiting_approval", latest.revision);
+      } catch {
+        settle(false);
+        return;
+      }
+      this.#taskPhases.set(taskId, "waiting for your approval");
+      this.writeApprovalRequest({
+        taskId,
+        approvalId,
+        action: "删除文件",
+        details: [`文件：${safePath}`],
+        approveText: "删除此文件并继续任务",
+        denyText: "保留此文件并继续任务",
+      });
     });
   }
 
@@ -2113,7 +2262,11 @@ export class InteractiveTui {
         resolve(approved && ownsWaitingTask && !signal.aborted);
       };
       const denyOnAbort = (): void => settle(false);
-      this.#networkApprovals.set(approvalId, { taskId, settle });
+      this.#networkApprovals.set(approvalId, {
+        taskId,
+        summary: redactSensitive(request.reason, this.activeSecretsSnapshot()),
+        settle,
+      });
       signal.addEventListener("abort", denyOnAbort, { once: true });
       const latest = task.snapshot();
       if (
@@ -2131,18 +2284,65 @@ export class InteractiveTui {
         settle(false);
         return;
       }
-      this.write(
-        [
-          "\nnetwork approval required",
-          `command: ${formatApprovalField(request.command)}`,
-          `reason: ${formatApprovalField(request.reason)}`,
-          `cwd: ${formatApprovalField(canonicalTaskWorktree)}`,
-          `timeout: ${request.timeout === undefined ? "none" : `${request.timeout}s`}`,
-          `/approve ${approvalId} or /deny ${approvalId}`,
-          "",
-        ].join("\n"),
-      );
+      this.#taskPhases.set(taskId, "waiting for your approval");
+      this.writeApprovalRequest({
+        taskId,
+        approvalId,
+        action: "执行受限网络命令",
+        details: [
+          `命令：${formatApprovalField(request.command)}`,
+          `原因：${formatApprovalField(request.reason)}`,
+          `目录：${formatApprovalField(canonicalTaskWorktree)}`,
+          `超时：${request.timeout === undefined ? "无" : `${request.timeout}s`}`,
+        ],
+        approveText: "执行此命令并继续任务",
+        denyText: "拒绝此命令并继续任务",
+      });
     });
+  }
+
+  private pendingApprovalActions(taskId: string): readonly string[] {
+    return [
+      ...[...this.#deleteApprovals.entries()]
+        .filter(([, approval]) => approval.taskId === taskId)
+        .map(([approvalId]) => `/approve ${approvalId} or /deny ${approvalId}`),
+      ...[...this.#networkApprovals.entries()]
+        .filter(([, approval]) => approval.taskId === taskId)
+        .map(([approvalId]) => `/approve ${approvalId} or /deny ${approvalId}`),
+    ];
+  }
+
+  private writeApprovalRequest({
+    taskId,
+    approvalId,
+    action,
+    details,
+    approveText,
+    denyText,
+  }: {
+    readonly taskId: string;
+    readonly approvalId: string;
+    readonly action: string;
+    readonly details: readonly string[];
+    readonly approveText: string;
+    readonly denyText: string;
+  }): void {
+    this.write(
+      [
+        "",
+        "=== 等待你的确认 ===",
+        `任务：${taskId}`,
+        `操作：${action}`,
+        ...details,
+        "状态：任务已暂停，等待你的选择；Candy 不会自行继续。",
+        "",
+        `  /approve ${approvalId}  ${approveText}`,
+        `  /deny ${approvalId}     ${denyText}`,
+        `  /cancel ${taskId}       取消整个任务`,
+        "======================",
+        "",
+      ].join("\n"),
+    );
   }
 
   private recoverStaleTuiOwners(): void {
@@ -2472,6 +2672,47 @@ function assertSafeDiffPath(value: string): void {
 
 function isAbsoluteCommandPath(value: string): boolean {
   return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
+function parseValidatorCommand(value: string): CommandValidatorCommand | undefined {
+  const parts = value.split(/\s+/u).filter((part) => part.length > 0);
+  const executable = parts.shift();
+  if (
+    executable === undefined ||
+    !isAbsoluteCommandPath(executable) ||
+    containsControlCharacter(value) ||
+    containsCredentialMaterial(value)
+  )
+    return undefined;
+  return { executable, args: parts };
+}
+
+function parseNewTaskInput(
+  value: string,
+): { readonly prompt: string; readonly validator?: CommandValidatorCommand } | undefined {
+  const trimmed = value.trim();
+  if (trimmed !== "--validator" && !trimmed.startsWith("--validator ")) return { prompt: trimmed };
+  const validatorAndGoal = trimmed.slice("--validator".length).trim();
+  const separator = validatorAndGoal.indexOf(" -- ");
+  if (separator < 0) return undefined;
+  const validator = parseValidatorCommand(validatorAndGoal.slice(0, separator).trim());
+  const prompt = validatorAndGoal.slice(separator + 4).trim();
+  if (validator === undefined || prompt.length === 0) return undefined;
+  return { prompt, validator };
+}
+
+function formatTaskTimestamp(timestamp: number | undefined): string {
+  if (timestamp === undefined) return "-";
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? "-" : date.toISOString();
+}
+
+function validatorRecoveryHint(
+  taskId: string,
+  status: "pass" | "fail" | "cancelled" | "timeout",
+): string {
+  if (status === "pass") return "";
+  return `recovery: fix the workspace, then /validate; or /resume ${taskId} <continuation>\n`;
 }
 
 function containsControlCharacter(value: string): boolean {

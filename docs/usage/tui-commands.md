@@ -14,8 +14,10 @@
 | 命令 | 语法 | 说明 |
 | --- | --- | --- |
 | `/new` | `/new [prompt]` | 创建新任务；可带初始提示词 |
+| `/new` | `/new --validator <absolute-executable> [args] -- <goal>` | 创建带 Validator 的新任务；`--` 后为任务目标 |
 | `/workspace` | `/workspace [path]` | 显示或选择工作区（绝对路径） |
-| `/tasks` | `/tasks` | 列出任务（状态/模型/工作区/revision） |
+| `/tasks` | `/tasks` | 列出任务（标题/状态/创建更新时间/模型/工作区/revision/Validator） |
+| `/status` | `/status [task-id]` | 查看当前或指定任务的状态、执行阶段、审批与恢复信息 |
 | `/use` | `/use <task-id>` | 选择已持久化任务继续操作 |
 | `/transcript` | `/transcript [task-id]` | 显示已保存的对话记录 |
 
@@ -52,7 +54,7 @@
 | `/apply` | `/apply` | 将审阅后的任务变更显式应用到目标工作区（不自动提交） |
 | `/discard` | `/discard` | 丢弃 Candy 自有的 Task Worktree |
 | `/validate` | `/validate` | 运行已配置的 validator |
-| `/validator` | `/validator <executable> [args]` | 配置任务 validator |
+| `/validator` | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator |
 
 ## 控制
 
