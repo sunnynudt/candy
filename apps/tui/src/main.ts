@@ -1575,6 +1575,7 @@ export class InteractiveTui {
         this.#store.appendTranscript(taskId, [
           { role: "user", text: transcriptText(explicitPrompt) },
         ]);
+        this.write(`状态：${taskId} 正在处理中（准备上下文并请求模型）\n`);
       }
       const attachments =
         taskSnapshot.attachmentIds.length === 0
@@ -1643,27 +1644,24 @@ export class InteractiveTui {
           }
           if (observation.type === "tool.started") {
             const tool = boundedToolName(observation.tool, activeSecrets);
-            const args = boundedToolDetail(observation.args, activeSecrets);
-            const detail = args === undefined ? "" : ` args=${args}`;
-            this.write(`\n[tool ${tool}${detail}]\n`);
+            const activity = formatToolActivity(tool, observation.args, activeSecrets);
+            this.write(`\n[工具] ${activity}…\n`);
             this.#store.appendTranscript(taskId, [
-              { role: "tool", text: transcriptText(`${tool}:started${detail}`) },
+              { role: "tool", text: transcriptText(`${activity}: started`) },
             ]);
           }
           if (observation.type === "tool.updated") {
             const tool = boundedToolName(observation.tool, activeSecrets);
-            const output = boundedToolDetail(observation.output, activeSecrets) ?? "(no output)";
-            this.write(`\n[tool ${tool} output=${output}]\n`);
+            this.write(`\n[工具] ${formatToolLabel(tool)} 正在返回结果…\n`);
           }
           if (observation.type === "tool.completed") {
             const tool = boundedToolName(observation.tool, activeSecrets);
-            const output = boundedToolDetail(observation.output, activeSecrets);
-            const detail = output === undefined ? "" : ` output=${output}`;
-            this.write(`\n[tool ${tool}${detail}]\n`);
+            const summary = `${formatToolLabel(tool)} ${observation.ok ? "完成" : "失败"}`;
+            this.write(`\n[工具] ${observation.ok ? "✓" : "✗"} ${summary}\n`);
             this.#store.appendTranscript(taskId, [
               {
                 role: "tool",
-                text: transcriptText(`${tool}:${observation.ok ? "ok" : "error"}${detail}`),
+                text: transcriptText(summary),
               },
             ]);
           }
@@ -2002,10 +2000,6 @@ export class InteractiveTui {
     }
     if (this.#approvalProfile !== "auto") {
       this.write("Trusted Shell Auto rejected: select /profile auto first\n");
-      return;
-    }
-    if (!this.#worktreeEnabled) {
-      this.write("Trusted Shell Auto rejected: select /worktree on first\n");
       return;
     }
     if (this.#shellRunner === undefined) {
@@ -2542,13 +2536,63 @@ function boundedToolName(value: string, activeSecrets: readonly string[]): strin
   return redacted.length <= 128 ? redacted : `${redacted.slice(0, 128)}…`;
 }
 
-function boundedToolDetail(
+function formatToolActivity(
+  tool: string,
+  args: string | undefined,
+  activeSecrets: readonly string[],
+): string {
+  const label = formatToolLabel(tool);
+  const details = summarizeToolArguments(args, activeSecrets);
+  return details === undefined ? label : `${label}：${details}`;
+}
+
+function formatToolLabel(tool: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    candy_read: "读取文件",
+    candy_search: "搜索代码",
+    candy_edit: "编辑文件",
+    candy_write: "写入文件",
+    candy_delete: "删除文件",
+    candy_web_fetch: "读取网页",
+    candy_bash_network: "读取网络资源",
+  };
+  return labels[tool] ?? tool.replace(/^candy_/u, "").replaceAll("_", " ");
+}
+
+function summarizeToolArguments(
   value: string | undefined,
   activeSecrets: readonly string[],
 ): string | undefined {
   if (value === undefined) return undefined;
-  const redacted = replaceToolControlCharacters(redactSensitive(value, activeSecrets));
-  return redacted.length <= 2_048 ? redacted : `${redacted.slice(0, 2_048)}…`;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    const pathValue = summarizeToolField(record.path, activeSecrets);
+    const queryValue = summarizeToolField(record.query, activeSecrets);
+    const parts = [pathValue, queryValue === undefined ? undefined : `“${queryValue}”`].filter(
+      (part): part is string => part !== undefined,
+    );
+    const offset = typeof record.offset === "number" ? record.offset : undefined;
+    const limit = typeof record.limit === "number" ? record.limit : undefined;
+    if (
+      pathValue !== undefined &&
+      offset !== undefined &&
+      limit !== undefined &&
+      Number.isSafeInteger(offset) &&
+      Number.isSafeInteger(limit)
+    )
+      parts.push(`第 ${offset + 1}–${offset + limit} 行`);
+    return parts.length === 0 ? undefined : parts.join(" · ");
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeToolField(value: unknown, activeSecrets: readonly string[]): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const summary = replaceToolControlCharacters(redactSensitive(value, activeSecrets)).trim();
+  return summary.length <= 160 ? summary : `${summary.slice(0, 160)}…`;
 }
 
 function replaceToolControlCharacters(value: string): string {

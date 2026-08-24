@@ -58,6 +58,14 @@ async function waitForOutput(
   return terminal.writes.join("");
 }
 
+function terminalText(terminal: FakeTerminal): string {
+  const escape = String.fromCharCode(0x1b);
+  const bell = String.fromCharCode(0x07);
+  const csi = new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, "gu");
+  const osc = new RegExp(`${escape}\\][^${bell}]*(?:${bell}|${escape}\\\\)`, "gu");
+  return terminal.writes.join("").replace(osc, "").replace(csi, "");
+}
+
 function runGit(cwd: string, args: readonly string[]): string {
   return execFileSync("git", args, {
     cwd,
@@ -415,7 +423,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     await runPromise;
     assert.equal(observedProfile, "auto");
     assert.equal(deleteApproved, true);
-    assert.match(completedOutput, /\[tool candy_delete\]/u);
+    assert.match(completedOutput, /\[工具\] ✓ 删除文件 完成/u);
     assert.doesNotMatch(completedOutput, new RegExp(activeSecret, "u"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -484,16 +492,15 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("start a long turn");
     terminal.emitInput("\r");
-    const taskOutput = await waitForOutput(terminal, /\[tool candy_/u);
-    const updatedOutput = await waitForOutput(terminal, /partial fixture output/u);
-    const completedOutput = await waitForOutput(terminal, /output=.*\[REDACTED\]/u);
+    const taskOutput = await waitForOutput(terminal, /\[工具\] 读取文件：src\/value\.ts…/u);
+    const updatedOutput = await waitForOutput(terminal, /\[工具\] 读取文件 正在返回结果…/u);
+    const completedOutput = await waitForOutput(terminal, /\[工具\] ✓ .+ 完成/u);
     assert.doesNotMatch(taskOutput, /x{150}/u);
-    assert.match(taskOutput, /args=.*src\/value\.ts/u);
-    assert.match(updatedOutput, /output=.*partial fixture output/u);
-    assert.match(completedOutput, /\[REDACTED\]/u);
+    assert.match(taskOutput, /src\/value\.ts/u);
+    assert.doesNotMatch(updatedOutput, /partial fixture output/u);
     assert.doesNotMatch(completedOutput, /sk-proj-tool-output-canary|Bearer fixture-secret/u);
-    const redactedToolOutput = await waitForOutput(terminal, /\[tool \[REDACTED\]/u);
-    assert.match(redactedToolOutput, /\[tool \[REDACTED\]/u);
+    const redactedToolOutput = await waitForOutput(terminal, /\[工具\] ✓ \[REDACTED\] 完成/u);
+    assert.match(redactedToolOutput, /\[工具\] ✓ \[REDACTED\] 完成/u);
     const taskId = taskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     terminal.emitInput(":steer focus on the failing test");
@@ -515,6 +522,45 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     assert.deepEqual(steering, ["focus on the failing test"]);
     assert.deepEqual(followUps, ["report only after validation"]);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI confirms activity before the first model event", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-activity-feedback-"));
+  const terminal = new FakeTerminal();
+  let releaseFirstEvent: (() => void) | undefined;
+  const firstEvent = new Promise<void>((resolve) => {
+    releaseFirstEvent = resolve;
+  });
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          await firstEvent;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("wait for the first model event");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /正在处理中（准备上下文并请求模型）/u);
+    const taskId = output.match(/状态：(task-[a-z0-9]+) 正在处理中/u)?.[1];
+    assert.ok(taskId);
+    assert.ok(
+      output.indexOf("[user] wait for the first model event") < output.indexOf("正在处理中"),
+    );
+    releaseFirstEvent?.();
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    releaseFirstEvent?.();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -647,7 +693,7 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
       terminal,
       /Trusted Shell Auto enabled for the next Auto Git Task/u,
     );
-    assert.match(output, /Worktree enabled automatically for new tasks/u);
+    assert.match(terminalText(terminal), /Worktree enabled automatically for new\s+tasks/u);
     assert.match(output, /Trusted Shell Auto enabled for the next Auto Git Task/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");

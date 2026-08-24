@@ -95,6 +95,12 @@ export interface TaskMetadata {
   readonly workspaceBaseline?: string;
   readonly worktreePath?: string;
   readonly trustedShell: boolean;
+  /** Short display title derived from the task goal; older tasks fall back to the task id. */
+  readonly title?: string;
+  /** Epoch milliseconds at task creation. */
+  readonly createdAt?: number;
+  /** Epoch milliseconds of the latest state/run change. */
+  readonly updatedAt?: number;
 }
 
 export interface TaskReviewMetadata {
@@ -183,7 +189,10 @@ export class SQLiteTaskStore {
         validator_json TEXT,
         workspace_baseline TEXT,
         worktree_path TEXT,
-        trusted_shell INTEGER NOT NULL DEFAULT 0
+        trusted_shell INTEGER NOT NULL DEFAULT 0,
+        title TEXT,
+        created_at INTEGER,
+        updated_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
@@ -329,7 +338,7 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN trusted_shell INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version = 11;
       `);
-    } else if (schemaVersion !== 11 && schemaVersion !== 12) {
+    } else if (schemaVersion !== 11 && schemaVersion !== 12 && schemaVersion !== 13) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
@@ -338,8 +347,19 @@ export class SQLiteTaskStore {
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
         review_json TEXT NOT NULL
       );
-      PRAGMA user_version = 12;
     `);
+    // Schema 13 adds the short task title and created/updated timestamps.
+    // Fresh schema-0 databases already include the columns; pre-existing
+    // databases (v1..v12) are migrated in place and older tasks keep a NULL
+    // title, which callers display as the task-id fallback.
+    if (schemaVersion !== 0 && schemaVersion !== 13) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN title TEXT;
+        ALTER TABLE task_metadata ADD COLUMN created_at INTEGER;
+        ALTER TABLE task_metadata ADD COLUMN updated_at INTEGER;
+      `);
+    }
+    this.#database.exec(`PRAGMA user_version = 13;`);
   }
 
   public create(
@@ -353,15 +373,18 @@ export class SQLiteTaskStore {
     workspaceBaseline?: string,
     worktreePath?: string,
     trustedShell = false,
+    title?: string,
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
+    if (title !== undefined) assertTaskTitle(title);
     if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
       throw new Error("Workspace baseline is invalid.");
     if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
+    const now = Date.now();
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -374,6 +397,9 @@ export class SQLiteTaskStore {
         workspaceBaseline ?? null,
         worktreePath ?? null,
         trustedShell ? 1 : 0,
+        title ?? null,
+        now,
+        now,
       );
     return this.require(taskId);
   }
@@ -385,9 +411,9 @@ export class SQLiteTaskStore {
       throw new Error("Workspace baseline is invalid.");
     this.#database
       .prepare(
-        "UPDATE task_metadata SET workspace_baseline = COALESCE(workspace_baseline, ?) WHERE task_id = ? AND workspace_baseline IS NULL",
+        "UPDATE task_metadata SET workspace_baseline = COALESCE(workspace_baseline, ?), updated_at = ? WHERE task_id = ? AND workspace_baseline IS NULL",
       )
-      .run(baseline ?? null, taskId);
+      .run(baseline ?? null, Date.now(), taskId);
     return this.require(taskId);
   }
 
@@ -400,9 +426,9 @@ export class SQLiteTaskStore {
       throw new Error("Task model cannot change during an active turn.");
     const result = this.#database
       .prepare(
-        "UPDATE task_metadata SET revision = revision + 1, model_id = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+        "UPDATE task_metadata SET revision = revision + 1, model_id = ?, updated_at = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
       )
-      .run(model, taskId, expectedRevision);
+      .run(model, Date.now(), taskId, expectedRevision);
     if (result.changes !== 1)
       throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
     return this.require(taskId);
@@ -421,9 +447,9 @@ export class SQLiteTaskStore {
       throw new Error("Task attachments cannot change during an active turn.");
     const result = this.#database
       .prepare(
-        "UPDATE task_metadata SET revision = revision + 1, attachment_ids = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+        "UPDATE task_metadata SET revision = revision + 1, attachment_ids = ?, updated_at = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
       )
-      .run(JSON.stringify(attachmentIds), taskId, expectedRevision);
+      .run(JSON.stringify(attachmentIds), Date.now(), taskId, expectedRevision);
     if (result.changes !== 1)
       throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
     return this.require(taskId);
@@ -434,8 +460,8 @@ export class SQLiteTaskStore {
     assertTaskId(taskId);
     if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
     this.#database
-      .prepare("UPDATE task_metadata SET worktree_path = ? WHERE task_id = ?")
-      .run(worktreePath ?? null, taskId);
+      .prepare("UPDATE task_metadata SET worktree_path = ?, updated_at = ? WHERE task_id = ?")
+      .run(worktreePath ?? null, Date.now(), taskId);
     return this.require(taskId);
   }
 
@@ -473,7 +499,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -482,7 +508,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -526,7 +552,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -540,9 +566,9 @@ export class SQLiteTaskStore {
   ): TaskMetadata {
     const result = this.#database
       .prepare(
-        "UPDATE task_metadata SET revision = revision + 1, state = ?, owner_id = ? WHERE task_id = ? AND revision = ?",
+        "UPDATE task_metadata SET revision = revision + 1, state = ?, owner_id = ?, updated_at = ? WHERE task_id = ? AND revision = ?",
       )
-      .run(state, ownerId ?? null, taskId, expectedRevision);
+      .run(state, ownerId ?? null, Date.now(), taskId, expectedRevision);
     if (result.changes !== 1) {
       throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
     }
@@ -553,9 +579,9 @@ export class SQLiteTaskStore {
     return Number(
       this.#database
         .prepare(
-          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL WHERE state IN ('running', 'waiting_approval')",
+          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL, updated_at = ? WHERE state IN ('running', 'waiting_approval')",
         )
-        .run().changes,
+        .run(Date.now()).changes,
     );
   }
 
@@ -564,9 +590,9 @@ export class SQLiteTaskStore {
     return Number(
       this.#database
         .prepare(
-          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL WHERE owner_id = ? AND state IN ('running', 'waiting_approval')",
+          "UPDATE task_metadata SET revision = revision + 1, state = 'interrupted', owner_id = NULL, updated_at = ? WHERE owner_id = ? AND state IN ('running', 'waiting_approval')",
         )
-        .run(ownerId).changes,
+        .run(Date.now(), ownerId).changes,
     );
   }
 
@@ -610,6 +636,9 @@ export class SQLiteTaskStore {
         progress.lastFingerprintHash ?? null,
         progress.evidenceSummary ?? null,
       );
+    this.#database
+      .prepare("UPDATE task_metadata SET updated_at = ? WHERE task_id = ?")
+      .run(Date.now(), progress.taskId);
   }
 
   public getRun(taskId: string): TaskRunMetadata | undefined {
@@ -710,6 +739,13 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
       ? { worktreePath: String(row.worktree_path) }
       : {}),
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
+    ...(row.title === null || row.title === undefined ? {} : { title: String(row.title) }),
+    ...(row.created_at === null || row.created_at === undefined
+      ? {}
+      : { createdAt: Number(row.created_at) }),
+    ...(row.updated_at === null || row.updated_at === undefined
+      ? {}
+      : { updatedAt: Number(row.updated_at) }),
   };
 }
 
@@ -762,6 +798,41 @@ function isSafeReviewPath(value: unknown): value is string {
 
 function assertTaskId(taskId: string): void {
   if (taskId.length === 0 || /[\r\n]/u.test(taskId)) throw new Error("Task ID is invalid.");
+}
+
+const MAX_TASK_TITLE_CHARS = 64;
+
+/**
+ * Derive a short, bounded display title from a task goal. The result is the
+ * first line with control characters removed, trimmed, and capped at
+ * MAX_TASK_TITLE_CHARS; empty input yields no title. Callers must reject
+ * credential-shaped goals before invoking this helper.
+ */
+export function deriveTaskTitle(value: string): string | undefined {
+  const firstLine = value.split(/\r?\n/u, 1)[0] ?? "";
+  const sanitized = [...firstLine]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? " " : character;
+    })
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (sanitized.length === 0) return undefined;
+  return sanitized.length <= MAX_TASK_TITLE_CHARS
+    ? sanitized
+    : `${sanitized.slice(0, MAX_TASK_TITLE_CHARS)}…`;
+}
+
+function assertTaskTitle(title: string): void {
+  if (
+    title.length === 0 ||
+    title.length > MAX_TASK_TITLE_CHARS + 1 ||
+    /[\0\r\n]/u.test(title) ||
+    /(?:Bearer\s+|sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._~+/=-]{16,}/u.test(title)
+  ) {
+    throw new Error("Task title is invalid.");
+  }
 }
 
 function assertAttachmentIds(ids: readonly string[]): void {

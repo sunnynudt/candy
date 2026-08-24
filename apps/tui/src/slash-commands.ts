@@ -45,6 +45,10 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "Show the Candy command reference",
   },
   {
+    name: "status",
+    description: "Show the current task status",
+  },
+  {
     name: "model",
     argumentHint: "<model>",
     description: "Choose the primary model",
