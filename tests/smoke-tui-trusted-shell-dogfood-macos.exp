@@ -21,7 +21,7 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_DOGFOOD_LAUNCH_DIR)
 spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
-wait_for {Candy TUI} "TUI startup"
+wait_for {输入 Input >} "usable TUI input"
 
 send_command ":workspace $env(CANDY_DOGFOOD_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
@@ -38,8 +38,8 @@ expect {
   timeout { fail "timed out waiting for understanding task creation" }
   eof { fail "TUI exited while waiting for understanding task creation" }
 }
-wait_for {\[tool candy_read} "understanding read tool"
-wait_for {\[tool candy_bash} "understanding offline Bash tool"
+wait_for {\[工具\].*读取文件 完成} "understanding read tool"
+wait_for {\[工具\].*bash 完成} "understanding offline Bash tool"
 wait_for "${understanding_task_id} completed" "understanding task completion"
 
 # Category 2: small repair in the task worktree, followed by validation and Apply.
@@ -55,13 +55,20 @@ expect {
   timeout { fail "timed out waiting for repair task creation" }
   eof { fail "TUI exited while waiting for repair task creation" }
 }
-wait_for {\[tool candy_read} "repair read tool"
-wait_for {\[tool candy_edit} "repair edit tool"
-wait_for {\[tool candy_bash} "repair offline Bash tool"
+wait_for {\[工具\].*读取文件 完成} "repair read tool"
+wait_for {\[工具\].*编辑文件 完成} "repair edit tool"
+wait_for {\[工具\].*bash 完成} "repair offline Bash tool"
 wait_for "${repair_task_id} completed" "repair task completion"
 send_command ":validate"
 wait_for {validator running:} "repair validator start"
-wait_for {validator pass:} "repair validator pass"
+expect {
+  -re {validator (pass|fail|blocked|cancelled|timeout):} {
+    set validator_status $expect_out(1,string)
+    if {$validator_status ne "pass"} { fail "repair validator returned $validator_status" }
+  }
+  timeout { fail "timed out waiting for repair validator result" }
+  eof { fail "TUI exited while waiting for repair validator result" }
+}
 
 # Category 3: diagnose a failing test, make the narrow fix, and validate it.
 send_command ":new"
@@ -76,9 +83,9 @@ expect {
   timeout { fail "timed out waiting for diagnosis task creation" }
   eof { fail "TUI exited while waiting for diagnosis task creation" }
 }
-wait_for {\[tool candy_read} "diagnosis read tool"
-wait_for {\[tool candy_edit} "diagnosis edit tool"
-wait_for {\[tool candy_bash} "diagnosis offline Bash tool"
+wait_for {\[工具\].*读取文件 完成} "diagnosis read tool"
+wait_for {\[工具\].*编辑文件 完成} "diagnosis edit tool"
+wait_for {\[工具\].*bash 完成} "diagnosis offline Bash tool"
 wait_for "${diagnosis_task_id} completed" "diagnosis task completion"
 send_command ":changes"
 wait_for "changed files: ${diagnosis_task_id}" "diagnosis changed-file manifest"
@@ -86,7 +93,14 @@ send_command ":diff"
 wait_for {diff } "diagnosis complete diff"
 send_command ":validate"
 wait_for {validator running:} "diagnosis validator start"
-wait_for {validator pass:} "diagnosis validator pass"
+expect {
+  -re {validator (pass|fail|blocked|cancelled|timeout):} {
+    set validator_status $expect_out(1,string)
+    if {$validator_status ne "pass"} { fail "diagnosis validator returned $validator_status" }
+  }
+  timeout { fail "timed out waiting for diagnosis validator result" }
+  eof { fail "TUI exited while waiting for diagnosis validator result" }
+}
 # Leave this independent diagnosis in its Task Worktree. The earlier repair
 # intentionally leaves the Local Workspace dirty after Apply, so a second
 # Apply must remain blocked by the clean-target preflight.
@@ -95,7 +109,7 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
-wait_for {Candy TUI} "TUI restart"
+wait_for {输入 Input >} "TUI restart"
 after 1000
 send_command ":tasks"
 wait_for {(?s)completed.*completed.*completed} "three completed tasks after restart"

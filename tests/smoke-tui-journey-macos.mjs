@@ -158,11 +158,11 @@ try {
     throw new Error("The first assistant transcript was not restored.");
   if (!transcript?.some((entry) => entry.text.includes("fixture turn 2")))
     throw new Error("The second assistant transcript was not restored.");
-  if (!transcript?.some((entry) => entry.text.includes("candy_list:ok")))
+  if (!transcript?.some((entry) => entry.text.includes("list 完成")))
     throw new Error("The list tool result was not persisted.");
-  if (!transcript?.some((entry) => entry.text.includes("candy_delete:error")))
+  if (!transcript?.some((entry) => entry.text.includes("删除文件 失败")))
     throw new Error("The denied delete result was not persisted.");
-  if (!transcript?.some((entry) => entry.text.includes("candy_delete:ok")))
+  if (!transcript?.some((entry) => entry.text.includes("删除文件 完成")))
     throw new Error("The approved delete result was not persisted.");
   if (validatorStatus === "pass" && run?.stopReason !== "validator_succeeded")
     throw new Error("The validator pass was not persisted.");

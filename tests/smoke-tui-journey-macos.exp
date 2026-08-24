@@ -21,13 +21,15 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_JOURNEY_LAUNCH_DIR)
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {命令参考（Commands）:} "TUI startup"
+wait_for {输入 Input >} "usable TUI input"
 
 send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
 
 send_command ":profile auto"
 wait_for {profile auto: file read/create/edit enabled;} "Auto profile"
+send_command ":worktree on"
+wait_for {worktree on: Auto Git tasks run in an isolated Task Worktree} "Task Worktree mode"
 send_command ":model minimax-m3"
 wait_for {model selected: MiniMax-M3} "MiniMax model"
 send_command ":attach $env(CANDY_JOURNEY_IMAGE)"
@@ -46,12 +48,13 @@ expect {
   timeout { fail "timed out waiting for task creation" }
   eof { fail "TUI exited while waiting for task creation" }
 }
-wait_for {\[tool candy_list\]} "list tool"
-wait_for {\[tool candy_read\]} "read tool"
-wait_for {\[tool candy_search\]} "search tool"
-wait_for {\[tool candy_write\]} "create tool"
-wait_for {\[tool candy_edit\]} "edit tool"
-wait_for {approval required: delete remove-deny\.txt} "denial approval"
+wait_for {\[工具\].*list 完成} "list tool"
+wait_for {\[工具\].*读取文件 完成} "read tool"
+wait_for {\[工具\].*搜索代码 完成} "search tool"
+wait_for {\[工具\].*写入文件 完成} "create tool"
+wait_for {\[工具\].*编辑文件 完成} "edit tool"
+wait_for {操作：删除文件} "denial approval action"
+wait_for {文件：remove-deny\.txt} "denial approval target"
 expect {
   -re {/approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
   timeout { fail "timed out waiting for denial approval id" }
@@ -63,7 +66,8 @@ wait_for "${task_id} completed" "first turn completion"
 
 send_command "repair the remaining fixture"
 wait_for "continuing ${task_id}" "same-task continuation"
-wait_for {approval required: delete remove-approve\.txt} "approval request"
+wait_for {操作：删除文件} "approval action"
+wait_for {文件：remove-approve\.txt} "approval target"
 expect {
   -re {/approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
   timeout { fail "timed out waiting for approval id" }
@@ -109,14 +113,14 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {命令参考（Commands）:} "TUI restart"
+wait_for {输入 Input >} "TUI restart"
 send_command ":use $task_id"
 wait_for "current task: ${task_id} \\(completed\\)" "task selection after restart"
 send_command ":transcript"
 wait_for {fixture turn 1} "first transcript entry"
 wait_for {fixture turn 2} "second transcript entry"
 send_command ":tasks"
-wait_for "${task_id} +completed +MiniMax-M3" "restored model and task state"
+wait_for "${task_id}.*completed.*MiniMax-M3" "restored model and task state"
 send_command ":attachments"
 wait_for "attachments ${task_id}" "restored attachments"
 wait_for {image/png} "restored attachment metadata"

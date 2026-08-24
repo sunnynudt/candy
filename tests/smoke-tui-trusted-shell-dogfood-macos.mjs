@@ -157,9 +157,9 @@ try {
   if (diagnosis !== "export function readiness() { return 'ready'; }\n")
     throw new Error("Failing-test diagnosis repair was not applied in its Task Worktree.");
   const transcriptChecks = {
-    understanding: ["candy_read", "candy_bash"],
-    repair: ["candy_read", "candy_edit", "candy_bash"],
-    diagnosis: ["candy_read", "candy_edit", "candy_bash"],
+    understanding: ["读取文件 完成", "bash 完成"],
+    repair: ["读取文件 完成", "编辑文件 完成", "bash 完成"],
+    diagnosis: ["读取文件 完成", "编辑文件 完成", "bash 完成"],
   };
   const transcriptChecksPassed = {};
   for (const [label, markers] of Object.entries(transcriptChecks)) {
@@ -174,7 +174,7 @@ try {
     store.transcript(result[`${label}_task_id`]),
   );
   const offlineShellOnly = dogfoodTaskTranscripts.every(
-    (transcript) => !transcript?.some((entry) => entry.text.includes("candy_bash_network")),
+    (transcript) => !transcript?.some((entry) => entry.text.includes("bash network")),
   );
   if (!offlineShellOnly) throw new Error("Dogfood unexpectedly used a network shell tool.");
   const categoryScore = `${Object.values(categoryChecks).filter(Boolean).length}/3`;
