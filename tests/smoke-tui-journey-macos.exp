@@ -42,7 +42,7 @@ expect {
 send_command ":validator /usr/bin/true"
 wait_for {validator configured for new tasks: /usr/bin/true} "validator configuration"
 
-send_command "inspect and repair the fixture"
+send_command "Fix the fixture in this exact order and do not skip any step: (1) candy_list to inspect the workspace; (2) candy_search with the literal query value = 1; (3) candy_read README.md, src/value.ts, and test/value.test.ts; (4) candy_edit src/value.ts so the failing test passes; (5) candy_write to create src/created.ts; (6) candy_delete remove-deny.txt (a deletion approval will be requested; deny it) and leave remove-approve.txt for the next turn. Do not modify anything else, do not commit, and do not push."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for task creation" }
@@ -59,7 +59,7 @@ send_command ":deny $deny_id"
 wait_for {deletion denied} "delete denial"
 wait_for "${task_id} completed" "first turn completion"
 
-send_command "repair the remaining fixture"
+send_command "Now delete remove-approve.txt (a deletion approval will be requested; approve it). Do not modify anything else, do not commit, and do not push."
 wait_for "continuing ${task_id}" "same-task continuation"
 wait_for {操作：删除文件} "approval action"
 wait_for {文件：remove-approve\.txt} "approval target"

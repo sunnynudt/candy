@@ -144,13 +144,19 @@ try {
     throw new Error("The explicit validator was not persisted.");
   if (
     !transcript?.some(
-      (entry) => entry.role === "user" && entry.text === "inspect and repair the fixture",
+      (entry) =>
+        entry.role === "user" &&
+        entry.text.startsWith("Fix the fixture in this exact order and do not skip any step"),
     )
   )
     throw new Error("The first prompt was not restored.");
   if (
     !transcript?.some(
-      (entry) => entry.role === "user" && entry.text === "repair the remaining fixture",
+      (entry) =>
+        entry.role === "user" &&
+        entry.text.startsWith(
+          "Now delete remove-approve.txt (a deletion approval will be requested",
+        ),
     )
   )
     throw new Error("The second prompt was not restored.");

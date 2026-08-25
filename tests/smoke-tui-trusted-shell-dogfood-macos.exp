@@ -32,7 +32,7 @@ wait_for {Trusted Shell Auto off} "default Trusted Shell state"
 # Category 1: repository and code understanding, with no write or network side effect.
 send_command ":trusted-shell on"
 wait_for {Trusted Shell Auto enabled for the next Auto Git Task} "understanding Trusted Shell enablement"
-send_command "Understand this repository fixture. Read README.md, src/value.mjs, and test/value.test.mjs. Use candy_bash automatically, without asking for approval, to run git status --short. Do not edit, create, delete, stage, commit, push, or use network. Explain the failing expectation and the smallest safe repair, but leave all files unchanged."
+send_command "Understand this repository fixture. You MUST use candy_read on README.md, src/value.mjs, and test/value.test.mjs, and You MUST use candy_bash (auto mode, no approval needed) to run the exact offline command git status --short. Do not edit, create, delete, stage, commit, push, or use network. Explain the failing expectation and the smallest safe repair, but leave all files unchanged."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set understanding_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for understanding task creation" }
@@ -47,7 +47,7 @@ send_command ":trusted-shell on"
 wait_for {Trusted Shell Auto enabled for the next Auto Git Task} "repair Trusted Shell enablement"
 send_command ":validator $env(CANDY_DOGFOOD_NODE) --test test/value.test.mjs"
 wait_for {validator configured for new tasks:} "repair validator configuration"
-send_command "Repair the value fixture. Read README.md, src/value.mjs, and test/value.test.mjs. Change only src/value.mjs so the failing test passes. Use candy_bash automatically, without asking for approval, to run node --test test/value.test.mjs and git status --short. Do not use network or modify anything outside the Task Worktree."
+send_command "Repair the value fixture. You MUST use candy_read on README.md, src/value.mjs, and test/value.test.mjs. Change only src/value.mjs so the failing test passes. You MUST use candy_bash (auto mode, no approval needed) to run node --test test/value.test.mjs and git status --short. Do not use network or modify anything outside the Task Worktree."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set repair_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for repair task creation" }
@@ -72,7 +72,7 @@ send_command ":trusted-shell on"
 wait_for {Trusted Shell Auto enabled for the next Auto Git Task} "diagnosis Trusted Shell enablement"
 send_command ":validator $env(CANDY_DOGFOOD_NODE) --test test/diagnosis.test.mjs"
 wait_for {validator configured for new tasks:} "diagnosis validator configuration"
-send_command "Diagnose and fix the failing test. Read README.md, src/diagnosis.mjs, and test/diagnosis.test.mjs. First use candy_bash automatically, without asking for approval, to run node --test test/diagnosis.test.mjs and inspect the failure. Then edit only src/diagnosis.mjs, rerun the same test with candy_bash, and report the root cause and result. Do not use network or modify anything outside the Task Worktree."
+send_command "Diagnose and fix the failing test. You MUST use candy_read on README.md, src/diagnosis.mjs, and test/diagnosis.test.mjs. You MUST first use candy_bash (auto mode, no approval needed) to run node --test test/diagnosis.test.mjs and inspect the failure. Then edit only src/diagnosis.mjs, rerun the same test with candy_bash, and report the root cause and result. Do not use network or modify anything outside the Task Worktree."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set diagnosis_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for diagnosis task creation" }

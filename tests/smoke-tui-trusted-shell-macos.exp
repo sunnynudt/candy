@@ -35,7 +35,7 @@ wait_for {model selected: deepseek-v4-flash} "DeepSeek Flash selection"
 send_command ":validator $env(CANDY_JOURNEY_NODE) --test test/value.test.mjs"
 wait_for {validator configured for new tasks:} "validator configuration"
 
-send_command "Fix the failing fixture completely. First use candy_search with the literal query value = 1, then use candy_read on README.md, src/value.mjs, and test/value.test.mjs. Use candy_bash automatically, without asking for approval, to run node --test test/value.test.mjs before editing, inspect and diagnose the failure, and run git status --short. Then use candy_edit to change only src/value.mjs so the test expects the correct value. Use candy_bash automatically a second time to rerun node --test test/value.test.mjs and git status --short. Then use candy_bash_network exactly once for the complete command git ls-remote https://github.com/sunnynudt/candy.git HEAD; explain that the read-only remote revision lookup genuinely needs outbound network access. Do not commit, stage, push, or modify anything outside the Task Worktree. Report the diagnosis, test results, and final change."
+send_command "Fix the failing fixture completely and do not skip any step. You MUST: (1) use candy_search with the literal query value = 1; (2) use candy_read on README.md, src/value.mjs, and test/value.test.mjs; (3) use candy_bash automatically (no approval needed) to run node --test test/value.test.mjs before editing, inspect and diagnose the failure, and also run git status --short; (4) use candy_edit to change only src/value.mjs so the test expects the correct value; (5) use candy_bash a second time to rerun node --test test/value.test.mjs and git status --short; (6) use candy_bash_network exactly once for the complete command git ls-remote https://github.com/sunnynudt/candy.git HEAD, with a concise reason explaining that the read-only remote revision lookup genuinely needs outbound network access. Do not commit, stage, push, or modify anything outside the Task Worktree. Report the diagnosis, test results, and final change."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set coding_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for coding task creation" }
@@ -75,7 +75,7 @@ send_command ":new"
 wait_for {new task ready} "new cancellation task"
 send_command ":trusted-shell on"
 wait_for {Trusted Shell Auto enabled for the next Auto Git Task} "cancellation Trusted Shell enablement"
-send_command "Run candy_bash with the exact offline command sleep 30 and wait for it; do not edit files or use network."
+send_command "You MUST use candy_bash to run the exact offline command sleep 30 and wait for it; do not edit files or use network."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set cancel_task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for cancellation task creation" }
