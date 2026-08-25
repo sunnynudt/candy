@@ -6,17 +6,22 @@ import {
   Spacer,
   Text,
   TuiAltScreen,
+  isKeyRelease,
   matchesKey,
   type EditorTheme,
 } from "@earendil-works/pi-tui";
 import { containsCredentialMaterial } from "@candy/platform";
 import { createCandySlashCommandAutocompleteProvider } from "./slash-commands.js";
+import { CandyTranscript, type CandyTranscriptKind } from "./transcript.js";
 
 const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_TUI_WRITE_LOG",
   "PI_TUI_DEBUG",
   "PI_DEBUG_REDRAW",
 ];
+
+/** Rows below the transcript viewport: spacer + input hint + editor border + editor content + slack. */
+const RESERVED_BELOW_TRANSCRIPT_ROWS = 6;
 
 const EDITOR_THEME: EditorTheme = {
   borderColor: (value: string): string => value,
@@ -59,15 +64,15 @@ export interface CandyTuiSurfaceOptions {
 export class CandyTuiSurface {
   readonly #terminal: CandyTuiTerminal;
   readonly #tui: TuiAltScreen;
-  readonly #transcript: Text;
+  readonly #transcript: CandyTranscript;
   readonly #editor: Editor;
   readonly #onSubmit: (text: string) => void;
   readonly #onInterrupt: () => void;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #removeInterruptListener: () => void;
+  readonly #removeScrollListener: () => void;
   readonly #removeInputLogListener: (() => void) | undefined;
   public readonly logDirectory: string;
-  #transcriptText: string = "";
   #started: boolean = false;
 
   public constructor(options: CandyTuiSurfaceOptions) {
@@ -77,7 +82,9 @@ export class CandyTuiSurface {
     this.#environment = options.environment ?? process.env;
     this.logDirectory = path.join(path.resolve(options.appDataRoot), "logs");
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
-    this.#transcript = new Text();
+    this.#transcript = new CandyTranscript(() =>
+      Math.max(8, this.#terminal.rows - RESERVED_BELOW_TRANSCRIPT_ROWS),
+    );
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
     this.#editor.setAutocompleteProvider(
       createCandySlashCommandAutocompleteProvider(options.workspacePath ?? (() => process.cwd())),
@@ -97,6 +104,28 @@ export class CandyTuiSurface {
         if (!matchesKey(data, "ctrl+c")) return undefined;
         this.#onInterrupt();
         return { consume: true };
+      },
+    );
+    // Transcript scrollback. PageUp/PageDown scroll the transcript only while
+    // it overflows the viewport; otherwise they stay available to the editor
+    // for paging multi-line input. Key releases are filtered so kitty
+    // terminals do not scroll twice per key press. A consumed scroll key must
+    // request a render itself because the TUI only re-renders after the
+    // focused component handles input.
+    this.#removeScrollListener = this.#tui.addInputListener(
+      (data: string): { consume: boolean } | undefined => {
+        if (!this.#transcript.overflowing || isKeyRelease(data)) return undefined;
+        if (matchesKey(data, "pageUp")) {
+          this.#transcript.pageUp();
+          this.#tui.requestRender();
+          return { consume: true };
+        }
+        if (matchesKey(data, "pageDown")) {
+          this.#transcript.pageDown();
+          this.#tui.requestRender();
+          return { consume: true };
+        }
+        return undefined;
       },
     );
     const inputLog = this.#environment.CANDY_TUI_INPUT_LOG;
@@ -122,9 +151,8 @@ export class CandyTuiSurface {
           });
   }
 
-  public appendTranscript(value: string): void {
-    this.#transcriptText += value;
-    this.#transcript.setText(this.#transcriptText);
+  public appendTranscript(value: string, kind: CandyTranscriptKind = "plain"): void {
+    this.#transcript.append(value, kind);
     this.#tui.requestRender();
   }
 
@@ -138,6 +166,7 @@ export class CandyTuiSurface {
     const wasStarted: boolean = this.#started;
     this.#started = false;
     this.#removeInterruptListener();
+    this.#removeScrollListener();
     this.#removeInputLogListener?.();
     let rendererStopped: boolean = false;
     try {

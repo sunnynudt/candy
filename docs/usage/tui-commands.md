@@ -81,6 +81,12 @@
 | `/resources` | `/resources` | 显示 Candy 资源诊断 |
 | `/help` | `/help` | 显示完整命令参考 |
 
+## TUI 界面
+
+- 模型回复（assistant 流式输出）以 markdown 渲染（标题加粗、引用/链接/分割线暗色、代码块保留原文）；状态行、工具活动、diff 与审批框等证据行按纯文本字面渲染，不会被 markdown 语法误解析。
+- transcript 视口只显示尾部窗口；内容超出视口时按 `PageUp`/`PageDown` 翻页回看历史（编辑器多行内容在同一情况下的 Page 键让位给 transcript 回看）。回看时顶部显示提示行，翻到底部即回到最新；回看期间有新内容到达会显示 `有新内容` 标记。
+- 实时渲染窗口有上界（默认 192 KiB 滚动窗口），更早内容通过 `/transcript <task-id>` 查看完整已保存记录。
+
 ## 安全边界
 
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。

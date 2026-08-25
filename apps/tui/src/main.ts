@@ -1678,7 +1678,7 @@ export class InteractiveTui {
         )) {
           if (observation.type === "assistant.delta") {
             const safeText = redactSensitive(observation.text, activeSecrets);
-            this.write(safeText);
+            this.writeAssistant(safeText);
             this.#store.appendTranscript(taskId, [
               { role: "assistant", text: transcriptText(safeText) },
             ]);
@@ -2404,6 +2404,11 @@ export class InteractiveTui {
 
   private write(value: string): void {
     this.#surface?.appendTranscript(redactTuiOutput(value));
+  }
+
+  /** Stream model text through the markdown-rendered transcript channel. */
+  private writeAssistant(value: string): void {
+    this.#surface?.appendTranscript(redactTuiOutput(value), "assistant");
   }
 }
 

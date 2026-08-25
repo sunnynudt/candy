@@ -153,6 +153,63 @@ test("Candy slash autocomplete never falls through to file discovery", async () 
   assert.equal(suggestions, null);
 });
 
+test("Candy TUI surface scrolls the transcript with PageUp/PageDown", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-scrollback-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    for (let index: number = 0; index < 40; index += 1) {
+      surface.appendTranscript(`filler line ${index}\n`);
+    }
+    await waitForOutput(terminal, /filler line 39/u);
+    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+    terminal.emitInput("\x1b[5~"); // PageUp
+    await waitForOutput(terminal, /回看历史/u);
+    terminal.emitInput("\x1b[6~"); // PageDown
+    terminal.emitInput("\x1b[6~");
+    terminal.emitInput("\x1b[6~");
+    await waitForOutput(terminal, /filler line 39/u);
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 40);
+    });
+    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface leaves PageUp/PageDown to the editor when the transcript fits", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-scroll-fit-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    surface.appendTranscript("short transcript\n");
+    await waitForOutput(terminal, /short transcript/u);
+    terminal.emitInput("\x1b[5~"); // PageUp must not enter scrollback mode
+    terminal.emitInput("\x1b[6~"); // PageDown must not enter scrollback mode
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 40);
+    });
+    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface restores the terminal when startup throws", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-start-error-"));
   class ThrowingTerminal extends FakeTerminal {
