@@ -20,6 +20,7 @@ import {
 import {
   type CandyModelId,
   containsCredentialMaterial,
+  copyToClipboard,
   type CredentialName,
   type CredentialStore,
   CANDY_CREDENTIAL_ENV_KEYS,
@@ -150,6 +151,8 @@ export interface InteractiveTuiOptions {
   readonly worktreeEnabled?: boolean;
   /** Set only by a composition root after the platform-specific G2 gate passes. */
   readonly trustedShellAutoAvailable?: boolean;
+  /** Test seam; the production default copies through the platform adapter. */
+  readonly copyToClipboardImpl?: (text: string) => Promise<void>;
 }
 
 const MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION = Object.freeze({
@@ -254,6 +257,7 @@ export class InteractiveTui {
   readonly #changeTracker: WorkspaceChangeTracker;
   readonly #validator: TuiValidator | undefined;
   readonly #validatorTimeoutMs: number;
+  readonly #copyToClipboardImpl: (text: string) => Promise<void>;
   readonly #activeSecretsProvider: (() => readonly string[]) | undefined;
   readonly #credentialStore: CredentialStore;
   readonly #credentialEnvironment: NodeJS.ProcessEnv;
@@ -300,6 +304,11 @@ export class InteractiveTui {
   #selectedAttachmentIds: string[] = [];
   #trustedShellEnabled = false;
   #validatorCommand: CommandValidatorCommand | undefined;
+  /** Contiguous assistant text of the current stream; flushed into the last reply on plain writes. */
+  #assistantBuffer = "";
+  /** Last complete contiguous assistant reply for Ctrl+X copy. */
+  #lastAssistantReply = "";
+  #inAssistantRun = false;
 
   public constructor(options: InteractiveTuiOptions = {}) {
     this.#appDataRoot = options.appDataRoot ?? resolveDefaultAppDataRoot();
@@ -328,6 +337,7 @@ export class InteractiveTui {
       );
     this.#validator = options.validator ?? createNativeTuiValidator();
     this.#validatorTimeoutMs = options.validatorTimeoutMs ?? DEFAULT_VALIDATOR_TIMEOUT_MS;
+    this.#copyToClipboardImpl = options.copyToClipboardImpl ?? copyToClipboard;
     this.#shellRunner = options.shellRunner ?? createNativeTuiShellRunner();
     this.#trustedShellAutoAvailable = options.trustedShellAutoAvailable ?? false;
     this.#validatorCommand = options.validatorCommand;
@@ -385,6 +395,8 @@ export class InteractiveTui {
         }
       },
       onInterrupt: (): void => this.requestExit(),
+      onCopyLastAssistant: (): void => this.copyLastAssistant(),
+      onCycleModel: (direction: 1 | -1): void => this.cycleModel(direction),
     });
     this.write(
       [
@@ -2403,12 +2415,54 @@ export class InteractiveTui {
   }
 
   private write(value: string): void {
+    this.flushAssistantRun();
     this.#surface?.appendTranscript(redactTuiOutput(value));
   }
 
-  /** Stream model text through the markdown-rendered transcript channel. */
+  /**
+   * Stream model text through the markdown-rendered transcript channel and
+   * accumulate it into the current assistant run for Ctrl+X copy.
+   */
   private writeAssistant(value: string): void {
-    this.#surface?.appendTranscript(redactTuiOutput(value), "assistant");
+    const safe = redactTuiOutput(value);
+    this.#surface?.appendTranscript(safe, "assistant");
+    this.#assistantBuffer += safe;
+    this.#inAssistantRun = true;
+  }
+
+  /** End the current assistant run; the accumulated text becomes the last reply. */
+  private flushAssistantRun(): void {
+    if (!this.#inAssistantRun) return;
+    this.#lastAssistantReply = this.#assistantBuffer;
+    this.#assistantBuffer = "";
+    this.#inAssistantRun = false;
+  }
+
+  /** Copy the last assistant reply to the system clipboard (Ctrl+X). */
+  private copyLastAssistant(): void {
+    this.flushAssistantRun();
+    const text = this.#lastAssistantReply;
+    if (text.trim().length === 0) {
+      this.write("clipboard: no assistant reply to copy\n");
+      return;
+    }
+    this.#copyToClipboardImpl(text)
+      .then(() => {
+        this.write(`clipboard: copied ${text.length} chars\n`);
+      })
+      .catch((error: unknown) => {
+        this.write(`clipboard: ${safeError(error)}\n`);
+      });
+  }
+
+  /** Cycle the selected model through the Candy model choices (Ctrl+P). */
+  private cycleModel(direction: 1 | -1): void {
+    const current = this.currentTask()?.snapshot().model ?? this.#selectedModel;
+    const order = CANDY_MODEL_CHOICES.map((choice) => choice.value);
+    const index = order.findIndex((value) => parseModelId(value) === current);
+    const base = index === -1 ? 0 : index;
+    const next = order[(base + direction + order.length) % order.length];
+    if (next !== undefined) this.configureModel(next);
   }
 }
 

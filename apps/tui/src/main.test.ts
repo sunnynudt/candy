@@ -140,6 +140,79 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
   }
 });
 
+test("Ctrl+X copies the last contiguous assistant reply without touching a real clipboard", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-reply-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const copied: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      copyToClipboardImpl: async (text: string): Promise<void> => {
+        copied.push(text);
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "first reply part ",
+          };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "one" };
+          yield { type: "tool.started", taskId: input.taskId, tool: "candy_read" };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "second reply" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("copy fixture");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /second reply/u);
+    terminal.emitInput("\x18"); // Ctrl+X
+    await waitForOutput(terminal, /clipboard: copied/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    // The tool line flushed the first run; the second copy returns only the
+    // contiguous assistant stream after the tool interruption.
+    assert.deepEqual(copied, ["second reply"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+X with no assistant reply reports nothing to copy", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-empty-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let copied: boolean = false;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      copyToClipboardImpl: async (): Promise<void> => {
+        copied = true;
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("\x18"); // Ctrl+X before any task ran
+    await waitForOutput(terminal, /clipboard: no assistant reply to copy/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(copied, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
   const terminal = new FakeTerminal();

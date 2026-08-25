@@ -86,6 +86,8 @@
 - 模型回复（assistant 流式输出）以 markdown 渲染（标题加粗、引用/链接/分割线暗色、代码块保留原文）；状态行、工具活动、diff 与审批框等证据行按纯文本字面渲染，不会被 markdown 语法误解析。
 - transcript 视口只显示尾部窗口；内容超出视口时按 `PageUp`/`PageDown` 翻页回看历史（编辑器多行内容在同一情况下的 Page 键让位给 transcript 回看）。回看时顶部显示提示行，翻到底部即回到最新；回看期间有新内容到达会显示 `有新内容` 标记。
 - 实时渲染窗口有上界（默认 192 KiB 滚动窗口），更早内容通过 `/transcript <task-id>` 查看完整已保存记录。
+- `Ctrl+X` 把最近一段连续的模型回复（不含中间的工具/状态行）复制到系统剪贴板（macOS `pbcopy`；Windows PowerShell `Set-Clipboard`），回复为空或复制失败时显示提示行；复制的文本与 transcript 显示的一致（已脱敏）。
+- `Ctrl+P` 在模型间向前循环（flash → pro → M3），`Ctrl+Shift+P` 向后循环；与 `/model` 相同的校验（图片附件需 M3、活动 turn 不可切换）会拒绝并说明原因。
 
 ## 安全边界
 

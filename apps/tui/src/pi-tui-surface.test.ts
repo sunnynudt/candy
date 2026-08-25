@@ -210,6 +210,95 @@ test("Candy TUI surface leaves PageUp/PageDown to the editor when the transcript
   }
 });
 
+test("Candy TUI surface invokes the copy handler with Ctrl+X", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let copies: number = 0;
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onCopyLastAssistant: (): void => {
+      copies += 1;
+    },
+  });
+  try {
+    surface.start();
+    surface.appendTranscript("status line\n");
+    await waitForOutput(terminal, /status line/u);
+    terminal.emitInput("\x18"); // Ctrl+X
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(copies, 1);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface cycles the model with Ctrl+P and Ctrl+Shift+P", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-model-cycle-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const directions: (1 | -1)[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onCycleModel: (direction: 1 | -1): void => {
+      directions.push(direction);
+    },
+  });
+  try {
+    surface.start();
+    terminal.emitInput("\x10"); // Ctrl+P
+    terminal.emitInput("\x1b[112;6u"); // Ctrl+Shift+P (kitty, mod 5+1)
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.deepEqual(directions, [1, -1]);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface ignores kitty key releases for copy and cycle", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-key-release-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let copies: number = 0;
+  const directions: (1 | -1)[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onCopyLastAssistant: (): void => {
+      copies += 1;
+    },
+    onCycleModel: (direction: 1 | -1): void => {
+      directions.push(direction);
+    },
+  });
+  try {
+    surface.start();
+    surface.appendTranscript("reply", "assistant");
+    await waitForOutput(terminal, /reply/u);
+    terminal.emitInput("\x1b[120;5:3u"); // Ctrl+X release (kitty)
+    terminal.emitInput("\x1b[112;6:3u"); // Ctrl+Shift+P release (kitty)
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(copies, 0);
+    assert.deepEqual(directions, []);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface restores the terminal when startup throws", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-start-error-"));
   class ThrowingTerminal extends FakeTerminal {

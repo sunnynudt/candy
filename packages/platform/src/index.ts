@@ -7,6 +7,7 @@ import { Entry } from "@napi-rs/keyring";
 export * from "./git-bash.js";
 export * from "./trusted-shell-capability.js";
 export * from "./credential-guard.js";
+export * from "./clipboard.js";
 
 export {
   NativeProcessRunner,

@@ -9,6 +9,7 @@ import {
   isKeyRelease,
   matchesKey,
   type EditorTheme,
+  Key,
 } from "@earendil-works/pi-tui";
 import { containsCredentialMaterial } from "@candy/platform";
 import { createCandySlashCommandAutocompleteProvider } from "./slash-commands.js";
@@ -59,6 +60,10 @@ export interface CandyTuiSurfaceOptions {
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
   readonly onInterrupt: () => void;
+  /** Copy the last assistant reply; the surface owns the transcript text. */
+  readonly onCopyLastAssistant?: () => void;
+  /** Cycle the selected model; 1 forward, -1 backward. */
+  readonly onCycleModel?: (direction: 1 | -1) => void;
 }
 
 export class CandyTuiSurface {
@@ -68,9 +73,12 @@ export class CandyTuiSurface {
   readonly #editor: Editor;
   readonly #onSubmit: (text: string) => void;
   readonly #onInterrupt: () => void;
+  readonly #onCopyLastAssistant: (() => void) | undefined;
+  readonly #onCycleModel: ((direction: 1 | -1) => void) | undefined;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #removeInterruptListener: () => void;
   readonly #removeScrollListener: () => void;
+  readonly #removeKeybindingListener: () => void;
   readonly #removeInputLogListener: (() => void) | undefined;
   public readonly logDirectory: string;
   #started: boolean = false;
@@ -79,6 +87,8 @@ export class CandyTuiSurface {
     this.#terminal = options.terminal ?? new ProcessTerminal();
     this.#onSubmit = options.onSubmit;
     this.#onInterrupt = options.onInterrupt;
+    this.#onCopyLastAssistant = options.onCopyLastAssistant;
+    this.#onCycleModel = options.onCycleModel;
     this.#environment = options.environment ?? process.env;
     this.logDirectory = path.join(path.resolve(options.appDataRoot), "logs");
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
@@ -128,6 +138,29 @@ export class CandyTuiSurface {
         return undefined;
       },
     );
+    // Application keybindings: copy the last assistant reply (Ctrl+X) and
+    // cycle the selected model (Ctrl+P forward, Ctrl+Shift+P backward). The
+    // shifted binding is matched first because legacy terminals report
+    // Ctrl+Shift+P as plain Ctrl+P. Key releases are filtered so kitty
+    // terminals do not trigger the action twice per key press.
+    this.#removeKeybindingListener = this.#tui.addInputListener(
+      (data: string): { consume: boolean } | undefined => {
+        if (isKeyRelease(data)) return undefined;
+        if (matchesKey(data, Key.ctrlShift("p"))) {
+          this.#onCycleModel?.(-1);
+          return { consume: true };
+        }
+        if (matchesKey(data, Key.ctrl("p"))) {
+          this.#onCycleModel?.(1);
+          return { consume: true };
+        }
+        if (matchesKey(data, Key.ctrl("x"))) {
+          this.#onCopyLastAssistant?.();
+          return { consume: true };
+        }
+        return undefined;
+      },
+    );
     const inputLog = this.#environment.CANDY_TUI_INPUT_LOG;
     this.#removeInputLogListener =
       inputLog === undefined || inputLog.length === 0
@@ -167,6 +200,7 @@ export class CandyTuiSurface {
     this.#started = false;
     this.#removeInterruptListener();
     this.#removeScrollListener();
+    this.#removeKeybindingListener();
     this.#removeInputLogListener?.();
     let rendererStopped: boolean = false;
     try {
