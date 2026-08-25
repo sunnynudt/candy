@@ -12,6 +12,13 @@ canonicalized workspace. It also clears the child environment, bounds output,
 and returns a typed completion response. The TypeScript caller separately
 enforces selected-workspace policy and provider-secret isolation.
 
+`processExecPaths` may be supplied without the wide `allowProcessExec` policy:
+it then grants `process-exec` plus `file-read*/file-map-executable` for only
+those explicit subpaths, keeping the literal-executable default otherwise.
+The network elevation tool uses this to let the real git binary spawn its
+`git-remote-https` helper and load its libraries (git-core and lib dirs under
+the resolved git root) without opening the offline shell policy.
+
 The TypeScript boundary includes the Candy parent PID in each request. The
 macOS runner puts the sandboxed command in its own Candy-owned process group,
 catches cancellation in the supervisor, and starts a detached reaper that

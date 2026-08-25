@@ -1,8 +1,15 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-20
+更新日期：2026-08-25
 基线分支：`codex/candy-v1-foundation`
 本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
+
+## 2026-08-25 Issue 002/005 闭环 checkpoint（`0161be6`）
+
+- 002（macOS TUI 基线）与 005（三轮 dogfood）验收项在 `0161be6` 全部通过：`npm run check` **273/273**、cargo **10/10**、终端矩阵 9/9、`smoke:tui:validator:macos`（无模型）、真实 DeepSeek Trusted Shell 旅程（`oneCommandNetworkApproval: true`）、dogfood **3/3**（`safetyFailures: 0`）、真实 MiniMax journey、live DeepSeek **7/7**、live MiniMax **8/8**，报告均脱敏并绑定 `0161be6`。
+- 根因链（详见 `progress-v1.md` 2026-08-25 条目）：视口尾部吞掉长写入首行（validator 状态行、审批帧 `操作：`/`命令：`）→ 产品修复（状态行最后写、审批帧尾部锚点、changes/diff 锚点独立写）；网络工具功能性损坏（xcrun shim + git-remote-https 无法 exec）→ 真实 git 解析 + 显式 helper 路径（含 Rust 校验放宽与测试）；harness 过期断言（`:approve`、`bash network 完成` 标签、worktree 位置与 realpath）全部修复。
+- 测试策略：exp 字节级 `[工具]` 等待因渲染合并不可靠，工具证据统一由 SQLite transcript 断言承担；新增两个确定性回归测试与无模型 native validator smoke。
+- 剩余非阻塞项：Windows 11 验证（无主机，`resolveGitHelperExecPaths` Windows 分支与跨平台改动待重跑）、外部标准扫描重跑（无扫描器）、Apple 签名/公证、live smoke 的模型工具选择波动（记录在案）。
 
 ## 2026-08-20 TUI 命令可用性改进 checkpoint
 

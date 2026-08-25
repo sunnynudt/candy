@@ -1,6 +1,16 @@
 # Candy V1 Implementation Progress
 
-Updated: 2026-08-20
+Updated: 2026-08-25
+
+## 2026-08-25 TUI viewport anchors、Trusted Shell 网络工具修复与 002/005 闭环 checkpoint（`0161be6`）
+
+- **根因修正（此前误判记录）**：a92b748 报告中的两个 BLOCKED 均不是模型/生命周期问题。（1）dogfood "Validator 子进程已完成但 TUI 未输出终态"：validator promise 正常结算，但 transcript 视口只把尾部 ~13 行写入终端字节流，`validator <status>:` 行是长证据（失败测试 ~20 行）的首行，滚出视口后永远不会出现在 PTY 流中——是渲染可见性问题，不是生命周期问题。（2）trusted-shell "DeepSeek 未实际发出网络工具调用"：部分运行确实未调用（模型行为波动），但 harness 同时存在 `:approve`（932d5db slash 对齐后未同步）、`bash network 完成`（fc81f87 改为"读取网络资源"标签后未同步）等过期模式，且审批帧头（`操作：`/`命令：`）同样会被视口吞掉——诊断记录已按此修正。
+- **产品修复**：`finishValidator` 先渲染证据体、状态行作为最后一次独立短写入（`validator <status>: <摘要>`）；审批帧尾部追加紧凑可操作锚点行（`操作：<action> · <首条详情> · /approve <id>`）；`/changes` 与 `:diff` 锚点行拆分为独立写入。
+- **网络工具功能修复**：macOS 上 `/usr/bin/git` 是 xcrun shim，在 Seatbelt 沙箱内必败（TMPDIR 缓存写入 + xcrun exec 均被拒）；真实 CLT git 又因 `git-remote-https` helper 无法 exec 而失败。修复：`resolveDirectNetworkToolPath` 优先解析真实 CLT git，`resolveGitHelperExecPaths` 显式允许 git-core/lib 路径；Rust 放宽 `process_exec_paths` 与 `allow_process_exec` 的耦合（显式路径语义，不打开宽 shell 策略），新增 Rust 测试。网络命令现在真实返回远端 HEAD hash（exit 0）。
+- **harness 过期断言修复**：trusted-shell exp 的 `:approve` → `/approve`；trusted-shell/dogfood mjs 的 `bash network 完成` → `读取网络资源 完成`；dogfood mjs worktree 位置改为项目 `.git/candy-worktrees`（11e05bd 变更）并用 realpath 消除 `/var` vs `/private/var` 前缀差异；dogfood exp 重启后 `:tasks` 断言放宽为可见的两个 completed（重启横幅占满视口，第三个任务行滚出；三任务完整性由 mjs store 断言兜底）。
+- **测试策略说明**：`[工具]` 字节级等待在模型快速流式时会被渲染合并吞掉（两帧之间的中间行不会进字节流），已从 exp 移除；工具证据统一由 SQLite transcript 断言承担（journey mjs 新增读取/搜索/写入/编辑标记）。新增确定性回归：长证据下 `validator fail:` 可见（无修复时失败）、长 transcript 下审批锚点可见（无修复时失败）、`smoke:tui:validator:macos` 无模型集成 smoke（真实 TUI + 真实 runner 全链路）。
+- **验证（0161be6）**：`npm run check` **273/273**、cargo **10/10**、`check:native` 通过、真实 PTY 终端矩阵 9/9、`smoke:tui:validator:macos` 通过、真实 DeepSeek Trusted Shell 旅程通过（`oneCommandNetworkApproval: true`）、dogfood **3/3**（`safetyFailures: 0`）、真实 MiniMax journey 通过、live DeepSeek gate **7/7**、live MiniMax gate **8/8**（报告绑定 `0161be6`）。
+- **已知风险（记录不阻塞）**：live smoke 依赖模型按提示调用指定工具（会话中出现过 DeepSeek 跳过 bash、MiniMax 跳过 list，重跑即过）；如需确定性需强化提示词。Windows 11 未验证（无主机）：`resolveGitHelperExecPaths` Windows 分支、审批帧/finishValidator 跨平台改动需在 Windows 重跑 journey/trusted-shell 矩阵。
 
 ## 2026-08-20 TUI 命令可用性改进 checkpoint
 
