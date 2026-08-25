@@ -160,6 +160,10 @@ try {
     throw new Error("The second assistant transcript was not restored.");
   if (!transcript?.some((entry) => entry.text.includes("list 完成")))
     throw new Error("The list tool result was not persisted.");
+  for (const marker of ["读取文件 完成", "搜索代码 完成", "写入文件 完成", "编辑文件 完成"]) {
+    if (!transcript?.some((entry) => entry.text.includes(marker)))
+      throw new Error(`The journey transcript lacks ${marker} tool evidence.`);
+  }
   if (!transcript?.some((entry) => entry.text.includes("删除文件 失败")))
     throw new Error("The denied delete result was not persisted.");
   if (!transcript?.some((entry) => entry.text.includes("删除文件 完成")))

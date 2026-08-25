@@ -38,6 +38,8 @@ expect {
   timeout { fail "timed out waiting for understanding task creation" }
   eof { fail "TUI exited while waiting for understanding task creation" }
 }
+wait_for {\[工具\].*读取文件 完成} "understanding read tool"
+wait_for {\[工具\].*bash 完成} "understanding offline Bash tool"
 wait_for "${understanding_task_id} completed" "understanding task completion"
 
 # Category 2: small repair in the task worktree, followed by validation and Apply.
@@ -53,6 +55,9 @@ expect {
   timeout { fail "timed out waiting for repair task creation" }
   eof { fail "TUI exited while waiting for repair task creation" }
 }
+wait_for {\[工具\].*读取文件 完成} "repair read tool"
+wait_for {\[工具\].*编辑文件 完成} "repair edit tool"
+wait_for {\[工具\].*bash 完成} "repair offline Bash tool"
 wait_for "${repair_task_id} completed" "repair task completion"
 send_command ":validate"
 wait_for {validator running:} "repair validator start"
@@ -78,6 +83,9 @@ expect {
   timeout { fail "timed out waiting for diagnosis task creation" }
   eof { fail "TUI exited while waiting for diagnosis task creation" }
 }
+wait_for {\[工具\].*读取文件 完成} "diagnosis read tool"
+wait_for {\[工具\].*编辑文件 完成} "diagnosis edit tool"
+wait_for {\[工具\].*bash 完成} "diagnosis offline Bash tool"
 wait_for "${diagnosis_task_id} completed" "diagnosis task completion"
 send_command ":changes"
 wait_for "changed files: ${diagnosis_task_id}" "diagnosis changed-file manifest"

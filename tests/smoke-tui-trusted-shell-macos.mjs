@@ -121,6 +121,10 @@ try {
     );
   if (!toolTexts.some((text) => text.includes("搜索代码 完成")))
     throw new Error("The real coding journey did not use the Candy search tool.");
+  for (const marker of ["读取文件 完成", "编辑文件 完成"]) {
+    if (!toolTexts.some((text) => text.includes(marker)))
+      throw new Error(`The real coding journey transcript lacks ${marker} tool evidence.`);
+  }
   const networkRuns = toolTexts.filter((text) => text.includes("bash network 完成")).length;
   if (networkRuns !== 1) throw new Error("Network Bash was not exactly one approved command.");
   store.close();

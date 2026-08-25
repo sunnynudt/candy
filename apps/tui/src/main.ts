@@ -1036,9 +1036,11 @@ export class InteractiveTui {
     }
     this.recordWorkspaceReview(snapshot, changes, "manifest");
     const removed = extractRemovedPaths(changes.patchText);
+    // The anchor line is emitted as its own write so it stays visible in the
+    // transcript viewport tail even when the manifest body is long.
+    this.write(`changed files: ${snapshot.taskId}\n`);
     this.write(
       [
-        `changed files: ${snapshot.taskId}`,
         `tracked: ${formatPaths(changes.tracked)}`,
         `untracked: ${formatPaths(changes.untracked)}`,
         `removed: ${formatPaths(removed)}`,
@@ -1071,9 +1073,10 @@ export class InteractiveTui {
       completeDiff === undefined ? selectDiff(changes.patchText, requestedPath) : completeDiff.text;
     const bounded = truncateTuiDiff(selected);
     const rendered = bounded || "(no diff)\n";
-    this.write(
-      `diff ${snapshot.taskId}${requestedPath === "" ? "" : ` ${requestedPath}`}\n${rendered}${rendered.endsWith("\n") ? "" : "\n"}`,
-    );
+    // The header is emitted as its own write so it stays visible in the
+    // transcript viewport tail even when the diff body is long.
+    this.write(`diff ${snapshot.taskId}${requestedPath === "" ? "" : ` ${requestedPath}`}\n`);
+    this.write(`${rendered}${rendered.endsWith("\n") ? "" : "\n"}`);
     if (changes.patchTruncated) this.write("[diff truncated by workspace tracker]\n");
     if (
       requestedPath === "" &&
@@ -1424,7 +1427,13 @@ export class InteractiveTui {
     this.#store.appendTranscript(taskId, [
       { role: "tool", text: transcriptText(`validator ${status}: ${boundedEvidence}`) },
     ]);
-    this.write(`validator ${status}: ${boundedEvidence}\n${validatorRecoveryHint(taskId, status)}`);
+    // Render the evidence body before the short status line: the transcript
+    // viewport only emits its tail, so long evidence would otherwise scroll
+    // the `validator <status>:` anchor out of the terminal byte stream.
+    this.write(`${boundedEvidence}\n`);
+    this.write(
+      `validator ${status}: ${validatorStatusSummary(status, boundedEvidence)}\n${validatorRecoveryHint(taskId, status)}`,
+    );
   }
 
   private async withActiveSecrets<T>(
@@ -2713,6 +2722,21 @@ function validatorRecoveryHint(
 ): string {
   if (status === "pass") return "";
   return `recovery: fix the workspace, then /validate; or /resume ${taskId} <continuation>\n`;
+}
+
+function validatorStatusSummary(
+  status: Exclude<TuiValidatorStatus, "configured" | "running" | "blocked">,
+  evidence: string,
+): string {
+  if (evidence.trim().length === 0) return "";
+  const firstLine =
+    evidence
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  // "validator cancelled"/"validator timeout" evidence would repeat the status.
+  const summary = firstLine.startsWith(`validator ${status}`) ? "" : firstLine;
+  return summary.length <= 160 ? summary : `${summary.slice(0, 160)}…`;
 }
 
 function containsControlCharacter(value: string): boolean {

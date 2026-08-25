@@ -48,6 +48,11 @@ expect {
   timeout { fail "timed out waiting for task creation" }
   eof { fail "TUI exited while waiting for task creation" }
 }
+wait_for {\[工具\].*list 完成} "list tool"
+wait_for {\[工具\].*读取文件 完成} "read tool"
+wait_for {\[工具\].*搜索代码 完成} "search tool"
+wait_for {\[工具\].*写入文件 完成} "create tool"
+wait_for {\[工具\].*编辑文件 完成} "edit tool"
 wait_for {操作：删除文件} "denial approval action"
 wait_for {文件：remove-deny\.txt} "denial approval target"
 expect {

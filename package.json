@@ -62,6 +62,7 @@
     "smoke:tui:terminal:windows": "npm run build && node tests/smoke-tui-terminal-matrix-windows.mjs",
     "smoke:tui:real-journey:windows": "npm run build && node tests/smoke-tui-real-journey-windows.mjs",
     "smoke:tui:trusted-shell:macos": "npm run build && node tests/smoke-tui-trusted-shell-macos.mjs",
+    "smoke:tui:validator:macos": "npm run build && node tests/smoke-tui-validator-native.mjs",
     "smoke:tui:trusted-shell:dogfood:macos": "npm run build && node tests/smoke-tui-trusted-shell-dogfood-macos.mjs",
     "smoke:runtime-session-remap": "npm run build && node tests/smoke-runtime-session-remap.mjs",
     "smoke:recovery:macos": "npm run build && node tests/smoke-recovery-macos.mjs",

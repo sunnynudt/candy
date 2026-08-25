@@ -28,6 +28,7 @@ import {
   isMacosTrustedShellAutoAvailable,
   type InteractiveTuiOptions,
   type TuiAgentEngine,
+  type TuiValidator,
 } from "./main.js";
 import { FakeTerminal } from "./pi-tui-surface.js";
 
@@ -2284,6 +2285,65 @@ test("interactive TUI projects explicit validator pass, fail, cancel, and timeou
     );
     assert.doesNotMatch(terminal.writes.join(""), /fixture-secret/u);
     store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("long validator evidence keeps the terminal status line visible", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-validator-long-"));
+  const terminal = new FakeTerminal();
+  const longEvidence = Array.from(
+    { length: 40 },
+    (_unused, index) => `evidence line ${index + 1}`,
+  ).join("\n");
+  const validator: TuiValidator = {
+    run: async (): Promise<ValidatorResult> => ({
+      ok: false,
+      fingerprint: "fail",
+      evidence: longEvidence,
+      durationMs: 1,
+    }),
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+      validator,
+      activeSecrets: () => [],
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(`:validator ${process.execPath} fail`);
+    terminal.emitInput("\r");
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    terminal.emitInput("run fail");
+    terminal.emitInput("\r");
+    let taskId: string | undefined;
+    for (let attempt = 0; attempt < 500 && taskId === undefined; attempt += 1) {
+      const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)];
+      taskId = matches.map((match) => match[1]).find((candidate) => candidate !== undefined);
+      if (taskId === undefined) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":validate");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /validator fail:/u);
+    // The status anchor must be present in the terminal byte stream even
+    // though the 40-line evidence body overflows the transcript viewport.
+    assert.match(output, /validator fail:/u);
+    // The status line must be rendered in the visible tail, not scrolled out.
+    assert.match(terminal.writes.slice(-4).join(""), /validator fail:/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
