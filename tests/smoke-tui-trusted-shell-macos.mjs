@@ -125,7 +125,7 @@ try {
     if (!toolTexts.some((text) => text.includes(marker)))
       throw new Error(`The real coding journey transcript lacks ${marker} tool evidence.`);
   }
-  const networkRuns = toolTexts.filter((text) => text.includes("bash network 完成")).length;
+  const networkRuns = toolTexts.filter((text) => text.includes("读取网络资源 完成")).length;
   if (networkRuns !== 1) throw new Error("Network Bash was not exactly one approved command.");
   store.close();
 

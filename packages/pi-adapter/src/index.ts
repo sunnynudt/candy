@@ -908,6 +908,8 @@ interface CandyWebFetchToolInput {
 interface ParsedDirectNetworkCommand {
   readonly executable: string;
   readonly args: readonly string[];
+  /** Explicit executable and library paths the direct tool may spawn (git helpers). */
+  readonly execPaths: readonly string[];
 }
 
 /**
@@ -974,6 +976,7 @@ const NETWORK_GIT_LS_REMOTE_FLAGS = new Set([
 function parseNetworkGitCommand(
   tokens: readonly string[],
   gitPath: string,
+  execPaths: readonly string[],
 ): ParsedDirectNetworkCommand | undefined {
   if (tokens[0] !== "git" || tokens[1] !== "ls-remote") return undefined;
   const args = ["ls-remote"];
@@ -999,7 +1002,7 @@ function parseNetworkGitCommand(
     args.push(token);
   }
   if (!urlSeen) return undefined;
-  return { executable: gitPath, args };
+  return { executable: gitPath, args, execPaths };
 }
 
 const NETWORK_CURL_NO_ARG_FLAGS = new Set([
@@ -1082,7 +1085,7 @@ function parseNetworkCurlCommand(
     args.push(token);
   }
   if (!urlSeen) return undefined;
-  return { executable: curlPath, args };
+  return { executable: curlPath, args, execPaths: [] };
 }
 
 const NETWORK_WGET_NO_ARG_FLAGS = new Set([
@@ -1129,7 +1132,7 @@ function parseNetworkWgetCommand(
     args.push(token);
   }
   if (!urlSeen) return undefined;
-  return { executable: wgetPath, args };
+  return { executable: wgetPath, args, execPaths: [] };
 }
 
 function resolveDirectNetworkToolPath(
@@ -1157,11 +1160,48 @@ function resolveDirectNetworkToolPath(
   }
   const candidates =
     tool === "git"
-      ? ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+      ? [
+          // The real Command Line Tools binary; /usr/bin/git is an xcrun shim
+          // that cannot run inside the Seatbelt sandbox (TMPDIR cache writes
+          // and xcrun exec are denied). Prefer the real binary when present.
+          "/Library/Developer/CommandLineTools/usr/bin/git",
+          "/usr/bin/git",
+          "/opt/homebrew/bin/git",
+          "/usr/local/bin/git",
+        ]
       : tool === "curl"
         ? ["/usr/bin/curl", "/opt/homebrew/bin/curl", "/usr/local/bin/curl"]
         : ["/usr/bin/wget", "/opt/homebrew/bin/wget", "/usr/local/bin/wget"];
   return candidates.find((candidate) => exists(candidate));
+}
+
+/**
+ * Explicit paths a direct `git ls-remote` may spawn and map while running
+ * without the wide offline shell policy: the git remote helper binary and the
+ * libraries it loads (libcurl). Windows Git installations keep the helper in
+ * libexec/git-core and runtime libraries next to it.
+ */
+function resolveGitHelperExecPaths(
+  gitPath: string,
+  pathImpl: CandyBashPathSeam,
+  exists: (candidate: string) => boolean,
+): readonly string[] {
+  const gitBin = pathImpl.dirname(gitPath);
+  const gitRoot = pathImpl.dirname(gitBin);
+  if (pathImpl.sep === "\\") {
+    return [
+      pathImpl.join(gitRoot, "libexec", "git-core"),
+      pathImpl.join(gitRoot, "mingw64", "libexec", "git-core"),
+      pathImpl.join(gitRoot, "mingw64", "lib"),
+      pathImpl.join(gitRoot, "usr", "lib"),
+    ].filter((candidate) => exists(candidate));
+  }
+  return [
+    pathImpl.join(gitBin, "..", "libexec", "git-core"),
+    pathImpl.join(gitBin, "..", "lib"),
+    "/usr/libexec/git-core",
+    "/usr/lib",
+  ].filter((candidate) => exists(candidate));
 }
 
 function parseDirectNetworkCommand(
@@ -1175,7 +1215,13 @@ function parseDirectNetworkCommand(
   const tool = tokens[0];
   if (tool === "git") {
     const gitPath = resolveDirectNetworkToolPath("git", bashPath, pathImpl, exists);
-    return gitPath === undefined ? undefined : parseNetworkGitCommand(tokens, gitPath);
+    return gitPath === undefined
+      ? undefined
+      : parseNetworkGitCommand(
+          tokens,
+          gitPath,
+          resolveGitHelperExecPaths(gitPath, pathImpl, exists),
+        );
   }
   if (tool === "curl") {
     const curlPath = resolveDirectNetworkToolPath("curl", bashPath, pathImpl, exists);
@@ -1290,7 +1336,7 @@ export function createCandyNetworkToolDefinition(
           workspace: root,
           network: true,
           allowProcessExec: false,
-          processExecPaths: [],
+          processExecPaths: directCommand.execPaths,
           readOnlyPaths: resolveCandyShellReadOnlyPaths(root, options.trustedGitCommonDirectory),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),

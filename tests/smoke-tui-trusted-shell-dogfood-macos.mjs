@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,14 +125,26 @@ try {
       store.get(result[key]),
     ]),
   );
+  const appWorktreesRoot = await realpath(path.resolve(appPaths.worktrees)).catch(() =>
+    path.resolve(appPaths.worktrees),
+  );
+  const projectWorktreesRoot = await realpath(
+    path.resolve(path.join(workspace, ".git", "candy-worktrees")),
+  ).catch(() => path.resolve(path.join(workspace, ".git", "candy-worktrees")));
   for (const [key, task] of Object.entries(tasks)) {
     if (task?.state !== "completed" || task.trustedShell !== true)
       throw new Error(`${key} did not persist completed Trusted Shell state.`);
-    if (
-      task.worktreePath === undefined ||
-      !path.resolve(task.worktreePath).startsWith(path.resolve(appPaths.worktrees) + path.sep)
-    )
+    if (task.worktreePath === undefined) {
       throw new Error(`${key} did not persist a Candy-owned Task Worktree.`);
+    }
+    const canonicalWorktree = await realpath(task.worktreePath).catch(() =>
+      path.resolve(task.worktreePath),
+    );
+    if (!canonicalWorktree.startsWith(appWorktreesRoot + path.sep)) {
+      if (!canonicalWorktree.startsWith(projectWorktreesRoot + path.sep)) {
+        throw new Error(`${key} did not persist a Candy-owned Task Worktree.`);
+      }
+    }
   }
   const understandingFiles = await readTaskFiles(tasks.understanding_task_id);
   const repairFiles = await readTaskFiles(tasks.repair_task_id);
@@ -174,7 +186,7 @@ try {
     store.transcript(result[`${label}_task_id`]),
   );
   const offlineShellOnly = dogfoodTaskTranscripts.every(
-    (transcript) => !transcript?.some((entry) => entry.text.includes("bash network")),
+    (transcript) => !transcript?.some((entry) => entry.text.includes("读取网络资源")),
   );
   if (!offlineShellOnly) throw new Error("Dogfood unexpectedly used a network shell tool.");
   const categoryScore = `${Object.values(categoryChecks).filter(Boolean).length}/3`;

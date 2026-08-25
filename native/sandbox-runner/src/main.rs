@@ -200,9 +200,6 @@ fn response_for_line(line: &str) -> String {
     {
         return error_response("secret_forbidden");
     }
-    if !request.allow_process_exec && !request.process_exec_paths.is_empty() {
-        return error_response("invalid_message");
-    }
     if request.network && !cfg!(any(target_os = "macos", windows)) {
         return error_response("network_forbidden");
     }
@@ -2474,6 +2471,32 @@ mod tests {
         assert!(elevated.contains("(literal \"/private/etc/ssl/cert.pem\")"));
         assert!(elevated.contains("(literal \"/private/etc/ssl/openssl.cnf\")"));
         assert!(!elevated.contains("(subpath \"/private/etc/ssl\")"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn explicit_process_exec_paths_allow_bounded_helpers_without_wide_shell_policy() {
+        let profile = super::sandbox_profile(
+            "/private/var/folders/fixture/workspace",
+            "/Library/Developer/CommandLineTools/usr/bin/git",
+            true,
+            false,
+            &[
+                "/Library/Developer/CommandLineTools/usr/libexec/git-core".to_owned(),
+                "/Library/Developer/CommandLineTools/usr/lib".to_owned(),
+            ],
+            &[],
+        );
+        assert!(profile.contains("(allow process-exec (literal \"/Library/Developer/CommandLineTools/usr/bin/git\"))"));
+        assert!(
+            profile.contains("(allow process-exec (subpath \"/Library/Developer/CommandLineTools/usr/libexec/git-core\"))")
+        );
+        assert!(
+            profile.contains("(allow file-read* file-map-executable (subpath \"/Library/Developer/CommandLineTools/usr/lib\"))")
+        );
+        // The wide offline shell policy must not appear for a network command.
+        assert!(!profile.contains("(subpath \"/opt/homebrew\")"));
+        assert!(!profile.contains("(allow process-exec\n             (subpath \"/Library/Developer/CommandLineTools\"))"));
     }
 
     #[cfg(target_os = "macos")]

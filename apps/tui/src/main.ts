@@ -2350,6 +2350,11 @@ export class InteractiveTui {
         `  /cancel ${taskId}       取消整个任务`,
         "======================",
         "",
+        // Tail anchor: the transcript viewport only emits its tail, so long
+        // detail lines (wrapped reasons and paths) can scroll the frame head
+        // out of the terminal byte stream. The compact actionable summary is
+        // repeated as the final line so it always stays visible.
+        approvalActionAnchor(action, details, approvalId),
       ].join("\n"),
     );
   }
@@ -2722,6 +2727,17 @@ function validatorRecoveryHint(
 ): string {
   if (status === "pass") return "";
   return `recovery: fix the workspace, then /validate; or /resume ${taskId} <continuation>\n`;
+}
+
+function approvalActionAnchor(
+  action: string,
+  details: readonly string[],
+  approvalId: string,
+): string {
+  const firstDetail = (details[0] ?? "").trim();
+  const bounded = firstDetail.length <= 88 ? firstDetail : `${firstDetail.slice(0, 88)}…`;
+  const summary = `操作：${action}${bounded.length === 0 ? "" : ` · ${bounded}`}`;
+  return `${summary} · /approve ${approvalId}`;
 }
 
 function validatorStatusSummary(

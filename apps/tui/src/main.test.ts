@@ -420,8 +420,11 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     assert.ok(taskId);
     terminal.emitInput("what needs my attention?");
     terminal.emitInput("\r");
+    // The wrapped guidance line can be truncated or padded by the renderer
+    // when the approval footer scrolls into the same rows; bridge the wrap
+    // points and anchor on the full approval id where it survives.
     const waitingGuidance = new RegExp(
-      `task ${taskId} is waiting for your approval;[\\s\\S]*?/approve[\\s\\S]*?${approvalId}[\\s\\S]*?/deny[\\s\\S]*?${approvalId}`,
+      `is waiting for your[\\s\\S]*?approval;[\\s\\S]*?/approve[\\s\\S]*?${approvalId}[\\s\\S]*?/deny[\\s\\S]*?${approvalId}`,
       "u",
     );
     const guidanceOutput = await waitForOutput(terminal, waitingGuidance, 5_000);
@@ -925,6 +928,76 @@ test("interactive TUI presents one-command network elevation and leaves the task
     const denied = await waitForOutput(terminal, /network denied/u);
     assert.match(denied, /interrupted/u);
     assert.deepEqual(decisions, [false]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("approval anchors stay visible in a long transcript", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-approval-anchor-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          // Fill the transcript far beyond the viewport so the approval frame
+          // head would scroll out of the emitted tail without the anchor.
+          for (let index = 0; index < 60; index += 1) {
+            yield {
+              type: "assistant.delta",
+              taskId: input.taskId,
+              text: `filler line ${index}\n`,
+            };
+          }
+          await input.shellNetworkApproval?.(
+            {
+              command: "git fetch origin",
+              cwd: input.cwd,
+              reason:
+                "this read-only remote revision lookup needs outbound network access because git fetch must contact the public server over HTTPS and cannot be performed from local files alone, and the wrapped reason must push the frame head beyond the viewport tail",
+              timeout: 15,
+            },
+            signal,
+          );
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    terminal.emitInput("fetch metadata");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /操作：执行受限网络命令[\s\S]*命令：git fetch origin/u,
+    );
+    assert.match(output, /\/approve network-[a-z0-9]+/u);
+    // The actionable summary must be rendered in the visible tail, not
+    // scrolled out by the long streamed filler and wrapped details.
+    assert.match(terminal.writes.slice(-4).join(""), /操作：执行受限网络命令/u);
+    const approvalId = output.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(approvalId);
+    terminal.emitInput(`:deny ${approvalId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /network denied/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

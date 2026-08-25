@@ -21,9 +21,17 @@ export interface NativeProcessRequest {
   readonly activeSecrets?: readonly string[];
   /** Explicit one-command capability. Omitted/false is the offline default. */
   readonly network?: boolean;
-  /** Shell-only capability for executing child tools; validators keep this off. */
+  /**
+   * Wide shell policy for executing child tools; validators keep this off.
+   * When off, only the literal executable plus the explicit processExecPaths
+   * below may run.
+   */
   readonly allowProcessExec?: boolean;
-  /** Explicit executable directories needed by an approved shell composition. */
+  /**
+   * Explicit executable/library directories an approved composition may spawn
+   * and map (offline shell tools, or bounded git remote helpers for a
+   * network command). Applied as subpath allow rules; validators keep empty.
+   */
   readonly processExecPaths?: readonly string[];
   /** Paths that the OS profile may read but never write for this shell run. */
   readonly readOnlyPaths?: readonly string[];
