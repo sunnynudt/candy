@@ -299,6 +299,42 @@ test("Candy TUI surface ignores kitty key releases for copy and cycle", async ()
   }
 });
 
+async function waitForLastWrite(terminal: FakeTerminal, pattern: RegExp): Promise<string> {
+  for (let attempt: number = 0; attempt < 500; attempt += 1) {
+    const last = terminal.writes[terminal.writes.length - 1] ?? "";
+    if (pattern.test(last)) return last;
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 2);
+    });
+  }
+  return terminal.writes[terminal.writes.length - 1] ?? "";
+}
+
+test("Candy TUI surface toggles thinking blocks with Ctrl+T", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-thinking-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    surface.appendTranscript("hidden reasoning payload", "thinking");
+    await waitForLastWrite(terminal, /思考 · 已折叠/u);
+    assert.equal(terminal.writes.slice(-1).join("").includes("hidden reasoning"), false);
+    terminal.emitInput("\x14"); // Ctrl+T expands
+    await waitForLastWrite(terminal, /hidden reasoning payload/u);
+    terminal.emitInput("\x14"); // Ctrl+T collapses again
+    await waitForLastWrite(terminal, /思考 · 已折叠 · Ctrl+T 展开/u);
+    assert.equal(terminal.writes.slice(-1).join("").includes("hidden reasoning"), false);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface restores the terminal when startup throws", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-start-error-"));
   class ThrowingTerminal extends FakeTerminal {

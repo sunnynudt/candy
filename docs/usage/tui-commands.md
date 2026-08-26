@@ -88,6 +88,7 @@
 - 实时渲染窗口有上界（默认 192 KiB 滚动窗口），更早内容通过 `/transcript <task-id>` 查看完整已保存记录。
 - `Ctrl+X` 把最近一段连续的模型回复（不含中间的工具/状态行）复制到系统剪贴板（macOS `pbcopy`；Windows PowerShell `Set-Clipboard`），回复为空或复制失败时显示提示行；复制的文本与 transcript 显示的一致（已脱敏）。
 - `Ctrl+P` 在模型间向前循环（flash → pro → M3），`Ctrl+Shift+P` 向后循环；与 `/model` 相同的校验（图片附件需 M3、活动 turn 不可切换）会拒绝并说明原因。
+- 模型推理过程（thinking 流）默认折叠为一行暗色标记 `[思考 · 已折叠]`，按 `Ctrl+T` 展开/收起暗色推理正文；thinking 只做实时展示，不写入任务存档（`/transcript` 回放不含推理），也不会进入 `Ctrl+X` 的复制内容。
 
 ## 安全边界
 

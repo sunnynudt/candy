@@ -213,6 +213,56 @@ test("Ctrl+X with no assistant reply reports nothing to copy", async () => {
   }
 });
 
+test("thinking streams render dim, stay out of the store, and never enter the copy buffer", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-thinking-run-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const copied: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      copyToClipboardImpl: async (text: string): Promise<void> => {
+        copied.push(text);
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.thinking.delta",
+            taskId: input.taskId,
+            text: "secret reasoning fixture",
+          };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "the answer" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("thinking fixture");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /the answer/u);
+    // Thinking is rendered collapsed; the raw reasoning text is not visible
+    // until Ctrl+T, and it is never persisted to the task store.
+    assert.equal(terminal.writes.join("").includes("secret reasoning fixture"), false);
+    terminal.emitInput("\x18"); // Ctrl+X copies only the assistant reply
+    await waitForOutput(terminal, /clipboard: copied/u);
+    terminal.emitInput(":transcript");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /assistant: the answer/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.deepEqual(copied, ["the answer"]);
+    assert.equal(terminal.writes.join("").includes("secret reasoning fixture"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
   const terminal = new FakeTerminal();

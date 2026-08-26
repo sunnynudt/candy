@@ -1688,6 +1688,10 @@ export class InteractiveTui {
           },
           abort.signal,
         )) {
+          if (observation.type === "assistant.thinking.delta") {
+            const safeText = redactSensitive(observation.text, activeSecrets);
+            this.writeThinking(safeText);
+          }
           if (observation.type === "assistant.delta") {
             const safeText = redactSensitive(observation.text, activeSecrets);
             this.writeAssistant(safeText);
@@ -2428,6 +2432,14 @@ export class InteractiveTui {
     this.#surface?.appendTranscript(safe, "assistant");
     this.#assistantBuffer += safe;
     this.#inAssistantRun = true;
+  }
+
+  /**
+   * Stream model reasoning through the dim, collapsed thinking channel. It is
+   * never persisted to the task store and never enters the copy buffer.
+   */
+  private writeThinking(value: string): void {
+    this.#surface?.appendTranscript(redactTuiOutput(value), "thinking");
   }
 
   /** End the current assistant run; the accumulated text becomes the last reply. */

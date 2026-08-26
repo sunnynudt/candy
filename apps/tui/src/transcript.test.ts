@@ -106,3 +106,44 @@ test("empty appends are ignored and an empty transcript renders nothing", () => 
   transcript.append("\n");
   assert.ok(renderLines(transcript).length > 0);
 });
+
+test("thinking segments render collapsed by default and expand with the toggle", () => {
+  const transcript = new CandyTranscript(() => 20);
+  transcript.append("reasoning text here", "thinking");
+  assert.equal(transcript.thinkingVisible, false);
+  let lines = renderLines(transcript);
+  assert.equal(lines.length, 1);
+  assert.ok((lines[0] ?? "").includes("已折叠"));
+  assert.ok(!(lines[0] ?? "").includes("reasoning"));
+
+  transcript.toggleThinking();
+  assert.equal(transcript.thinkingVisible, true);
+  lines = renderLines(transcript);
+  assert.ok(lines.some((line) => line.includes("Ctrl+T 折叠")));
+  assert.ok(lines.some((line) => line.includes("reasoning text here")));
+  assert.ok(lines.some((line) => line.includes("\x1b[2m")));
+
+  transcript.toggleThinking();
+  lines = renderLines(transcript);
+  assert.equal(lines.length, 1);
+});
+
+test("thinking content renders literally without markdown interpretation", () => {
+  const transcript = new CandyTranscript(() => 20);
+  transcript.append("# not a heading\n- not a bullet", "thinking");
+  transcript.toggleThinking();
+  const lines = renderLines(transcript);
+  assert.ok(lines.some((line) => line.includes("# not a heading")));
+  assert.ok(lines.some((line) => line.includes("- not a bullet")));
+  assert.ok(lines.every((line) => !line.includes("\x1b[1m")));
+});
+
+test("consecutive thinking appends coalesce into one marker", () => {
+  const transcript = new CandyTranscript(() => 20);
+  transcript.append("first part ", "thinking");
+  transcript.append("second part", "thinking");
+  transcript.toggleThinking();
+  const lines = renderLines(transcript);
+  assert.equal(lines.filter((line) => line.includes("Ctrl+T 折叠")).length, 1);
+  assert.ok(lines.some((line) => line.includes("first part second part")));
+});

@@ -9,8 +9,10 @@ import {
 /**
  * Live transcript rendering for the Candy TUI.
  *
- * The transcript mixes two kinds of content:
+ * The transcript mixes three kinds of content:
  * - assistant text (streamed model output) rendered as markdown;
+ * - thinking text (streamed model reasoning) rendered dim, collapsed by
+ *   default and toggleable with Ctrl+T;
  * - plain evidence lines (status, tool activity, diffs, approval frames)
  *   rendered literally so markdown syntax inside them is never interpreted.
  *
@@ -21,7 +23,7 @@ import {
  * tail. When the user has left the tail, a hint line shows how to return.
  */
 
-export type CandyTranscriptKind = "assistant" | "plain";
+export type CandyTranscriptKind = "assistant" | "thinking" | "plain";
 
 /** Bound on live transcript bytes kept for rendering and scrollback. */
 const MAX_LIVE_TRANSCRIPT_BYTES = 192 * 1024;
@@ -56,15 +58,17 @@ interface CandyTranscriptSegment {
   readonly kind: CandyTranscriptKind;
   text: string;
   /**
-   * Markdown renderer for assistant segments. Plain segments render
-   * literally without a renderer so tool/status/evidence lines never have
-   * their markdown-significant characters interpreted.
+   * Markdown renderer for assistant segments. Thinking and plain segments
+   * render literally without a renderer so tool/status/evidence lines never
+   * have their markdown-significant characters interpreted.
    */
   readonly markdown: Markdown | undefined;
 }
 
 const SCROLLED_HINT = "[↑ 回看历史 · PageUp/PageDown 翻页 · 翻到底部回到最新]";
 const SCROLLED_STALE_HINT = "[↓ 有新内容 · PageUp/PageDown 翻页 · 翻到底部回到最新]";
+const THINKING_COLLAPSED_HINT = "[思考 · 已折叠 · Ctrl+T 展开]";
+const THINKING_EXPANDED_HINT = "[思考 · Ctrl+T 折叠]";
 
 export class CandyTranscript implements Component {
   readonly #viewportRows: () => number;
@@ -75,6 +79,8 @@ export class CandyTranscript implements Component {
   #stale = false;
   /** Total wrapped line count of the last render. */
   #wrappedLineCount = 0;
+  /** Thinking blocks are collapsed by default; Ctrl+T toggles. */
+  #thinkingVisible = false;
 
   public constructor(viewportRows: () => number) {
     this.#viewportRows = viewportRows;
@@ -88,6 +94,15 @@ export class CandyTranscript implements Component {
   /** True when the viewport is pinned to the live tail. */
   public get atTail(): boolean {
     return this.#scrollOffset === 0;
+  }
+
+  /** Toggle the visibility of collapsed thinking blocks (Ctrl+T). */
+  public toggleThinking(): void {
+    this.#thinkingVisible = !this.#thinkingVisible;
+  }
+
+  public get thinkingVisible(): boolean {
+    return this.#thinkingVisible;
   }
 
   public append(value: string, kind: CandyTranscriptKind = "plain"): void {
@@ -138,10 +153,13 @@ export class CandyTranscript implements Component {
   public render(width: number): string[] {
     const lines: string[] = [];
     for (const segment of this.#segments) {
-      if (segment.markdown === undefined) {
-        lines.push(...wrapPlainLines(segment.text, width));
+      if (segment.kind === "assistant") {
+        const markdown = segment.markdown;
+        if (markdown !== undefined) lines.push(...markdown.render(width));
+      } else if (segment.kind === "thinking") {
+        lines.push(...renderThinkingLines(segment.text, width, this.#thinkingVisible));
       } else {
-        lines.push(...segment.markdown.render(width));
+        lines.push(...wrapPlainLines(segment.text, width));
       }
     }
     this.#wrappedLineCount = lines.length;
@@ -173,6 +191,31 @@ function wrapPlainLines(text: string, width: number): string[] {
   const margin = " ".repeat(CONTENT_PADDING_X);
   return wrapTextWithAnsi(text, contentWidth).map((line) => {
     const padding = Math.max(0, width - CONTENT_PADDING_X - visibleWidth(line));
-    return `${margin}${line}${" ".repeat(padding)}`;
+    return margin + line + " ".repeat(padding);
   });
+}
+
+/**
+ * Render a thinking segment: a dim marker line plus dim indented content
+ * when expanded, or a single collapsed marker line by default.
+ */
+function renderThinkingLines(text: string, width: number, visible: boolean): string[] {
+  const marker = visible ? THINKING_EXPANDED_HINT : THINKING_COLLAPSED_HINT;
+  const lines: string[] = [dimLine(marker, width)];
+  if (!visible) return lines;
+  const contentWidth = Math.max(1, width - CONTENT_PADDING_X * 2);
+  const margin = " ".repeat(CONTENT_PADDING_X + 2);
+  for (const line of wrapTextWithAnsi(text, contentWidth - 2)) {
+    const styled = DIM(line);
+    const padding = Math.max(0, width - CONTENT_PADDING_X - 2 - visibleWidth(styled));
+    lines.push(margin + styled + " ".repeat(padding));
+  }
+  return lines;
+}
+
+/** Dim a full-width padded line (marker lines are padded by the caller). */
+function dimLine(value: string, width: number): string {
+  const styled = DIM(value);
+  const padding = Math.max(0, width - CONTENT_PADDING_X - visibleWidth(styled));
+  return " ".repeat(CONTENT_PADDING_X) + styled + " ".repeat(padding);
 }

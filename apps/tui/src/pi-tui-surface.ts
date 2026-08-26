@@ -158,6 +158,12 @@ export class CandyTuiSurface {
           this.#onCopyLastAssistant?.();
           return { consume: true };
         }
+        if (matchesKey(data, Key.ctrl("t"))) {
+          // Thinking visibility is a view state owned by the transcript.
+          this.#transcript.toggleThinking();
+          this.#tui.requestRender();
+          return { consume: true };
+        }
         return undefined;
       },
     );
