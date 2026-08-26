@@ -90,6 +90,7 @@ interface CandyChromeOptions {
   readonly trustedShellEnabled: (() => boolean) | undefined;
   readonly taskId: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
+  readonly recoveryTaskCount: (() => number) | undefined;
 }
 
 /** Quiet, fixed chrome that keeps the transcript focused on the current turn. */
@@ -107,11 +108,16 @@ class CandyChrome implements Component {
     const workspace = truncateMiddle(this.#options.workspacePath?.() ?? process.cwd(), 40);
     const model = shortModel(this.#options.model?.() ?? "deepseek-v4-flash");
     const phase = this.#options.taskPhase?.();
+    const recoveryTaskCount = this.#options.recoveryTaskCount?.() ?? 0;
     const status = phase?.includes("approval")
       ? tint("● waiting approval", ANSI_WARNING)
       : phase !== undefined
         ? tint(`● ${truncateMiddle(phase, 24)}`, ANSI_MINT)
         : tint("● ready", ANSI_MINT);
+    const recovery =
+      recoveryTaskCount > 0
+        ? ` ${dim("·")} ${tint(`${recoveryTaskCount} recoverable`, ANSI_WARNING)}`
+        : "";
     const profile = this.#options.profile?.() ?? "auto";
     const worktree = this.#options.worktreeEnabled?.() === true ? "isolated" : "direct";
     const shell = this.#options.trustedShellEnabled?.() === true ? "shell on" : "shell off";
@@ -129,7 +135,7 @@ class CandyChrome implements Component {
         safeWidth,
       ),
       paddedLine(
-        ` ${dim("⌁")} ${tint(profile, ANSI_TEXT)}  ${dim("·")} ${tint(worktree, ANSI_TEXT)}  ${dim("·")} ${tint(shell, ANSI_TEXT)}  ${dim("·")} ${status}  ${dim("·")} ${tint(task, ANSI_TEXT)}`,
+        ` ${dim("⌁")} ${tint(profile, ANSI_TEXT)}  ${dim("·")} ${tint(worktree, ANSI_TEXT)}  ${dim("·")} ${tint(shell, ANSI_TEXT)}  ${dim("·")} ${status}${recovery}  ${dim("·")} ${tint(task, ANSI_TEXT)}`,
         safeWidth,
       ),
     ];
@@ -200,6 +206,7 @@ export interface CandyTuiSurfaceOptions {
   readonly trustedShellEnabled?: () => boolean;
   readonly taskId?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
+  readonly recoveryTaskCount?: () => number;
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -266,6 +273,7 @@ export class CandyTuiSurface {
         trustedShellEnabled: options.trustedShellEnabled,
         taskId: options.taskId,
         taskPhase: options.taskPhase,
+        recoveryTaskCount: options.recoveryTaskCount,
       }),
     );
     this.#tui.addChild(this.#transcript);

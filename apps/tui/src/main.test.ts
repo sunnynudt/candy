@@ -2036,6 +2036,60 @@ test("interactive TUI never replays an interrupted prompt and requires explicit 
   }
 });
 
+test("interactive TUI accepts a fresh direct task after an interrupted task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-fresh-after-interrupted-"));
+  const repository = await createTuiGitFixture(root);
+  const appDataRoot = path.join(root, "app-data");
+  const store = new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+  const baseline = runGit(repository, ["rev-parse", "HEAD"]).trim();
+  store.create(
+    "task-interrupted",
+    "auto",
+    1,
+    "deepseek-v4-flash",
+    [],
+    repository,
+    undefined,
+    baseline,
+  );
+  store.transition("task-interrupted", 0, "interrupted");
+  store.close();
+
+  const terminal = new FakeTerminal();
+  const calls: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await waitForOutput(terminal, /1 recoverable/u);
+    terminal.emitInput("start a fresh task");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.deepEqual(calls, ["start a fresh task"]);
+
+    const updatedStore = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(updatedStore.get("task-interrupted")?.state, "interrupted");
+    assert.equal(updatedStore.list().filter((task) => task.state === "completed").length, 1);
+    updatedStore.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI rejects a second input while the current turn owns execution", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-active-owner-"));
   const terminal: FakeTerminal = new FakeTerminal();

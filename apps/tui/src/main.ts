@@ -400,6 +400,9 @@ export class InteractiveTui {
       taskId: () => this.#currentTaskId,
       taskPhase: () =>
         this.#currentTaskId === undefined ? undefined : this.#taskPhases.get(this.#currentTaskId),
+      recoveryTaskCount: () =>
+        this.#store.list().filter((task) => task.state === "paused" || task.state === "interrupted")
+          .length,
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -633,8 +636,7 @@ export class InteractiveTui {
             (task.state === "queued" ||
               task.state === "running" ||
               task.state === "waiting_approval" ||
-              task.state === "paused" ||
-              task.state === "interrupted"),
+              task.state === "paused"),
         );
       if (directTaskActive)
         throw new Error(
