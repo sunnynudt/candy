@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+
+const moduleRequire = createRequire(import.meta.url);
+const MAX_CLIPBOARD_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Platform clipboard adapter for the Candy TUI.
@@ -11,6 +15,56 @@ import { spawn } from "node:child_process";
  */
 
 export class ClipboardUnavailableError extends Error {}
+
+export type ClipboardImageMimeType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+/** A raster image deliberately read only after the user invokes paste. */
+export interface ClipboardImage {
+  readonly mimeType: ClipboardImageMimeType;
+  readonly content: Uint8Array;
+}
+
+interface NativeImageClipboard {
+  hasImage(): boolean;
+  getImageBinary(): Promise<Array<number>>;
+}
+
+/** Test seam for the native clipboard reader. */
+export interface ReadClipboardImageOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly maxBytes?: number;
+  readonly nativeClipboard?: NativeImageClipboard | undefined;
+}
+
+function loadNativeImageClipboard(): NativeImageClipboard | undefined {
+  try {
+    return moduleRequire("@mariozechner/clipboard") as NativeImageClipboard;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read a PNG image from the local system clipboard after an explicit user
+ * paste action. Clipboard text is intentionally never read by this API.
+ */
+export async function readClipboardImage(
+  options: ReadClipboardImageOptions = {},
+): Promise<ClipboardImage | undefined> {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin" && platform !== "win32")
+    throw new ClipboardUnavailableError(`Image clipboard is unavailable on ${platform}.`);
+  const nativeClipboard = options.nativeClipboard ?? loadNativeImageClipboard();
+  if (nativeClipboard === undefined)
+    throw new ClipboardUnavailableError("Image clipboard helper is unavailable.");
+  if (!nativeClipboard.hasImage()) return undefined;
+  const content = Uint8Array.from(await nativeClipboard.getImageBinary());
+  const maxBytes = options.maxBytes ?? MAX_CLIPBOARD_IMAGE_BYTES;
+  if (content.byteLength === 0) return undefined;
+  if (content.byteLength > maxBytes)
+    throw new ClipboardUnavailableError(`Clipboard image exceeds the ${maxBytes}-byte limit.`);
+  return { mimeType: "image/png", content };
+}
 
 export interface ClipboardCommand {
   readonly command: string;

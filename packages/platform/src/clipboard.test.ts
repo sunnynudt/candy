@@ -3,9 +3,56 @@ import test from "node:test";
 import {
   ClipboardUnavailableError,
   copyToClipboard,
+  readClipboardImage,
   resolveClipboardCommand,
   type ClipboardCommand,
 } from "./clipboard.js";
+
+test("readClipboardImage returns bounded PNG bytes only after an image paste", async () => {
+  let reads = 0;
+  const image = await readClipboardImage({
+    platform: "darwin",
+    nativeClipboard: {
+      hasImage: (): boolean => true,
+      getImageBinary: async (): Promise<number[]> => {
+        reads += 1;
+        return [0x89, 0x50, 0x4e, 0x47];
+      },
+    },
+  });
+  assert.deepEqual(image, {
+    mimeType: "image/png",
+    content: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
+  });
+  assert.equal(reads, 1);
+});
+
+test("readClipboardImage does not read non-image clipboard data and bounds image bytes", async () => {
+  let reads = 0;
+  const noImage = await readClipboardImage({
+    platform: "win32",
+    nativeClipboard: {
+      hasImage: (): boolean => false,
+      getImageBinary: async (): Promise<number[]> => {
+        reads += 1;
+        return [];
+      },
+    },
+  });
+  assert.equal(noImage, undefined);
+  assert.equal(reads, 0);
+  await assert.rejects(
+    readClipboardImage({
+      platform: "darwin",
+      maxBytes: 2,
+      nativeClipboard: {
+        hasImage: (): boolean => true,
+        getImageBinary: async (): Promise<number[]> => [1, 2, 3],
+      },
+    }),
+    /exceeds the 2-byte limit/u,
+  );
+});
 
 test("clipboard command resolution is platform-specific and fail-closed", () => {
   const darwin = resolveClipboardCommand("darwin");

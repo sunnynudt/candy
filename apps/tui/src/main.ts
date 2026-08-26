@@ -23,6 +23,7 @@ import {
 } from "@candy/pi-adapter";
 import {
   type CandyModelId,
+  type ClipboardImage,
   containsCredentialMaterial,
   copyToClipboard,
   type CredentialName,
@@ -34,6 +35,7 @@ import {
   type NativeProcessRequest,
   type NativeProcessResult,
   resolveAppPaths,
+  readClipboardImage,
   resolveCredential,
   resolveDefaultAppDataRoot,
   resolveNativeProcessRunnerPath,
@@ -166,6 +168,8 @@ export interface InteractiveTuiOptions {
   readonly trustedShellAutoAvailable?: boolean;
   /** Test seam; the production default copies through the platform adapter. */
   readonly copyToClipboardImpl?: (text: string) => Promise<void>;
+  /** Test seam; production reads an image only after the Ctrl+V gesture. */
+  readonly readClipboardImageImpl?: () => Promise<ClipboardImage | undefined>;
   /** Test seam; the production default resolves the platform skill roots. */
   readonly skillRoots?: readonly string[];
 }
@@ -306,6 +310,7 @@ export class InteractiveTui {
   readonly #validator: TuiValidator | undefined;
   readonly #validatorTimeoutMs: number;
   readonly #copyToClipboardImpl: (text: string) => Promise<void>;
+  readonly #readClipboardImageImpl: () => Promise<ClipboardImage | undefined>;
   readonly #activeSecretsProvider: (() => readonly string[]) | undefined;
   readonly #credentialStore: CredentialStore;
   readonly #credentialEnvironment: NodeJS.ProcessEnv;
@@ -393,6 +398,7 @@ export class InteractiveTui {
     this.#validator = options.validator ?? createNativeTuiValidator();
     this.#validatorTimeoutMs = options.validatorTimeoutMs ?? DEFAULT_VALIDATOR_TIMEOUT_MS;
     this.#copyToClipboardImpl = options.copyToClipboardImpl ?? copyToClipboard;
+    this.#readClipboardImageImpl = options.readClipboardImageImpl ?? readClipboardImage;
     this.#shellRunner = options.shellRunner ?? createNativeTuiShellRunner();
     this.#trustedShellAutoAvailable = options.trustedShellAutoAvailable ?? false;
     this.#validatorCommand = options.validatorCommand;
@@ -476,6 +482,7 @@ export class InteractiveTui {
       },
       onInterrupt: (): void => this.requestExit(),
       onCopyLastAssistant: (): void => this.copyLastAssistant(),
+      onPasteImage: (): void => this.pasteImageFromClipboard(),
       onCycleModel: (direction: 1 | -1): void => this.cycleModel(direction),
     });
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -1150,17 +1157,7 @@ export class InteractiveTui {
   private async attachPath(value: string): Promise<void> {
     if (value === "") throw new Error("Attachment path is required.");
     if (!path.isAbsolute(value)) throw new Error("Attachment paths must be absolute.");
-    const current = this.currentTask();
-    const snapshot = current?.snapshot();
-    const taskMetadata = snapshot === undefined ? undefined : this.#store.get(snapshot.taskId);
-    if (snapshot !== undefined) {
-      if (snapshot.state === "running" || snapshot.state === "waiting_approval")
-        throw new Error("Attachments cannot change during an active turn.");
-      if (snapshot.state === "queued")
-        throw new Error("Attachments cannot change on a queued task.");
-      if (snapshot.model !== "MiniMax-M3")
-        throw new Error("Image attachments require explicit /model minimax-m3.");
-    }
+    this.attachmentTarget();
     const candidate = path.resolve(value);
     const source = await lstat(candidate);
     if (source.isSymbolicLink()) throw new Error("Symbolic links are not allowed for attachments.");
@@ -1176,6 +1173,34 @@ export class InteractiveTui {
       throw new Error("Video attachments are unavailable until their provider gate passes.");
     const mimeType = attachmentMimeType(candidate);
     const content = await readAttachmentSource(candidate);
+    await this.stageImageAttachment(mimeType, content, "attachment staged");
+  }
+
+  private attachmentTarget(): {
+    readonly snapshot: ReturnType<TaskController["snapshot"]> | undefined;
+    readonly taskMetadata: TaskMetadata | undefined;
+  } {
+    const current = this.currentTask();
+    const snapshot = current?.snapshot();
+    const taskMetadata = snapshot === undefined ? undefined : this.#store.get(snapshot.taskId);
+    if (snapshot !== undefined) {
+      if (snapshot.state === "running" || snapshot.state === "waiting_approval")
+        throw new Error("Attachments cannot change during an active turn.");
+      if (snapshot.state === "queued")
+        throw new Error("Attachments cannot change on a queued task.");
+      if (snapshot.model !== "MiniMax-M3")
+        throw new Error("Image attachments require explicit /model minimax-m3.");
+      if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
+    }
+    return { snapshot, taskMetadata };
+  }
+
+  private async stageImageAttachment(
+    mimeType: ClipboardImage["mimeType"],
+    content: Uint8Array,
+    successPrefix: string,
+  ): Promise<void> {
+    const { snapshot, taskMetadata } = this.attachmentTarget();
     const activeSecrets = this.#activeSecretsProvider?.() ?? [];
     const contentBuffer = Buffer.from(content);
     if (
@@ -1190,7 +1215,9 @@ export class InteractiveTui {
     if (snapshot === undefined) {
       if (!this.#selectedAttachmentIds.includes(attachment.id))
         this.#selectedAttachmentIds.push(attachment.id);
-      this.write(`attachment staged: ${attachment.id}\n`);
+      this.write(`${successPrefix}: ${attachment.id}\n`);
+      if (this.#selectedModel !== "MiniMax-M3")
+        this.write("image attachment requires /model minimax-m3 before starting a task\n");
       return;
     }
     if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
@@ -1204,7 +1231,21 @@ export class InteractiveTui {
         new TaskController(snapshot.taskId, updated.approvalProfile, this.#store),
       );
     }
-    this.write(`attachment added: ${attachment.id}\n`);
+    this.write(`${successPrefix.replace("staged", "added")}: ${attachment.id}\n`);
+  }
+
+  private pasteImageFromClipboard(): void {
+    void this.#readClipboardImageImpl()
+      .then(async (image) => {
+        if (image === undefined) {
+          this.write("clipboard image: none; copy an image, then press Ctrl+V\n");
+          return;
+        }
+        await this.stageImageAttachment(image.mimeType, image.content, "clipboard image staged");
+      })
+      .catch((error: unknown) => {
+        this.write(`clipboard image rejected: ${safeError(error)}\n`);
+      });
   }
 
   private async showAttachments(): Promise<void> {

@@ -242,7 +242,7 @@ class CandyFooter implements Component {
           ? "/status 查看详情  ·  按上方命令作出决定"
           : isActivePhase(phase)
             ? "/steer 补充当前轮  ·  /follow-up 排队下一轮"
-            : "/ 查看命令  ·  Enter 发送  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
+            : "/ 查看命令  ·  Enter 发送  ·  Ctrl+V 粘贴图片  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
     return [paddedLine(` ${dim(content)}`, Math.max(1, width))];
   }
 }
@@ -307,6 +307,8 @@ export interface CandyTuiSurfaceOptions {
   readonly onInterrupt: () => void;
   /** Copy the last assistant reply; the surface owns the transcript text. */
   readonly onCopyLastAssistant?: () => void;
+  /** Paste a raster image from the system clipboard after an explicit Ctrl+V gesture. */
+  readonly onPasteImage?: () => void;
   /** Cycle the selected model; 1 forward, -1 backward. */
   readonly onCycleModel?: (direction: 1 | -1) => void;
   /** Test seam; the production default launches the resolved editor command. */
@@ -323,6 +325,7 @@ export class CandyTuiSurface {
   readonly #onSubmit: (text: string) => void;
   readonly #onInterrupt: () => void;
   readonly #onCopyLastAssistant: (() => void) | undefined;
+  readonly #onPasteImage: (() => void) | undefined;
   readonly #onCycleModel: ((direction: 1 | -1) => void) | undefined;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #removeInterruptListener: () => void;
@@ -337,6 +340,7 @@ export class CandyTuiSurface {
     this.#onSubmit = options.onSubmit;
     this.#onInterrupt = options.onInterrupt;
     this.#onCopyLastAssistant = options.onCopyLastAssistant;
+    this.#onPasteImage = options.onPasteImage;
     this.#onCycleModel = options.onCycleModel;
     this.#environment = options.environment ?? process.env;
     this.#appDataRoot = path.resolve(options.appDataRoot);
@@ -428,6 +432,10 @@ export class CandyTuiSurface {
         }
         if (matchesKey(data, Key.ctrl("x"))) {
           this.#onCopyLastAssistant?.();
+          return { consume: true };
+        }
+        if (matchesKey(data, Key.ctrl("v")) && this.#onPasteImage !== undefined) {
+          this.#onPasteImage();
           return { consume: true };
         }
         if (matchesKey(data, Key.ctrl("t"))) {

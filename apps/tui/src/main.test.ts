@@ -3201,6 +3201,50 @@ test("interactive TUI rejects a model switch during an active turn", async () =>
   }
 });
 
+test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-clipboard-image-"));
+  const terminal = new FakeTerminal();
+  const images: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  let clipboardReads = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => {
+        clipboardReads += 1;
+        return { mimeType: "image/png", content: VALID_PNG };
+      },
+      engine: {
+        async *runTurn(input) {
+          images.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "clipboard image accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    await waitForOutput(terminal, /image attachment requires \/model minimax-m3/u);
+    terminal.emitInput("/model minimax-m3");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /model selected: MiniMax-M3/u);
+    terminal.emitInput("describe the pasted image");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /clipboard image accepted/u);
+    assert.equal(clipboardReads, 1);
+    assert.equal(images.length, 1);
+    assert.equal(images[0]?.[0]?.mimeType, "image/png");
+    assert.equal(images[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI sends Candy-owned image attachments and recovers them after restart", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-attachments-"));
   const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-workspace-"));

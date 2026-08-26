@@ -340,6 +340,33 @@ test("Candy TUI surface invokes the copy handler with Ctrl+X", async () => {
   }
 });
 
+test("Candy TUI surface invokes the image paste handler with Ctrl+V", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-paste-image-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let pasted: number = 0;
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onPasteImage: (): void => {
+      pasted += 1;
+    },
+  });
+  try {
+    surface.start();
+    await waitForOutput(terminal, /Ctrl\+V 粘贴图片/u);
+    terminal.emitInput("\x16"); // Ctrl+V
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(pasted, 1);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface exposes a clickable copy action after a completed reply", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-action-"));
   const terminal: FakeTerminal = new FakeTerminal();
