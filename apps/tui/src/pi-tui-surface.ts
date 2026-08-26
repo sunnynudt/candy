@@ -1,5 +1,6 @@
 import path from "node:path";
 import { appendFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import {
   Editor,
   ProcessTerminal,
@@ -14,6 +15,7 @@ import {
 import { containsCredentialMaterial } from "@candy/platform";
 import { createCandySlashCommandAutocompleteProvider } from "./slash-commands.js";
 import { CandyTranscript, type CandyTranscriptKind } from "./transcript.js";
+import { launchExternalEditor, normalizeEditorOutput } from "./external-editor.js";
 
 const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_TUI_WRITE_LOG",
@@ -64,6 +66,8 @@ export interface CandyTuiSurfaceOptions {
   readonly onCopyLastAssistant?: () => void;
   /** Cycle the selected model; 1 forward, -1 backward. */
   readonly onCycleModel?: (direction: 1 | -1) => void;
+  /** Test seam; the production default launches the resolved editor command. */
+  readonly launchExternalEditor?: (target: string) => Promise<number>;
 }
 
 export class CandyTuiSurface {
@@ -71,6 +75,8 @@ export class CandyTuiSurface {
   readonly #tui: TuiAltScreen;
   readonly #transcript: CandyTranscript;
   readonly #editor: Editor;
+  readonly #appDataRoot: string;
+  readonly #launchExternalEditor: (target: string) => Promise<number>;
   readonly #onSubmit: (text: string) => void;
   readonly #onInterrupt: () => void;
   readonly #onCopyLastAssistant: (() => void) | undefined;
@@ -82,6 +88,7 @@ export class CandyTuiSurface {
   readonly #removeInputLogListener: (() => void) | undefined;
   public readonly logDirectory: string;
   #started: boolean = false;
+  #editorOpen: boolean = false;
 
   public constructor(options: CandyTuiSurfaceOptions) {
     this.#terminal = options.terminal ?? new ProcessTerminal();
@@ -90,7 +97,11 @@ export class CandyTuiSurface {
     this.#onCopyLastAssistant = options.onCopyLastAssistant;
     this.#onCycleModel = options.onCycleModel;
     this.#environment = options.environment ?? process.env;
-    this.logDirectory = path.join(path.resolve(options.appDataRoot), "logs");
+    this.#appDataRoot = path.resolve(options.appDataRoot);
+    this.#launchExternalEditor =
+      options.launchExternalEditor ??
+      ((target: string): Promise<number> => launchExternalEditor(target));
+    this.logDirectory = path.join(this.#appDataRoot, "logs");
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
     this.#transcript = new CandyTranscript(() =>
       Math.max(8, this.#terminal.rows - RESERVED_BELOW_TRANSCRIPT_ROWS),
@@ -164,6 +175,10 @@ export class CandyTuiSurface {
           this.#tui.requestRender();
           return { consume: true };
         }
+        if (matchesKey(data, Key.ctrl("g"))) {
+          void this.openExternalEditor();
+          return { consume: true };
+        }
         return undefined;
       },
     );
@@ -192,6 +207,56 @@ export class CandyTuiSurface {
 
   public appendTranscript(value: string, kind: CandyTranscriptKind = "plain"): void {
     this.#transcript.append(value, kind);
+    this.#tui.requestRender();
+  }
+
+  /**
+   * Suspend the TUI, open the current editor content in the external
+   * editor, and replace the input with the saved result on a clean exit.
+   * The TUI resumes in all paths and the Candy-owned temp file is always
+   * deleted.
+   */
+  public async openExternalEditor(): Promise<void> {
+    if (this.#editorOpen) return;
+    this.#editorOpen = true;
+    const original = this.#editor.getText();
+    const target = path.join(this.#appDataRoot, "state", `external-editor-${process.pid}.txt`);
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, original, "utf8");
+      await this.#suspend();
+      const exitCode = await this.#launchExternalEditor(target);
+      const updated = await readFile(target, "utf8");
+      if (exitCode !== 0) {
+        this.appendTranscript(`external editor: exited with ${exitCode}; input unchanged\n`);
+        return;
+      }
+      const normalized = normalizeEditorOutput(original, updated);
+      this.#editor.setText(normalized);
+      this.appendTranscript(
+        normalized === original
+          ? "external editor: no change\n"
+          : `external editor: input replaced (${normalized.length} chars)\n`,
+      );
+    } catch (error) {
+      this.appendTranscript(`external editor: ${(error as Error).message}\n`);
+    } finally {
+      await rm(target, { force: true }).catch(() => undefined);
+      this.#editorOpen = false;
+      this.#resume();
+    }
+  }
+
+  /** Restore the terminal without dropping TUI input listeners. */
+  async #suspend(): Promise<void> {
+    this.#tui.stop();
+    await this.#terminal.drainInput();
+    this.#terminal.showCursor();
+  }
+
+  /** Reconnect the terminal and re-render after an external editor session. */
+  #resume(): void {
+    this.#tui.start();
     this.#tui.requestRender();
   }
 

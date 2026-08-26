@@ -89,6 +89,7 @@
 - `Ctrl+X` 把最近一段连续的模型回复（不含中间的工具/状态行）复制到系统剪贴板（macOS `pbcopy`；Windows PowerShell `Set-Clipboard`），回复为空或复制失败时显示提示行；复制的文本与 transcript 显示的一致（已脱敏）。
 - `Ctrl+P` 在模型间向前循环（flash → pro → M3），`Ctrl+Shift+P` 向后循环；与 `/model` 相同的校验（图片附件需 M3、活动 turn 不可切换）会拒绝并说明原因。
 - 模型推理过程（thinking 流）默认折叠为一行暗色标记 `[思考 · 已折叠]`，按 `Ctrl+T` 展开/收起暗色推理正文；thinking 只做实时展示，不写入任务存档（`/transcript` 回放不含推理），也不会进入 `Ctrl+X` 的复制内容。
+- `Ctrl+G` 用外部编辑器编辑当前输入行：按 `$VISUAL` → `$EDITOR` → 平台默认（macOS `nano` / Windows `notepad.exe`）解析命令（支持 `code -w` 这类带参数值）；编辑期间 TUI 挂起，保存退出后输入回填（编辑器追加的尾部换行会被去掉，CRLF 归一为 LF），非零退出或启动失败时输入保持不变；临时文件位于 Candy 应用数据目录，退出后必删。
 
 ## 安全边界
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -329,6 +329,103 @@ test("Candy TUI surface toggles thinking blocks with Ctrl+T", async () => {
     terminal.emitInput("\x14"); // Ctrl+T collapses again
     await waitForLastWrite(terminal, /思考 · 已折叠 · Ctrl+T 展开/u);
     assert.equal(terminal.writes.slice(-1).join("").includes("hidden reasoning"), false);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface opens the external editor and replaces the input on save", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-external-editor-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const submitted: string[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (text: string): void => {
+      submitted.push(text);
+    },
+    onInterrupt: (): void => undefined,
+    launchExternalEditor: async (target: string): Promise<number> => {
+      await writeFile(target, "edited prompt\n", "utf8");
+      return 0;
+    },
+  });
+  try {
+    surface.start();
+    terminal.emitInput("fixture");
+    terminal.emitInput("\x07"); // Ctrl+G
+    await waitForOutput(terminal, /external editor: input replaced/u);
+    terminal.emitInput("\r");
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.deepEqual(submitted, ["edited prompt"]);
+    assert.equal(terminal.started, true);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface keeps the input when the external editor fails", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-external-editor-fail-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const submitted: string[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (text: string): void => {
+      submitted.push(text);
+    },
+    onInterrupt: (): void => undefined,
+    launchExternalEditor: async (): Promise<number> => 3,
+  });
+  try {
+    surface.start();
+    terminal.emitInput("keep me");
+    terminal.emitInput("\x07"); // Ctrl+G
+    await waitForOutput(terminal, /external editor: exited with 3/u);
+    terminal.emitInput("\r");
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.deepEqual(submitted, ["keep me"]);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface resumes interactive input after the external editor session", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-external-editor-resume-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let submitted: string | undefined;
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (text: string): void => {
+      submitted = text;
+    },
+    onInterrupt: (): void => undefined,
+    launchExternalEditor: async (target: string): Promise<number> => {
+      await writeFile(target, "after editor", "utf8");
+      return 0;
+    },
+  });
+  try {
+    surface.start();
+    surface.appendTranscript("fixture transcript\n");
+    terminal.emitInput("first");
+    terminal.emitInput("\x07"); // Ctrl+G
+    await waitForOutput(terminal, /external editor: input replaced/u);
+    // Typing after resume must reach the editor and Ctrl+C must still interrupt.
+    terminal.emitInput("!");
+    terminal.emitInput("\r");
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(submitted, "after editor!");
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });
