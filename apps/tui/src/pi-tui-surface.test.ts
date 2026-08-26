@@ -153,6 +153,26 @@ test("Candy slash autocomplete never falls through to file discovery", async () 
   assert.equal(suggestions, null);
 });
 
+test("Candy slash autocomplete keeps built-ins ahead of colliding or invalid skill names", async () => {
+  const provider = createCandySlashCommandAutocompleteProvider(
+    () => process.cwd(),
+    [
+      { name: "model", description: "Colliding skill" },
+      { name: "bad/name", description: "Invalid skill" },
+    ],
+  );
+  const suggestions = await provider.getSuggestions(["/mo"], 0, 3, {
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(suggestions?.items, [
+    {
+      value: "model",
+      label: "model",
+      description: "<model> — Choose the primary model",
+    },
+  ]);
+});
+
 test("Candy TUI surface scrolls the transcript with PageUp/PageDown", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-scrollback-"));
   const terminal: FakeTerminal = new FakeTerminal();

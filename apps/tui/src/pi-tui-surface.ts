@@ -16,7 +16,10 @@ import {
   Key,
 } from "@earendil-works/pi-tui";
 import { containsCredentialMaterial } from "@candy/platform";
-import { createCandySlashCommandAutocompleteProvider } from "./slash-commands.js";
+import {
+  createCandySlashCommandAutocompleteProvider,
+  type CandySkillSlashCommand,
+} from "./slash-commands.js";
 import { CandyTranscript, type CandyTranscriptKind } from "./transcript.js";
 import { launchExternalEditor, normalizeEditorOutput } from "./external-editor.js";
 
@@ -208,6 +211,7 @@ export interface CandyTuiSurfaceOptions {
   readonly taskId?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
   readonly recoveryTaskCount?: () => number;
+  readonly skills?: readonly CandySkillSlashCommand[];
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -255,7 +259,10 @@ export class CandyTuiSurface {
     this.#transcript = new CandyTranscript();
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
     this.#editor.setAutocompleteProvider(
-      createCandySlashCommandAutocompleteProvider(options.workspacePath ?? (() => process.cwd())),
+      createCandySlashCommandAutocompleteProvider(
+        options.workspacePath ?? (() => process.cwd()),
+        options.skills,
+      ),
     );
     this.#editor.onSubmit = (text: string): void => {
       const submittedText: string = text.trim();

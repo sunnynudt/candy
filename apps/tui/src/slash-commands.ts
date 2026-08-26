@@ -14,6 +14,17 @@ export interface CandySlashCommand extends SlashCommand {
   readonly usage?: string;
 }
 
+export interface CandySkillSlashCommand {
+  readonly name: string;
+  readonly description: string;
+}
+
+const CANDY_SKILL_SLASH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+export function isCandySkillSlashCommandName(name: string): boolean {
+  return CANDY_SKILL_SLASH_NAME_PATTERN.test(name);
+}
+
 export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
   {
     value: "deepseek-flash",
@@ -238,14 +249,25 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
 ];
 
 /**
- * Provides only Candy slash commands. File completion would add an unneeded
- * filesystem discovery surface to the editor, so non-command input returns no
- * suggestions before Pi's combined provider can inspect a path.
+ * Provides Candy-owned commands and loaded skill aliases. File completion would
+ * add an unneeded filesystem discovery surface to the editor, so non-command
+ * input returns no suggestions before Pi's combined provider can inspect a path.
  */
 export function createCandySlashCommandAutocompleteProvider(
   workspacePath: () => string = () => process.cwd(),
+  skills: readonly CandySkillSlashCommand[] = [],
 ): AutocompleteProvider {
-  const commands = new CombinedAutocompleteProvider([...CANDY_SLASH_COMMANDS], ".");
+  const builtInNames = new Set(CANDY_SLASH_COMMANDS.map((command) => command.name));
+  const skillCommands: CandySlashCommand[] = skills
+    .filter((skill) => isCandySkillSlashCommandName(skill.name) && !builtInNames.has(skill.name))
+    .map((skill) => ({
+      name: skill.name,
+      description: `Skill — ${skill.description}`,
+    }));
+  const commands = new CombinedAutocompleteProvider(
+    [...CANDY_SLASH_COMMANDS, ...skillCommands],
+    ".",
+  );
   const mentions = createWorkspaceMentionAutocompleteProvider(workspacePath);
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {

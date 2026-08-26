@@ -73,7 +73,11 @@ import {
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
 import { expandWorkspaceMentionPrompt } from "./file-mentions.js";
-import { CANDY_MODEL_CHOICES, CANDY_SLASH_COMMANDS } from "./slash-commands.js";
+import {
+  CANDY_MODEL_CHOICES,
+  CANDY_SLASH_COMMANDS,
+  isCandySkillSlashCommandName,
+} from "./slash-commands.js";
 
 export interface TuiSmokeResult {
   readonly piVersion: string;
@@ -390,6 +394,11 @@ export class InteractiveTui {
   }
 
   public async run(): Promise<void> {
+    const skills = loadCandySkillInfos(
+      this.#appDataRoot,
+      this.activeSecretsSnapshot(),
+      this.#skillRoots,
+    ).skills.map((skill) => ({ name: skill.name, description: skill.description }));
     this.#surface = new CandyTuiSurface({
       appDataRoot: this.#appDataRoot,
       workspacePath: () => this.#workspacePath,
@@ -403,6 +412,7 @@ export class InteractiveTui {
       recoveryTaskCount: () =>
         this.#store.list().filter((task) => task.state === "paused" || task.state === "interrupted")
           .length,
+      skills,
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -559,6 +569,17 @@ export class InteractiveTui {
           this.write(
             `usage: ${command.usage ?? `/${command.name} ${command.argumentHint ?? "<required>"}`}\n`,
           );
+          return;
+        }
+        if (
+          isCandySkillSlashCommandName(name) &&
+          loadCandySkillInfos(
+            this.#appDataRoot,
+            this.activeSecretsSnapshot(),
+            this.#skillRoots,
+          ).skills.some((skill) => skill.name === name)
+        ) {
+          this.invokeSkill(trimmed.slice(1));
           return;
         }
       }

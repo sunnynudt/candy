@@ -379,6 +379,48 @@ test("/skill submits the skill body with an optional goal", async () => {
   }
 });
 
+test("slash autocomplete suggests and invokes available Candy skills", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-autocomplete-"));
+  await mkdir(path.join(root, "skills", "multica"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "multica", "SKILL.md"),
+    "---\nname: multica-fixture\ndescription: Manage Multica fixture tasks\n---\n# Multica Fixture\nRun the fixture skill.\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  const prompts: string[] = [];
+  const runPromise = new TestInteractiveTui({
+    appDataRoot: root,
+    terminal,
+    skillRoots: [],
+    engine: {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "skill autocomplete done" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    },
+  }).run();
+  try {
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("/mu");
+    const suggestions = await waitForOutput(terminal, /Manage Multica fixture tasks/u);
+    assert.match(suggestions, /multica-fixture/u);
+    terminal.emitInput("\t");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /skill autocomplete done/u);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /skill: multica-fixture/u);
+    assert.match(prompts[0] ?? "", /# Multica Fixture/u);
+  } finally {
+    terminal.emitInput("\x03");
+    await runPromise;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("/skill without a name lists skills and does not submit a prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-list-"));
   const terminal: FakeTerminal = new FakeTerminal();
