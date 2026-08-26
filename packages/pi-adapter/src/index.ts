@@ -3473,6 +3473,19 @@ export interface PiImageInput {
   readonly data: string;
 }
 
+/**
+ * A small, presentation-safe classification of a failed Pi workspace tool.
+ * Raw tool output can contain source text, paths, or secrets, so it remains
+ * model-only and never becomes TUI transcript evidence.
+ */
+export type PiToolFailure =
+  | { readonly kind: "read_offset_out_of_range"; readonly totalLines: number }
+  | { readonly kind: "edit_target_not_found" }
+  | { readonly kind: "edit_target_not_unique" }
+  | { readonly kind: "edit_targets_overlap" }
+  | { readonly kind: "edit_no_change" }
+  | { readonly kind: "tool_failed" };
+
 export type PiAgentObservation =
   | { readonly type: "turn.started"; readonly taskId: string }
   | {
@@ -3520,6 +3533,7 @@ export type PiAgentObservation =
       readonly ok: boolean;
       readonly toolCallId?: string;
       readonly output?: string;
+      readonly failure?: PiToolFailure;
     }
   | { readonly type: "turn.completed"; readonly taskId: string };
 
@@ -3527,6 +3541,32 @@ type PiToolExecutionEvent = Extract<
   piSdk.AgentSessionEvent,
   { readonly type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end" }
 >;
+
+function classifyPiToolFailure(
+  tool: string,
+  result: unknown,
+  activeSecrets: readonly string[],
+): PiToolFailure {
+  const text = boundedToolValue(result, activeSecrets, 4_096);
+  if (tool === "candy_read") {
+    const match = /Offset\s+\d+\s+is beyond end of file\s+\((\d+)\s+lines total\)/u.exec(text);
+    if (match?.[1] !== undefined) {
+      const totalLines = Number(match[1]);
+      if (Number.isSafeInteger(totalLines) && totalLines >= 0)
+        return { kind: "read_offset_out_of_range", totalLines };
+    }
+  }
+  if (tool === "candy_edit") {
+    if (/Could not find (?:the exact text|edits\[\d+\])/u.test(text))
+      return { kind: "edit_target_not_found" };
+    if (/text must be unique|Each oldText must be unique/u.test(text))
+      return { kind: "edit_target_not_unique" };
+    if (/edits\[\d+\] and edits\[\d+\] overlap/u.test(text))
+      return { kind: "edit_targets_overlap" };
+    if (/No changes made/u.test(text)) return { kind: "edit_no_change" };
+  }
+  return { kind: "tool_failed" };
+}
 
 export function projectPiToolObservation(
   event: PiToolExecutionEvent,
@@ -3558,6 +3598,9 @@ export function projectPiToolObservation(
     toolCallId: boundedToolValue(event.toolCallId, activeSecrets, 128),
     ok: !event.isError,
     output: boundedToolValue(event.result, activeSecrets),
+    ...(event.isError
+      ? { failure: classifyPiToolFailure(event.toolName, event.result, activeSecrets) }
+      : {}),
   };
 }
 

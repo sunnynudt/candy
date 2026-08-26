@@ -11,23 +11,26 @@
 
 ## 任务与工作区
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/new` | `/new [prompt]` | 创建新任务；可带初始提示词 |
-| `/new` | `/new --validator <absolute-executable> [args] -- <goal>` | 创建带 Validator 的新任务；`--` 后为任务目标 |
-| `/workspace` | `/workspace [path]` | 显示或选择工作区（绝对路径） |
-| `/tasks` | `/tasks` | 列出任务（标题/状态/创建更新时间/模型/工作区/revision/Validator） |
-| `/status` | `/status [task-id]` | 查看当前或指定任务的状态、执行阶段、审批与恢复信息 |
-| `/use` | `/use <task-id>` | 选择已持久化任务继续操作 |
-| `/transcript` | `/transcript [task-id]` | 显示已保存的对话记录 |
+| 命令          | 语法                                                      | 说明                                                                                                                      |
+| ------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `/new`        | `/new [prompt]`                                           | 创建新任务；可带初始提示词                                                                                                |
+| `/new`        | `/new --validator <absolute-executable> [args] -- <goal>` | 创建带 Validator 的新任务；`--` 后为任务目标                                                                              |
+| `/plan`       | `/plan [prompt]`                                          | 创建只读规划任务（plan 模式）；规划 turn 绝不修改文件，审阅方案后用 `/build` 实施                                         |
+| `/build`      | `/build [task-id]`                                        | 把已审阅的 plan 任务切换到当前 profile 并开始实施；无参时使用当前任务                                                     |
+| `/debug`      | `/debug [prompt]`                                         | 创建 Auto Debug 任务：模型回合 + 验证器循环，直到验证通过、证据停滞或预算耗尽（需先配置 `/validator` 或传 `--validator`） |
+| `/workspace`  | `/workspace [path]`                                       | 显示或选择工作区（绝对路径）                                                                                              |
+| `/tasks`      | `/tasks`                                                  | 列出任务（标题/状态/创建更新时间/模型/工作区/revision/Validator）                                                         |
+| `/status`     | `/status [task-id]`                                       | 查看当前或指定任务的状态、执行阶段、审批与恢复信息                                                                        |
+| `/use`        | `/use <task-id>`                                          | 选择已持久化任务继续操作                                                                                                  |
+| `/transcript` | `/transcript [task-id]`                                   | 显示已保存的对话记录                                                                                                      |
 
 ## 模型与附件
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/model` | `/model <deepseek-flash|deepseek-pro|minimax-m3>` | 选择主模型；无参时列出可选模型 |
-| `/attach` | `/attach <absolute-path>` | 为下一个任务附加图片（仅 MiniMax M3） |
-| `/attachments` | `/attachments` | 列出已选择附件 |
+| 命令           | 语法                      | 说明                                  |
+| -------------- | ------------------------- | ------------------------------------- |
+| `/model`       | `/model <deepseek-flash   | deepseek-pro                          | minimax-m3>` | 选择主模型；无参时列出可选模型 |
+| `/attach`      | `/attach <absolute-path>` | 为下一个任务附加图片（仅 MiniMax M3） |
+| `/attachments` | `/attachments`            | 列出已选择附件                        |
 
 ## 工作区上下文
 
@@ -40,48 +43,50 @@
 
 ## 凭据
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/credentials` | `/credentials` | 显示 DeepSeek/MiniMax 凭据 presence |
-| `/credential` | `/credential set|replace|delete <deepseek|minimax-cn>` | 设置/替换/删除凭据（不读回完整值） |
+| 命令           | 语法             | 说明                                |
+| -------------- | ---------------- | ----------------------------------- |
+| `/credentials` | `/credentials`   | 显示 DeepSeek/MiniMax 凭据 presence |
+| `/credential`  | `/credential set | replace                             | delete <deepseek | minimax-cn>` | 设置/替换/删除凭据（不读回完整值） |
 
 ## 审查与变更
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/changes` | `/changes` | 显示当前任务变更 |
-| `/diff` | `/diff [path]` | 显示有界脱敏 diff；`/apply` 前必须完整查看 |
-| `/apply` | `/apply` | 将审阅后的任务变更显式应用到目标工作区（不自动提交） |
-| `/discard` | `/discard` | 丢弃 Candy 自有的 Task Worktree |
-| `/validate` | `/validate` | 运行已配置的 validator |
-| `/validator` | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator |
+| 命令           | 语法                             | 说明                                                                                |
+| -------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
+| `/changes`     | `/changes`                       | 显示当前任务变更                                                                    |
+| `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                                          |
+| `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                                |
+| `/undo`        | `/undo [task-id]`                | 恢复隔离任务（`/worktree on`）最新一轮的变更快照；direct 模式请用 git restore/clean |
+| `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                                            |
+| `/discard`     | `/discard`                       | 丢弃 Candy 自有的 Task Worktree                                                     |
+| `/validate`    | `/validate`                      | 运行已配置的 validator                                                              |
+| `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                                    |
 
 ## 控制
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/steer` | `/steer <text>` | 向当前活动 turn 排队一条引导 |
-| `/follow-up` | `/follow-up <text>` | 排队一条追问 |
-| `/pause` | `/pause <task-id>` | 暂停任务 |
-| `/resume` | `/resume <task-id> <continuation>` | 显式续跑；无 continuation 时只展示已保存证据，不重放任何中断的 turn |
-| `/cancel` | `/cancel <task-id>` | 取消任务 |
-| `/prioritize` | `/prioritize <task-id>` | 将排队任务提前 |
-| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理动作（如文件删除、网络命令） |
-| `/quit` | `/quit` | 退出 Candy |
+| 命令                 | 语法                                             | 说明                                                                |
+| -------------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| `/steer`             | `/steer <text>`                                  | 向当前活动 turn 排队一条引导                                        |
+| `/follow-up`         | `/follow-up <text>`                              | 排队一条追问                                                        |
+| `/pause`             | `/pause <task-id>`                               | 暂停任务                                                            |
+| `/resume`            | `/resume <task-id> <continuation>`               | 显式续跑；无 continuation 时只展示已保存证据，不重放任何中断的 turn |
+| `/cancel`            | `/cancel <task-id>`                              | 取消任务                                                            |
+| `/prioritize`        | `/prioritize <task-id>`                          | 将排队任务提前                                                      |
+| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理动作（如文件删除、网络命令）                         |
+| `/quit`              | `/quit`                                          | 退出 Candy                                                          |
 
 ## 模式与资源
 
-| 命令 | 语法 | 说明 |
-| --- | --- | --- |
-| `/profile` | `/profile read-only|auto` | 审批模式；`auto` 开放文件读写（删除仍需逐次审批） |
-| `/worktree` | `/worktree on|off` | 默认 `off` 直接编辑当前工作区（允许已有未提交修改）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/` |
-| `/trusted-shell`（`/shell`） | `/trusted-shell on|off` | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
-| `/prompt` | `/prompt <name> [args]` | 运行 Candy 自有提示词模板 |
-| `/prompts` | `/prompts` | 列出提示词模板 |
-| `/skills` | `/skills` | 列出 Candy 自有技能（名称/描述/来源/目录） |
-| `/skill` | `/skill <name> [goal]` | 显式加载技能正文并提交任务（无参列出技能） |
-| `/resources` | `/resources` | 显示 Candy 资源诊断 |
-| `/help` | `/help` | 显示完整命令参考 |
+| 命令                         | 语法                    | 说明                                       |
+| ---------------------------- | ----------------------- | ------------------------------------------ |
+| `/profile`                   | `/profile read-only     | auto`                                      | 审批模式；`auto` 开放文件读写（删除仍需逐次审批）                                                                                  |
+| `/worktree`                  | `/worktree on           | off`                                       | 默认 `off` 直接编辑当前工作区（允许已有未提交修改）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`                   |
+| `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
+| `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
+| `/prompts`                   | `/prompts`              | 列出提示词模板                             |
+| `/skills`                    | `/skills`               | 列出 Candy 自有技能（名称/描述/来源/目录） |
+| `/skill`                     | `/skill <name> [goal]`  | 显式加载技能正文并提交任务（无参列出技能） |
+| `/resources`                 | `/resources`            | 显示 Candy 资源诊断                        |
+| `/help`                      | `/help`                 | 显示完整命令参考                           |
 
 ## TUI 界面
 
@@ -113,5 +118,8 @@
 - `/trusted-shell on` 会自动切换到 Worktree；如果平台 Trusted Shell 能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
+- `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/Shell 工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用 Trusted Shell，`/build` 只对 plan 任务生效。
+- `/debug` 创建 Auto Debug 任务（`mode=debug`，要求已配置 validator）：每轮先跑模型回合，再自动运行 validator；失败时把有界、脱敏的验证证据追加到下一轮 prompt 继续修复，直到验证通过、连续两轮证据相同（stall）或达到预算（默认最多 6 轮）。中途可用 `/cancel` 停止；非通过停止会把任务置为 interrupted，只能通过显式 `/resume` 继续。进度写入任务 run 记录（`/status` 可查）。
+- `/undo` 只作用于隔离任务（`/worktree on`）：每个会变动的模型回合开始前，Candy 会把当前 changed-file 内容以有界、脱敏快照存入内存 undo 历史（每任务最多 8 轮）；`/undo` 恢复最新一轮快照（凭据形内容永不快照/恢复），并清除过期的 review 状态，之后需重新 `/changes`+`/diff` 审查。direct 模式下 Candy 不重置本地修改，请用 git restore/clean。undo 历史不跨重启持久化，重启后仍需显式 `/resume`。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。
 - Shell 仅在平台 G2 通过后可用；未启用时显示为不可用能力而非隐藏。

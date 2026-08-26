@@ -42,6 +42,7 @@ const ANSI_MINT = "\x1b[38;5;78m";
 const ANSI_TEXT = "\x1b[38;5;252m";
 const ANSI_SOFT = "\x1b[38;5;117m";
 const ANSI_WARNING = "\x1b[38;5;221m";
+const COPY_LAST_ASSISTANT_URL = "candy://copy-last-assistant";
 
 function tint(value: string, color: string): string {
   return `${color}${value}${ANSI_RESET}`;
@@ -53,6 +54,11 @@ function bold(value: string): string {
 
 function dim(value: string): string {
   return `${ANSI_DIM}${value}${ANSI_RESET}`;
+}
+
+/** A TUI-local OSC 8 action handled without invoking an external URL opener. */
+function localActionLink(url: string, label: string): string {
+  return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
 function truncateMiddle(value: string, maxWidth: number): string {
@@ -213,22 +219,30 @@ class CandyPromptLabel implements Component {
   }
 }
 
-class CandyFooter implements Component {
-  readonly #taskPhase: (() => string | undefined) | undefined;
+interface CandyFooterOptions {
+  readonly taskPhase: (() => string | undefined) | undefined;
+  readonly assistantReplyAvailable: (() => boolean) | undefined;
+}
 
-  public constructor(taskPhase: (() => string | undefined) | undefined) {
-    this.#taskPhase = taskPhase;
+class CandyFooter implements Component {
+  readonly #options: CandyFooterOptions;
+
+  public constructor(options: CandyFooterOptions) {
+    this.#options = options;
   }
 
   public invalidate(): void {}
 
   public render(width: number): string[] {
-    const phase = this.#taskPhase?.();
-    const content = phase?.includes("approval")
-      ? "/status 查看详情  ·  按上方命令作出决定"
-      : isActivePhase(phase)
-        ? "/steer 补充当前轮  ·  /follow-up 排队下一轮"
-        : "/ 查看命令  ·  Enter 发送  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
+    const phase = this.#options.taskPhase?.();
+    const content =
+      phase === "completed" && this.#options.assistantReplyAvailable?.() === true
+        ? `${localActionLink(COPY_LAST_ASSISTANT_URL, tint("⧉ 复制最后结论", ANSI_SOFT))} ${dim("· Ctrl+X")}`
+        : phase?.includes("approval")
+          ? "/status 查看详情  ·  按上方命令作出决定"
+          : isActivePhase(phase)
+            ? "/steer 补充当前轮  ·  /follow-up 排队下一轮"
+            : "/ 查看命令  ·  Enter 发送  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
     return [paddedLine(` ${dim(content)}`, Math.max(1, width))];
   }
 }
@@ -283,6 +297,8 @@ export interface CandyTuiSurfaceOptions {
   readonly taskId?: () => string | undefined;
   readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
+  /** Whether the final assistant reply is available to copy. */
+  readonly assistantReplyAvailable?: () => boolean;
   readonly recoveryTaskCount?: () => number;
   readonly skills?: readonly CandySkillSlashCommand[];
   readonly terminal?: CandyTuiTerminal | undefined;
@@ -328,7 +344,11 @@ export class CandyTuiSurface {
       options.launchExternalEditor ??
       ((target: string): Promise<number> => launchExternalEditor(target));
     this.logDirectory = path.join(this.#appDataRoot, "logs");
-    this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
+    this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory, {
+      openUrl: (url: string): void => {
+        if (url === COPY_LAST_ASSISTANT_URL) this.#onCopyLastAssistant?.();
+      },
+    });
     this.#transcript = new CandyTranscript();
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
     this.#editor.setAutocompleteProvider(
@@ -372,7 +392,14 @@ export class CandyTuiSurface {
         { component: new Spacer(1), basis: 1, shrink: 0 },
         { component: new CandyPromptLabel(options.taskPhase), basis: 1, shrink: 0 },
         { component: this.#editor, basis: "auto", shrink: 0 },
-        { component: new CandyFooter(options.taskPhase), basis: 1, shrink: 0 },
+        {
+          component: new CandyFooter({
+            taskPhase: options.taskPhase,
+            assistantReplyAvailable: options.assistantReplyAvailable,
+          }),
+          basis: 1,
+          shrink: 0,
+        },
       ]),
     );
     this.#tui.setFocus(this.#editor);

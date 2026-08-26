@@ -1494,6 +1494,100 @@ export class ApplyChangesBlockedError extends Error {
   }
 }
 
+export interface WorkspaceFileSnapshot {
+  /** Workspace-relative path (forward slashes). */
+  readonly path: string;
+  readonly content: Buffer;
+}
+
+const MAX_SNAPSHOT_TOTAL_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Capture the current content of changed workspace files for `/undo`.
+ * Reads use no-follow handles and apply-style containment; credential-bearing
+ * and oversized files are skipped (never moved into Candy-owned storage).
+ */
+export async function captureWorkspaceFileSnapshots(
+  workspace: string,
+  paths: readonly string[],
+  activeSecrets: readonly string[] = [],
+): Promise<readonly WorkspaceFileSnapshot[]> {
+  const root = path.resolve(workspace);
+  const binding = await bindApplyRoot(root);
+  const result: WorkspaceFileSnapshot[] = [];
+  let totalBytes = 0;
+  for (const requested of uniqueRelativePaths(paths)) {
+    if (totalBytes >= MAX_SNAPSHOT_TOTAL_BYTES) break;
+    try {
+      await assertSafePath(root, requested, true, binding);
+      const content = await readApplyFile(root, requested, binding);
+      if (
+        activeSecrets.some((secret) => secret.length > 0 && content.includes(Buffer.from(secret)))
+      )
+        continue;
+      if (content.byteLength > MAX_SNAPSHOT_TOTAL_BYTES - totalBytes) continue;
+      totalBytes += content.byteLength;
+      result.push({ path: requested, content });
+    } catch {
+      // Missing, oversized, or racing files are skipped; undo simply has no
+      // snapshot for them and stays fail-closed.
+    }
+  }
+  return result;
+}
+
+/**
+ * Restore previously captured file snapshots into a workspace. The write
+ * path uses the same root binding, containment, and no-follow checks as
+ * Apply Changes; credential-bearing snapshots are never restored.
+ */
+export async function restoreWorkspaceFileSnapshots(
+  workspace: string,
+  snapshots: readonly WorkspaceFileSnapshot[],
+  activeSecrets: readonly string[] = [],
+): Promise<number> {
+  const root = path.resolve(workspace);
+  const binding = await bindApplyRoot(root);
+  let restored = 0;
+  for (const snapshot of snapshots) {
+    if (
+      activeSecrets.some(
+        (secret) => secret.length > 0 && snapshot.content.includes(Buffer.from(secret)),
+      )
+    )
+      continue;
+    await ensureSafeDirectory(root, path.dirname(path.resolve(root, snapshot.path)), binding);
+    await writeRestoredFile(root, snapshot.path, snapshot.content, binding);
+    restored += 1;
+  }
+  return restored;
+}
+
+async function writeRestoredFile(
+  root: string,
+  requested: string,
+  content: Buffer,
+  binding: ApplyRootBinding,
+): Promise<void> {
+  await assertSafePath(root, requested, true, binding);
+  const absolute = path.resolve(root, requested);
+  const handle = await open(
+    absolute,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | NO_FOLLOW_FINAL_PATH,
+    0o666,
+  );
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile())
+      throw new ApplyChangesBlockedError("Undo restore requires a regular file.");
+    await assertOpenedApplyFile(binding, absolute, opened);
+    await handle.truncate(0);
+    await handle.writeFile(content);
+  } finally {
+    await handle.close();
+  }
+}
+
 interface ApplyRootBinding {
   readonly absolutePath: string;
   readonly canonicalPath: string;

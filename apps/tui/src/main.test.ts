@@ -906,6 +906,55 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
   }
 });
 
+test("interactive TUI shows safe actionable reasons for classified tool failures", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-tool-failure-reason-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.started",
+            taskId: input.taskId,
+            tool: "candy_read",
+            toolCallId: "read-beyond-end",
+            args: '{"path":"apps/tui/src/plan-build.test.ts","offset":409}',
+          };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_read",
+            toolCallId: "read-beyond-end",
+            ok: false,
+            failure: { kind: "read_offset_out_of_range", totalLines: 394 },
+            output:
+              "Offset 409 is beyond end of file (394 lines total): raw-error-body-should-not-appear",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("read the unavailable range");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /起始行超过文件末尾（当前共 394 行）；请重新读取后重试/u,
+    );
+    assert.match(output, /读取文件：apps\/tui\/src\/plan-build\.test\.ts · candy_read/u);
+    assert.match(output, /失败 · 起始行超过[\s\S]*文件末尾（当前共 394 行）/u);
+    assert.doesNotMatch(output, /Offset 409|raw-error-body-should-not-appear/u);
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI confirms activity before the first model event", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-activity-feedback-"));
   const terminal = new FakeTerminal();

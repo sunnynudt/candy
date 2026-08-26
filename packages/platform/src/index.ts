@@ -96,6 +96,13 @@ export interface TaskMetadata {
   readonly workspaceBaseline?: string;
   readonly worktreePath?: string;
   readonly trustedShell: boolean;
+  /**
+   * Task execution mode. 'build' is the normal single-turn implementation;
+   * 'debug' runs the bounded Auto Debug loop (model turn + validator until
+   * pass, stall, or budget). Plan mode stays expressed through the read-only
+   * approval profile. Older tasks default to 'build'.
+   */
+  readonly taskMode?: "build" | "debug";
   /** Short display title derived from the task goal; older tasks fall back to the task id. */
   readonly title?: string;
   /** Epoch milliseconds at task creation. */
@@ -191,6 +198,7 @@ export class SQLiteTaskStore {
         workspace_baseline TEXT,
         worktree_path TEXT,
         trusted_shell INTEGER NOT NULL DEFAULT 0,
+        task_mode TEXT NOT NULL DEFAULT 'build',
         title TEXT,
         created_at INTEGER,
         updated_at INTEGER
@@ -339,7 +347,12 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN trusted_shell INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version = 11;
       `);
-    } else if (schemaVersion !== 11 && schemaVersion !== 12 && schemaVersion !== 13) {
+    } else if (
+      schemaVersion !== 11 &&
+      schemaVersion !== 12 &&
+      schemaVersion !== 13 &&
+      schemaVersion !== 15
+    ) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
     }
@@ -353,14 +366,24 @@ export class SQLiteTaskStore {
     // Fresh schema-0 databases already include the columns; pre-existing
     // databases (v1..v12) are migrated in place and older tasks keep a NULL
     // title, which callers display as the task-id fallback.
-    if (schemaVersion !== 0 && schemaVersion !== 13) {
+    if (schemaVersion !== 0 && schemaVersion !== 13 && schemaVersion !== 15) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN title TEXT;
         ALTER TABLE task_metadata ADD COLUMN created_at INTEGER;
         ALTER TABLE task_metadata ADD COLUMN updated_at INTEGER;
       `);
     }
-    this.#database.exec(`PRAGMA user_version = 13;`);
+    // Schema 15 adds the task execution mode ('build' | 'debug'). Fresh
+    // schema-0 databases already include the column; older databases keep
+    // 'build' so pre-existing tasks are never auto-promoted to a debug loop.
+    // Schema 14 is intentionally unknown: the platform test asserts that a
+    // never-shipped future version is rejected with a clear error.
+    if (schemaVersion !== 0 && schemaVersion !== 15) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'build';
+      `);
+    }
+    this.#database.exec(`PRAGMA user_version = 15;`);
   }
 
   public create(
@@ -375,17 +398,19 @@ export class SQLiteTaskStore {
     worktreePath?: string,
     trustedShell = false,
     title?: string,
+    taskMode: "build" | "debug" = "build",
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     if (title !== undefined) assertTaskTitle(title);
+    if (taskMode !== "build" && taskMode !== "debug") throw new Error("Task mode is invalid.");
     if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
       throw new Error("Workspace baseline is invalid.");
     if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
     const now = Date.now();
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -398,6 +423,7 @@ export class SQLiteTaskStore {
         workspaceBaseline ?? null,
         worktreePath ?? null,
         trustedShell ? 1 : 0,
+        taskMode,
         title ?? null,
         now,
         now,
@@ -430,6 +456,32 @@ export class SQLiteTaskStore {
         "UPDATE task_metadata SET revision = revision + 1, model_id = ?, updated_at = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
       )
       .run(model, Date.now(), taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /**
+   * Change a task's approval profile only while no turn is active, then
+   * advance its fence. `/build` uses this to promote a reviewed read-only
+   * plan task to the current TUI profile before its implementation turn.
+   */
+  public updateApprovalProfile(
+    taskId: string,
+    expectedRevision: number,
+    approvalProfile: "read-only" | "auto",
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    if (approvalProfile !== "read-only" && approvalProfile !== "auto")
+      throw new Error("Approval profile is invalid.");
+    const current = this.require(taskId);
+    if (current.state === "running" || current.state === "waiting_approval")
+      throw new Error("Task profile cannot change during an active turn.");
+    const result = this.#database
+      .prepare(
+        "UPDATE task_metadata SET revision = revision + 1, approval_profile = ?, updated_at = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+      )
+      .run(approvalProfile, Date.now(), taskId, expectedRevision);
     if (result.changes !== 1)
       throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
     return this.require(taskId);
@@ -500,7 +552,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -509,7 +561,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -553,7 +605,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -740,6 +792,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
       ? { worktreePath: String(row.worktree_path) }
       : {}),
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
+    ...(row.task_mode === "debug" || row.task_mode === "build" ? { taskMode: row.task_mode } : {}),
     ...(row.title === null || row.title === undefined ? {} : { title: String(row.title) }),
     ...(row.created_at === null || row.created_at === undefined
       ? {}

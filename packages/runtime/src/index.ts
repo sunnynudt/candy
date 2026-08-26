@@ -440,6 +440,8 @@ export {
   ApplyChangesGuard,
   ApplyChangesBlockedError,
   ApplyChangesService,
+  captureWorkspaceFileSnapshots,
+  restoreWorkspaceFileSnapshots,
   AttachmentStore,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_CLEANUP_ENTRIES,
@@ -497,6 +499,7 @@ export type {
   GitCommandRunner,
   WorkspaceChangeSnapshot,
   WorkspaceChangeTracker,
+  WorkspaceFileSnapshot,
 } from "./v1.js";
 
 function throwIfAborted(signal: AbortSignal): void {

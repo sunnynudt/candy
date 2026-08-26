@@ -4,6 +4,7 @@ import {
   type AutocompleteProvider,
   type SlashCommand,
 } from "@earendil-works/pi-tui";
+
 import { createWorkspaceMentionAutocompleteProvider } from "./file-mentions.js";
 
 /** A Candy slash command with optional usage metadata for /help and bare-command guards. */
@@ -70,6 +71,21 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     name: "new",
     argumentHint: "[prompt]",
     description: "Create a new task",
+  },
+  {
+    name: "plan",
+    argumentHint: "[prompt]",
+    description: "Create a read-only planning task; review the plan, then /build to implement",
+  },
+  {
+    name: "build",
+    argumentHint: "[task-id]",
+    description: "Continue a reviewed plan task with the current profile to implement the plan",
+  },
+  {
+    name: "debug",
+    argumentHint: "[prompt]",
+    description: "Create an Auto Debug task: model turn + validator until pass, stall, or budget",
   },
   {
     name: "workspace",
@@ -177,6 +193,15 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "apply",
     description: "Apply reviewed task changes",
+  },
+  {
+    name: "undo",
+    argumentHint: "[task-id]",
+    description: "Restore the latest turn checkpoint of an isolated (worktree) task",
+  },
+  {
+    name: "checkpoints",
+    description: "List undo checkpoints of the current task",
   },
   {
     name: "discard",

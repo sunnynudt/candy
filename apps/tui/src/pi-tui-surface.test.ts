@@ -340,6 +340,38 @@ test("Candy TUI surface invokes the copy handler with Ctrl+X", async () => {
   }
 });
 
+test("Candy TUI surface exposes a clickable copy action after a completed reply", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-action-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let copies: number = 0;
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    taskPhase: (): string => "completed",
+    assistantReplyAvailable: (): boolean => true,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onCopyLastAssistant: (): void => {
+      copies += 1;
+    },
+  });
+  try {
+    surface.start();
+    await waitForOutput(terminal, /复制最后结论/u);
+    // The footer is the terminal's final row; use a primary-button click on
+    // the link label, then release at the same cell.
+    terminal.emitInput("\x1b[<0;3;24M");
+    terminal.emitInput("\x1b[<0;3;24m");
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(copies, 1);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface cycles the model with Ctrl+P and Ctrl+Shift+P", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-model-cycle-"));
   const terminal: FakeTerminal = new FakeTerminal();

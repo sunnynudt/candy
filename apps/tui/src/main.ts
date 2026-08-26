@@ -18,6 +18,7 @@ import {
   resolveCandySkillRoots,
   type PiAgentEngineInput,
   type PiAgentObservation,
+  type PiToolFailure,
   listPiPublicExports,
 } from "@candy/pi-adapter";
 import {
@@ -42,6 +43,7 @@ import {
   SystemClock,
   type TaskMetadata,
   type TaskReviewMetadata,
+  type PersistedRunStopReason,
   discoverGitBashExecutable,
   getWindowsTrustedShellCapabilityStatus,
   isTrustedShellAutoAvailable as isPlatformTrustedShellAutoAvailable,
@@ -50,6 +52,8 @@ import {
   ApplyChangesBlockedError,
   ApplyChangesService,
   AttachmentStore,
+  captureWorkspaceFileSnapshots,
+  restoreWorkspaceFileSnapshots,
   CommandValidator,
   CandyRuntime,
   DeterministicAgentEngine,
@@ -59,6 +63,7 @@ import {
   ResolvedWorkspaceChangeTracker,
   MAX_ATTACHMENT_BYTES,
   MAX_UNTRACKED_FILE_BYTES,
+  LongRunningTaskRunner,
   TaskController,
   TaskScheduler,
   UnavailableBrowserCapability,
@@ -67,6 +72,7 @@ import {
   type ValidatorResult,
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
+  type WorkspaceFileSnapshot,
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,
@@ -252,6 +258,39 @@ interface TuiCompleteDiff {
 const MAX_TUI_DIFF_BYTES = 64 * 1024;
 const MAX_TUI_TRANSCRIPT_BYTES = 64 * 1024;
 const MAX_TUI_TURN_MESSAGE_CHARS = 4_096;
+
+/**
+ * Read-only planning instruction prepended to the user's goal by `/plan`.
+ * The planning turn always runs with the read-only profile, so Candy's
+ * workspace mutation tools are never registered for it.
+ */
+const PLAN_TURN_INSTRUCTION =
+  "[PLAN-MODE] This is a read-only planning turn: analyze the repository; do not modify, create, or delete files; do not run commands. Produce a concrete plan: goal, files involved, steps, risks, verification.\n";
+
+/**
+ * Explicit continuation prompt used by `/build`. The task's Pi session
+ * already contains the reviewed plan, so the goal is not replayed; this
+ * instruction only unlocks implementation with the current profile.
+ */
+const BUILD_TURN_INSTRUCTION =
+  "[BUILD-PHASE] The read-only plan was reviewed by the user. Implement it now: workspace mutations are allowed. Explain adjustments when code diverges from the plan.\n";
+
+/**
+ * Auto Debug loop bounds. The loop runs bounded rounds and stops early when
+ * the validator passes, the evidence stalls, or the user cancels; an
+ * exhausted budget leaves the task interrupted (explicit continuation only).
+ */
+const MAX_DEBUG_ROUNDS = 6;
+
+/**
+ * Goal banner for `/debug`. Each failing round appends the bounded validator
+ * evidence to the next turn's prompt so the model repairs its own change.
+ */
+const DEBUG_TURN_INSTRUCTION =
+  "[AUTO-DEBUG] Make the change and verify it with the configured validator. After each of your turns the validator runs automatically; when it fails, the next turn receives the bounded failure evidence and you must fix the root cause. Keep changes minimal and do not remove unrelated work.\n";
+
+/** Per-task in-memory undo history bound (most recent N turn checkpoints). */
+const MAX_UNDO_TURNS = 8;
 const DEFAULT_VALIDATOR_TIMEOUT_MS = 30_000;
 
 export class InteractiveTui {
@@ -308,6 +347,12 @@ export class InteractiveTui {
   #closing = false;
   #creatingTask = false;
   #pendingTaskCreation: Promise<void> | undefined;
+  /** Bare `/plan` sets this so the next prompt creates a read-only plan task. */
+  #planPending = false;
+  /** Bare `/debug` sets this so the next prompt creates an Auto Debug task. */
+  #debugPending = false;
+  /** Per-task undo history: most recent checkpoint last, bounded to 8 turns. */
+  #undoHistory = new Map<string, readonly (readonly WorkspaceFileSnapshot[])[]>();
   #approvalProfile: "read-only" | "auto" = "auto";
   #worktreeEnabled = false;
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
@@ -371,7 +416,9 @@ export class InteractiveTui {
             this.#credentialEnvironment,
             this.#credentialStore,
           );
-          return lease ? { secret: lease.value, release: lease.release } : undefined;
+          if (lease === undefined) return undefined;
+          const value = lease.value;
+          return { secret: value, release: lease.release };
         },
         "deepseek",
         this.#shellRunner,
@@ -384,7 +431,9 @@ export class InteractiveTui {
             this.#credentialEnvironment,
             this.#credentialStore,
           );
-          return lease ? { secret: lease.value, release: lease.release } : undefined;
+          if (lease === undefined) return undefined;
+          const value = lease.value;
+          return { secret: value, release: lease.release };
         },
         this.#shellRunner,
       );
@@ -411,6 +460,8 @@ export class InteractiveTui {
         this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
       taskPhase: () =>
         this.#currentTaskId === undefined ? undefined : this.#taskPhases.get(this.#currentTaskId),
+      assistantReplyAvailable: () =>
+        this.#lastAssistantReply.trim().length > 0 || this.#assistantBuffer.trim().length > 0,
       recoveryTaskCount: () =>
         this.#store.list().filter((task) => task.state === "paused" || task.state === "interrupted")
           .length,
@@ -471,6 +522,16 @@ export class InteractiveTui {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
     } else if (trimmed === "/new" || trimmed.startsWith("/new ")) {
       this.newTask(trimmed.slice(4).trim());
+    } else if (trimmed === "/plan" || trimmed.startsWith("/plan ")) {
+      this.planTask(trimmed.slice(5).trim());
+    } else if (trimmed === "/build" || trimmed.startsWith("/build ")) {
+      this.buildTask(trimmed.slice(6).trim());
+    } else if (trimmed === "/debug" || trimmed.startsWith("/debug ")) {
+      this.debugTask(trimmed.slice(6).trim());
+    } else if (trimmed === "/undo" || trimmed.startsWith("/undo ")) {
+      this.undoTask(trimmed.slice(6).trim());
+    } else if (trimmed === "/checkpoints") {
+      this.showCheckpoints();
     } else if (trimmed === "/use") {
       this.printTasks();
       this.write("choose with /use <task-id>\n");
@@ -593,13 +654,28 @@ export class InteractiveTui {
     this.#resolveExit?.();
   }
 
-  private create(prompt: string, validatorOverride?: CommandValidatorCommand): void {
+  private create(
+    prompt: string,
+    validatorOverride?: CommandValidatorCommand,
+    planMode = false,
+    taskMode: "build" | "debug" = "build",
+  ): void {
     if (this.#creatingTask) {
       this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
       return;
     }
+    const effectivePlanMode = planMode || this.#planPending;
+    const effectiveTaskMode: "build" | "debug" =
+      taskMode === "debug" || this.#debugPending ? "debug" : "build";
+    this.#planPending = false;
+    this.#debugPending = false;
     this.#creatingTask = true;
-    const operation = this.createTask(prompt, validatorOverride);
+    const operation = this.createTask(
+      prompt,
+      validatorOverride,
+      effectivePlanMode,
+      effectiveTaskMode,
+    );
     this.#pendingTaskCreation = operation;
     void operation
       .catch((error: unknown) => {
@@ -614,6 +690,8 @@ export class InteractiveTui {
   private async createTask(
     prompt: string,
     validatorOverride?: CommandValidatorCommand,
+    planMode = false,
+    taskMode: "build" | "debug" = "build",
   ): Promise<void> {
     if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
       this.write("prompt rejected: credential-shaped content is forbidden\n");
@@ -629,12 +707,25 @@ export class InteractiveTui {
     const queueOrder =
       this.#store.queued().reduce((max, task) => Math.max(max, task.queueOrder ?? 0), 0) + 1;
     const workspacePath = this.#workspacePath;
-    const approvalProfile = this.#approvalProfile;
+    // Plan tasks always start read-only: the planning turn must never mutate.
+    // `/build` promotes the reviewed task to the current TUI profile later.
+    const approvalProfile = planMode ? "read-only" : this.#approvalProfile;
     const selectedModel = this.#selectedModel;
     const attachmentIds = [...this.#selectedAttachmentIds];
     const validatorCommand = validatorOverride ?? this.#validatorCommand;
     const title = deriveTaskTitle(prompt);
-    const trustedShell = this.#trustedShellEnabled;
+    const trustedShell = this.#trustedShellEnabled && !planMode;
+    const effectivePrompt = planMode
+      ? `${PLAN_TURN_INSTRUCTION}${prompt}`
+      : taskMode === "debug"
+        ? `${DEBUG_TURN_INSTRUCTION}${prompt}`
+        : prompt;
+    if (taskMode === "debug" && validatorCommand === undefined) {
+      this.write(
+        "Auto Debug requires a validator: configure one with /validator <executable> [args] or pass --validator\n",
+      );
+      return;
+    }
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
     if (trustedShell) {
@@ -690,6 +781,7 @@ export class InteractiveTui {
         worktreePath,
         trustedShell,
         title,
+        taskMode,
       );
     } catch (error) {
       if (worktreePath !== undefined) {
@@ -711,6 +803,14 @@ export class InteractiveTui {
     this.#currentTaskId = taskId;
     this.#scheduler.enqueue(taskId);
     this.write(`created ${taskId} (${metadata.state})\n`);
+    if (planMode) {
+      this.write(`plan mode: read-only analysis; after reviewing the plan run /build ${taskId}\n`);
+    }
+    if (taskMode === "debug") {
+      this.write(
+        `debug mode: bounded Auto Debug loop (max ${MAX_DEBUG_ROUNDS} rounds); /cancel ${taskId} to stop\n`,
+      );
+    }
     if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);
     if (trustedShell) {
       this.#trustedShellEnabled = false;
@@ -718,7 +818,110 @@ export class InteractiveTui {
         "Trusted Shell Auto enabled for this task: offline commands run automatically; network requires one-command approval\n",
       );
     }
-    if (!this.#closing) this.drain(new Map([[taskId, prompt]]));
+    if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
+  }
+
+  private planTask(value: string): void {
+    const parsed = parseNewTaskInput(value);
+    if (parsed === undefined) {
+      this.write(
+        "usage: /plan [prompt] or /plan --validator <absolute-executable> [args] -- <goal>\n",
+      );
+      return;
+    }
+    this.#currentTaskId = undefined;
+    this.#debugPending = false;
+    if (parsed.prompt.length === 0) {
+      this.#planPending = true;
+      this.write("plan task ready; enter a prompt\n");
+      return;
+    }
+    this.create(parsed.prompt, parsed.validator, true);
+  }
+
+  private debugTask(value: string): void {
+    const parsed = parseNewTaskInput(value);
+    if (parsed === undefined) {
+      this.write(
+        "usage: /debug [prompt] or /debug --validator <absolute-executable> [args] -- <goal>\n",
+      );
+      return;
+    }
+    const validatorCommand = parsed.validator ?? this.#validatorCommand;
+    if (validatorCommand === undefined) {
+      this.write(
+        "Auto Debug requires a validator: configure one with /validator <executable> [args] or pass --validator\n",
+      );
+      return;
+    }
+    this.#currentTaskId = undefined;
+    this.#planPending = false;
+    if (parsed.prompt.length === 0) {
+      this.#debugPending = true;
+      this.write("debug task ready; enter a prompt\n");
+      return;
+    }
+    this.create(parsed.prompt, validatorCommand, false, "debug");
+  }
+
+  /**
+   * Promote a reviewed read-only plan task to the current TUI profile and
+   * queue one explicit implementation turn. The Pi session already holds the
+   * plan, so only the build instruction is sent as the continuation.
+   */
+  private buildTask(value: string): void {
+    const requested = value.trim();
+    const controller =
+      requested.length === 0 ? this.currentTask() : this.ensureController(requested);
+    if (controller === undefined) {
+      this.write(
+        requested.length === 0
+          ? "no current task; create a plan task with /plan <prompt> first\n"
+          : `task ${requested} does not exist\n`,
+      );
+      return;
+    }
+    const snapshot = controller.snapshot();
+    const metadata = this.#store.get(snapshot.taskId);
+    if (metadata === undefined) {
+      this.write(`task ${snapshot.taskId} metadata is unavailable\n`);
+      return;
+    }
+    if (
+      snapshot.state === "running" ||
+      snapshot.state === "waiting_approval" ||
+      snapshot.state === "queued"
+    ) {
+      this.write(
+        `task ${snapshot.taskId} has an active or queued turn; run /build after the plan turn completes\n`,
+      );
+      return;
+    }
+    if (metadata.approvalProfile !== "read-only") {
+      this.write(`task ${snapshot.taskId} is not a plan task; create one with /plan <prompt>\n`);
+      return;
+    }
+    const updated = this.#store.updateApprovalProfile(
+      snapshot.taskId,
+      snapshot.revision,
+      this.#approvalProfile,
+    );
+    this.#controllers.set(
+      snapshot.taskId,
+      new TaskController(snapshot.taskId, updated.approvalProfile, this.#store),
+    );
+    this.#currentTaskId = snapshot.taskId;
+    this.write(
+      `plan approved: ${snapshot.taskId} ${
+        updated.approvalProfile === "auto"
+          ? "implements the plan in the workspace"
+          : "continues in the read-only profile"
+      }\n`,
+    );
+    const refreshed = new TaskController(snapshot.taskId, updated.approvalProfile, this.#store);
+    refreshed.queueForContinuation(updated.revision);
+    this.#scheduler.enqueue(snapshot.taskId);
+    this.drain(new Map([[snapshot.taskId, BUILD_TURN_INSTRUCTION]]));
   }
 
   private drain(explicitPrompts: ReadonlyMap<string, string> = new Map()): void {
@@ -812,6 +1015,9 @@ export class InteractiveTui {
       );
       return;
     }
+    // An explicit /new supersedes a bare /plan or /debug that armed the next prompt.
+    this.#planPending = false;
+    this.#debugPending = false;
     this.#currentTaskId = undefined;
     if (parsed.prompt.length === 0) {
       this.write("new task ready; enter a prompt\n");
@@ -1706,12 +1912,21 @@ export class InteractiveTui {
       if (attachments !== undefined && taskSnapshot.model !== "MiniMax-M3") {
         throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
       }
-      const runEngineTurn = async (activeSecrets: readonly string[]): Promise<void> => {
+      const runEngineTurn = async (
+        activeSecrets: readonly string[],
+        turnPrompt: string,
+      ): Promise<void> => {
         this.#taskPhases.set(taskId, "turn running");
+        // Capture the pre-turn state of isolated tasks so /undo can revert
+        // this turn's changes. A fresh worktree at turn 1 captures nothing;
+        // /discard resets the whole task to baseline in that case.
+        if (taskSnapshot.approvalProfile === "auto" && taskSnapshot.worktreePath !== undefined) {
+          await this.captureUndoCheckpoint(taskId, taskSnapshot, activeSecrets);
+        }
         const toolActivities = new Map<string, string>();
         const toolActivityKey = createToolActivityKeyResolver(taskId);
         const expandedPrompt = await expandWorkspaceMentionPrompt(
-          prompt,
+          turnPrompt,
           taskSnapshot.workspacePath,
           activeSecrets,
         );
@@ -1790,10 +2005,15 @@ export class InteractiveTui {
             this.#taskPhases.set(taskId, "turn running");
             const key = toolActivityKey(tool, observation.toolCallId, "completed");
             const activity = toolActivities.get(key) ?? formatToolIdentity(tool);
-            const summary = `${formatToolIdentity(tool)} ${observation.ok ? "完成" : "失败"}`;
+            const failure = observation.ok ? undefined : toolFailureSummary(observation.failure);
+            const summary = `${formatToolIdentity(tool)} ${
+              observation.ok ? "完成" : `失败 · ${failure}`
+            }`;
             this.writeToolActivity(
               key,
-              `${observation.ok ? "✓" : "✗"} ${activity} · ${observation.ok ? "完成" : "失败"}`,
+              `${observation.ok ? "✓" : "✗"} ${activity} · ${
+                observation.ok ? "完成" : `失败 · ${failure}`
+              }`,
             );
             toolActivities.delete(key);
             this.#store.appendTranscript(taskId, [
@@ -1837,7 +2057,18 @@ export class InteractiveTui {
           }
         }
       };
-      await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets));
+      if (taskSnapshot.taskMode === "debug") {
+        await this.runAutoDebug({
+          taskId,
+          taskSnapshot,
+          executionPath,
+          goal: prompt,
+          runEngineTurn,
+          abort,
+        });
+      } else {
+        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets, prompt));
+      }
       if (this.#closing || abort.signal.aborted)
         throw new Error(this.#closing ? "TUI exit interrupted the task." : "Task owner lost.");
       const current = task.snapshot();
@@ -1880,6 +2111,215 @@ export class InteractiveTui {
       this.#scheduler.finish(taskId);
       if (!this.#closing) this.drain();
     }
+  }
+
+  /**
+   * Bounded Auto Debug loop: model turn + validator until pass, stall, or
+   * budget. Each failing round appends the redacted validator evidence to the
+   * next prompt; progress is persisted through the run store. A non-pass stop
+   * throws so the task lands interrupted (explicit continuation only).
+   */
+  private async runAutoDebug(options: {
+    readonly taskId: string;
+    readonly taskSnapshot: TaskMetadata;
+    readonly executionPath: string;
+    readonly goal: string;
+    readonly runEngineTurn: (activeSecrets: readonly string[], turnPrompt: string) => Promise<void>;
+    readonly abort: AbortController;
+  }): Promise<void> {
+    const { taskId, taskSnapshot, executionPath, goal, runEngineTurn, abort } = options;
+    if (this.#validator === undefined)
+      throw new Error("Auto Debug is blocked: the native Sandbox Runner is unavailable.");
+    if (taskSnapshot.validator === undefined)
+      throw new Error("Auto Debug requires a configured validator.");
+    let lastEvidence = "";
+    const runner = new LongRunningTaskRunner(MAX_DEBUG_ROUNDS, 2);
+    const result = await runner.run(
+      async (round, signal) => {
+        if (signal.aborted) throw new Error("Auto Debug turn cancelled.");
+        const roundPrompt =
+          round === 1
+            ? goal
+            : `${goal}\n\n[VERIFIER FAILED] bounded evidence:\n${lastEvidence}\n\nFix the root cause and re-verify; do not change unrelated files.`;
+        // runTask already wrote the initial goal as a user message; only
+        // evidence-fed repair rounds append their own prompt to the transcript.
+        if (round > 1) {
+          this.writeUser(transcriptText(roundPrompt));
+          this.#store.appendTranscript(taskId, [
+            { role: "user", text: transcriptText(roundPrompt) },
+          ]);
+        }
+        this.#taskPhases.set(taskId, `debug round ${round}/${MAX_DEBUG_ROUNDS}`);
+        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets, roundPrompt));
+      },
+      {
+        run: async (signal) => {
+          const outcome = await this.withActiveSecrets(async (activeSecrets) => ({
+            activeSecrets,
+            result: await this.#validator!.run(
+              taskSnapshot.validator!,
+              executionPath,
+              signal,
+              activeSecrets,
+            ),
+          }));
+          lastEvidence = redactSensitive(outcome.result.evidence, outcome.activeSecrets);
+          this.finishValidator(
+            taskId,
+            outcome.result.ok ? "pass" : "fail",
+            lastEvidence,
+            outcome.result.durationMs,
+          );
+          return outcome.result;
+        },
+      },
+      abort.signal,
+      {
+        store: {
+          record: (progress) => {
+            const summary = progress.evidenceSummary ?? "";
+            this.#store.recordRun({
+              taskId,
+              rounds: progress.rounds,
+              evidenceCount: progress.evidenceCount,
+              completed: progress.completed,
+              stopReason: progress.stopReason as PersistedRunStopReason,
+              ...(progress.lastFingerprintHash === undefined
+                ? {}
+                : { lastFingerprintHash: progress.lastFingerprintHash }),
+              ...(summary.length === 0 ? {} : { evidenceSummary: summary.slice(0, 4_096) }),
+            });
+          },
+        },
+      },
+    );
+    if (!result.completed) {
+      const reason =
+        result.stopReason === "budget_exhausted"
+          ? `budget exhausted after ${result.rounds} rounds`
+          : result.stopReason === "stall_detected"
+            ? `validator evidence stalled after ${result.rounds} rounds`
+            : result.stopReason;
+      throw new Error(
+        `Auto Debug stopped: ${reason}. Review the saved evidence, then /resume ${taskId} <continuation> to continue.`,
+      );
+    }
+  }
+
+  /**
+   * Snapshot the current changed-file set of an isolated task into the
+   * in-memory undo history. Credential-bearing content is never captured;
+   * history is bounded to the most recent MAX_UNDO_TURNS checkpoints.
+   */
+  private async captureUndoCheckpoint(
+    taskId: string,
+    taskSnapshot: TaskMetadata,
+    activeSecrets: readonly string[],
+  ): Promise<void> {
+    if (taskSnapshot.worktreePath === undefined) return;
+    try {
+      const changes = await this.#changeTracker.inspect(
+        taskSnapshot.worktreePath,
+        taskSnapshot.workspaceBaseline,
+        [],
+      );
+      const paths = [...changes.tracked, ...changes.untracked];
+      if (paths.length === 0) return;
+      const snapshots = await captureWorkspaceFileSnapshots(
+        taskSnapshot.worktreePath,
+        paths,
+        activeSecrets,
+      );
+      if (snapshots.length === 0) return;
+      const history = this.#undoHistory.get(taskId) ?? [];
+      this.#undoHistory.set(taskId, [...history, snapshots].slice(-MAX_UNDO_TURNS));
+      this.write(`\n[checkpoint ${snapshots.length} file(s) for /undo]\n`);
+    } catch {
+      // Undo capture is best-effort and must never break the active turn.
+    }
+  }
+
+  /**
+   * Restore the latest undo checkpoint of an isolated task. Direct-mode
+   * tasks are never touched: Candy does not reset local user changes.
+   */
+  private undoTask(value: string): void {
+    const requested = value.trim();
+    const controller =
+      requested.length === 0 ? this.currentTask() : this.ensureController(requested);
+    if (controller === undefined) {
+      this.write(
+        requested.length === 0
+          ? "no current task; create or select a task first\n"
+          : `task ${requested} does not exist\n`,
+      );
+      return;
+    }
+    const snapshot = controller.snapshot();
+    if (
+      snapshot.state === "running" ||
+      snapshot.state === "waiting_approval" ||
+      snapshot.state === "queued"
+    ) {
+      this.write(
+        `task ${snapshot.taskId} has an active or queued turn; /undo applies after the turn completes\n`,
+      );
+      return;
+    }
+    const metadata = this.#store.get(snapshot.taskId);
+    if (metadata === undefined) {
+      this.write(`task ${snapshot.taskId} metadata is unavailable\n`);
+      return;
+    }
+    if (metadata.worktreePath === undefined) {
+      this.write(
+        `task ${snapshot.taskId} is not isolated; /undo requires /worktree on. In direct mode review with /changes and /diff, then use git restore/clean\n`,
+      );
+      return;
+    }
+    const history = this.#undoHistory.get(snapshot.taskId) ?? [];
+    const checkpoint = history.at(-1);
+    if (checkpoint === undefined || checkpoint.length === 0) {
+      this.write(`task ${snapshot.taskId} has no undo checkpoint\n`);
+      return;
+    }
+    void this.withActiveSecrets(async (activeSecrets) => {
+      const restored = await restoreWorkspaceFileSnapshots(
+        metadata.worktreePath!,
+        checkpoint,
+        activeSecrets,
+      );
+      if (restored === 0) {
+        this.write("undo: no restorable files in the latest checkpoint\n");
+        return;
+      }
+      this.#undoHistory.set(snapshot.taskId, history.slice(0, -1));
+      this.#workspaceReviews.delete(snapshot.taskId);
+      this.#store.clearReview(snapshot.taskId);
+      this.write(
+        `undo: restored ${restored} file(s) in ${snapshot.taskId}; re-review with /changes and /diff\n`,
+      );
+    }).catch((error: unknown) => {
+      this.write(`undo blocked: ${safeError(error)}\n`);
+    });
+  }
+
+  private showCheckpoints(): void {
+    const task = this.currentTask();
+    if (task === undefined) {
+      this.write("no current task; create or select a task first\n");
+      return;
+    }
+    const taskId = task.snapshot().taskId;
+    const history = this.#undoHistory.get(taskId) ?? [];
+    if (history.length === 0) {
+      this.write(`no undo checkpoints for ${taskId}\n`);
+      return;
+    }
+    for (const [index, checkpoint] of history.entries()) {
+      this.write(`${index + 1}\t${checkpoint.length} file(s)\n`);
+    }
+    this.write(`use /undo to restore the latest checkpoint of ${taskId}\n`);
   }
 
   private async cancel(taskId: string): Promise<void> {
@@ -2088,7 +2528,7 @@ export class InteractiveTui {
       const validator = this.validatorStatus(task);
       const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
       this.write(
-        `${current}${task.taskId}\ttitle=${task.title ?? task.taskId}\t${task.state}\tcreated=${formatTaskTimestamp(task.createdAt)}\tupdated=${formatTaskTimestamp(task.updatedAt)}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tvalidator=${validator}\n`,
+        `${current}${task.taskId}\ttitle=${task.title ?? task.taskId}\t${task.state}\tcreated=${formatTaskTimestamp(task.createdAt)}\tupdated=${formatTaskTimestamp(task.updatedAt)}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\tmode=${task.taskMode ?? "build"}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tplan=${task.approvalProfile === "read-only" ? "on" : "off"}\tvalidator=${validator}\n`,
       );
     }
   }
@@ -2120,7 +2560,10 @@ export class InteractiveTui {
       `title: ${task.title ?? task.taskId}`,
       `state: ${task.state}`,
       `phase: ${this.#taskPhases.get(task.taskId) ?? task.state}`,
-      `profile: ${task.approvalProfile}`,
+      `profile: ${task.approvalProfile}${
+        task.approvalProfile === "read-only" ? " (plan mode; /build to implement)" : ""
+      }`,
+      `mode: ${task.taskMode ?? "build"}`,
       `workspace: ${workspaceState} ${task.worktreePath ?? task.workspacePath}`,
       `model: ${task.model}`,
       `revision: r${task.revision}`,
@@ -3025,6 +3468,23 @@ function formatToolIdentity(tool: string): string {
   return label === tool ? tool : `${label} · ${tool}`;
 }
 
+function toolFailureSummary(failure: PiToolFailure | undefined): string {
+  switch (failure?.kind) {
+    case "read_offset_out_of_range":
+      return `起始行超过文件末尾（当前共 ${failure.totalLines} 行）；请重新读取后重试`;
+    case "edit_target_not_found":
+      return "编辑目标已变化或文本不匹配；请重新读取后重试";
+    case "edit_target_not_unique":
+      return "编辑目标不唯一；请提供更多上下文后重试";
+    case "edit_targets_overlap":
+      return "多个编辑范围重叠；请合并为一个编辑后重试";
+    case "edit_no_change":
+      return "替换没有产生变化；请检查目标与替换内容";
+    default:
+      return "工具未完成；请重新读取上下文后重试";
+  }
+}
+
 function createToolActivityKeyResolver(
   taskId: string,
 ): (
@@ -3105,6 +3565,7 @@ function replaceToolControlCharacters(value: string): string {
 function safeError(error: unknown): string {
   if (error instanceof ProviderContractError) return safeProviderError(error);
   if (error instanceof ApplyChangesBlockedError) return error.message;
+  if (error instanceof Error && /^Auto Debug stopped:/u.test(error.message)) return error.message;
   if (
     error instanceof Error &&
     /credentials|cancelled|unavailable|attachment|image|workspace|worktree|review|completed|ownership|applied|symbolic|MIME|video|model|active turn|queued/iu.test(

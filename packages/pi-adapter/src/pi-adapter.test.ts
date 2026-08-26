@@ -89,6 +89,54 @@ test("Pi tool lifecycle projections expose bounded redacted arguments and output
   assert.doesNotMatch(end.output ?? "", /fixture-secret/u);
 });
 
+test("Pi tool lifecycle projections classify known read and edit failures without exposing output", () => {
+  const cases = [
+    {
+      toolName: "candy_read",
+      result: "Offset 409 is beyond end of file (394 lines total). Bearer fixture-secret",
+      expected: { kind: "read_offset_out_of_range", totalLines: 394 },
+    },
+    {
+      toolName: "candy_edit",
+      result:
+        "Could not find the exact text in src/value.ts. The old text must match exactly including all whitespace and newlines.",
+      expected: { kind: "edit_target_not_found" },
+    },
+    {
+      toolName: "candy_edit",
+      result: "Found 2 occurrences of the text in src/value.ts. The text must be unique.",
+      expected: { kind: "edit_target_not_unique" },
+    },
+    {
+      toolName: "candy_edit",
+      result: "edits[0] and edits[1] overlap in src/value.ts. Merge them into one edit.",
+      expected: { kind: "edit_targets_overlap" },
+    },
+    {
+      toolName: "candy_edit",
+      result: "No changes made to src/value.ts. The replacement produced identical content.",
+      expected: { kind: "edit_no_change" },
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    const observation = projectPiToolObservation(
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-failure",
+        toolName: fixture.toolName,
+        result: fixture.result,
+        isError: true,
+      },
+      "task-tools",
+      ["fixture-secret"],
+    );
+    assert.equal(observation.type, "tool.completed");
+    assert.deepEqual(observation.failure, fixture.expected);
+    assert.doesNotMatch(JSON.stringify(observation.failure), /fixture-secret|src\/value/u);
+  }
+});
+
 test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-"));
   const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-outside-"));
