@@ -21,7 +21,7 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_JOURNEY_LAUNCH_DIR)
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {输入 Input >} "usable TUI input"
+wait_for {开始任务|继续任务} "usable TUI input"
 
 send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
@@ -48,7 +48,7 @@ expect {
   timeout { fail "timed out waiting for task creation" }
   eof { fail "TUI exited while waiting for task creation" }
 }
-wait_for {操作：删除文件} "denial approval action"
+wait_for {操作[[:space:]]+删除文件} "denial approval action"
 wait_for {文件：remove-deny\.txt} "denial approval target"
 expect {
   -re {/approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
@@ -61,7 +61,7 @@ wait_for "${task_id} completed" "first turn completion"
 
 send_command "Now delete remove-approve.txt (a deletion approval will be requested; approve it). Do not modify anything else, do not commit, and do not push."
 wait_for "continuing ${task_id}" "same-task continuation"
-wait_for {操作：删除文件} "approval action"
+wait_for {操作[[:space:]]+删除文件} "approval action"
 wait_for {文件：remove-approve\.txt} "approval target"
 expect {
   -re {/approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
@@ -108,7 +108,7 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {输入 Input >} "TUI restart"
+wait_for {开始任务|继续任务} "TUI restart"
 send_command ":use $task_id"
 wait_for "current task: ${task_id} \\(completed\\)" "task selection after restart"
 send_command ":transcript"

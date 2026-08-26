@@ -407,6 +407,8 @@ export class InteractiveTui {
       worktreeEnabled: () => this.#worktreeEnabled,
       trustedShellEnabled: () => this.#trustedShellEnabled,
       taskId: () => this.#currentTaskId,
+      taskTitle: () =>
+        this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
       taskPhase: () =>
         this.#currentTaskId === undefined ? undefined : this.#taskPhases.get(this.#currentTaskId),
       recoveryTaskCount: () =>
@@ -752,9 +754,7 @@ export class InteractiveTui {
 
   private submitPrompt(prompt: string): void {
     if (containsCredentialMaterial(prompt) || this.hasActiveProviderSecret(prompt)) {
-      this.write(
-        `\n[user] ${transcriptText(redactSensitive(prompt, this.activeSecretsSnapshot()))}\n`,
-      );
+      this.writeUser(transcriptText(redactSensitive(prompt, this.activeSecretsSnapshot())));
       this.write(
         "prompt rejected: credential-shaped content is forbidden; remove any token/api key/password before submitting\n",
       );
@@ -1691,7 +1691,7 @@ export class InteractiveTui {
       if (prompt === undefined)
         throw new Error("Explicit continuation required; the interrupted prompt was not replayed.");
       if (explicitPrompt !== undefined) {
-        this.write(`\n[user] ${transcriptText(explicitPrompt)}\n`);
+        this.writeUser(transcriptText(explicitPrompt));
         this.#store.appendTranscript(taskId, [
           { role: "user", text: transcriptText(explicitPrompt) },
         ]);
@@ -1708,6 +1708,8 @@ export class InteractiveTui {
       }
       const runEngineTurn = async (activeSecrets: readonly string[]): Promise<void> => {
         this.#taskPhases.set(taskId, "turn running");
+        const toolActivities = new Map<string, string>();
+        const toolActivityKey = createToolActivityKeyResolver(taskId);
         const expandedPrompt = await expandWorkspaceMentionPrompt(
           prompt,
           taskSnapshot.workspacePath,
@@ -1771,20 +1773,29 @@ export class InteractiveTui {
             const tool = boundedToolName(observation.tool, activeSecrets);
             this.#taskPhases.set(taskId, `tool ${formatToolLabel(tool)}`);
             const activity = formatToolActivity(tool, observation.args, activeSecrets);
-            this.write(`\n[工具] ${activity}…\n`);
+            const key = toolActivityKey(tool, observation.toolCallId, "started");
+            toolActivities.set(key, activity);
+            this.writeToolActivity(key, `◇ ${activity}`);
             this.#store.appendTranscript(taskId, [
               { role: "tool", text: transcriptText(`${activity}: started`) },
             ]);
           }
           if (observation.type === "tool.updated") {
             const tool = boundedToolName(observation.tool, activeSecrets);
-            this.write(`\n[工具] ${formatToolLabel(tool)} 正在返回结果…\n`);
+            const key = toolActivityKey(tool, observation.toolCallId, "updated");
+            this.writeToolActivity(key, `… ${toolActivities.get(key) ?? formatToolLabel(tool)}`);
           }
           if (observation.type === "tool.completed") {
             const tool = boundedToolName(observation.tool, activeSecrets);
             this.#taskPhases.set(taskId, "turn running");
+            const key = toolActivityKey(tool, observation.toolCallId, "completed");
+            const activity = toolActivities.get(key) ?? formatToolLabel(tool);
             const summary = `${formatToolLabel(tool)} ${observation.ok ? "完成" : "失败"}`;
-            this.write(`\n[工具] ${observation.ok ? "✓" : "✗"} ${summary}\n`);
+            this.writeToolActivity(
+              key,
+              `${observation.ok ? "✓" : "✗"} ${activity} · ${observation.ok ? "完成" : "失败"}`,
+            );
+            toolActivities.delete(key);
             this.#store.appendTranscript(taskId, [
               {
                 role: "tool",
@@ -2420,19 +2431,17 @@ export class InteractiveTui {
     readonly approveText: string;
     readonly denyText: string;
   }): void {
-    this.write(
+    this.writeApproval(
       [
-        "",
-        "=== 等待你的确认 ===",
-        `任务：${taskId}`,
-        `操作：${action}`,
-        ...details,
+        "! 需要你的确认",
+        `  操作  ${action}`,
+        ...details.map((detail) => `  ${detail}`),
+        `  任务  ${taskId}`,
         "状态：任务已暂停，等待你的选择；Candy 不会自行继续。",
         "",
-        `  /approve ${approvalId}  ${approveText}`,
-        `  /deny ${approvalId}     ${denyText}`,
-        `  /cancel ${taskId}       取消整个任务`,
-        "======================",
+        `/approve ${approvalId}  ${approveText}`,
+        `/deny ${approvalId}     ${denyText}`,
+        `/cancel ${taskId}       取消整个任务`,
         "",
         // Tail anchor: the transcript viewport only emits its tail, so long
         // detail lines (wrapped reasons and paths) can scroll the frame head
@@ -2489,6 +2498,21 @@ export class InteractiveTui {
   private write(value: string): void {
     this.flushAssistantRun();
     this.#surface?.appendTranscript(redactTuiOutput(value));
+  }
+
+  private writeUser(value: string): void {
+    this.flushAssistantRun();
+    this.#surface?.appendTranscript(redactTuiOutput(value), "user");
+  }
+
+  private writeApproval(value: string): void {
+    this.flushAssistantRun();
+    this.#surface?.appendTranscript(redactTuiOutput(value), "approval");
+  }
+
+  private writeToolActivity(key: string, value: string): void {
+    this.flushAssistantRun();
+    this.#surface?.upsertToolActivity(key, redactTuiOutput(value));
   }
 
   /**
@@ -2990,6 +3014,38 @@ function formatToolLabel(tool: string): string {
     candy_bash_network: "读取网络资源",
   };
   return labels[tool] ?? tool.replace(/^candy_/u, "").replaceAll("_", " ");
+}
+
+function createToolActivityKeyResolver(
+  taskId: string,
+): (
+  tool: string,
+  toolCallId: string | undefined,
+  phase: "started" | "updated" | "completed",
+) => string {
+  let anonymousSequence = 0;
+  const activeAnonymousKeys = new Map<string, string[]>();
+
+  return (tool, toolCallId, phase) => {
+    if (toolCallId !== undefined) return `${taskId}:${toolCallId}`;
+
+    const activeKeys = activeAnonymousKeys.get(tool) ?? [];
+    if (phase === "started" || activeKeys.length === 0) {
+      const key = `${taskId}:${tool}:anonymous-${++anonymousSequence}`;
+      if (phase !== "completed") {
+        activeKeys.push(key);
+        activeAnonymousKeys.set(tool, activeKeys);
+      }
+      return key;
+    }
+
+    const key = activeKeys[0]!;
+    if (phase === "completed") {
+      activeKeys.shift();
+      if (activeKeys.length === 0) activeAnonymousKeys.delete(tool);
+    }
+    return key;
+  };
 }
 
 function summarizeToolArguments(

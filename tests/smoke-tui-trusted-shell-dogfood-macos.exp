@@ -21,7 +21,7 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_DOGFOOD_LAUNCH_DIR)
 spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
-wait_for {输入 Input >} "usable TUI input"
+wait_for {开始任务|继续任务} "usable TUI input"
 
 send_command ":workspace $env(CANDY_DOGFOOD_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
@@ -101,7 +101,7 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
-wait_for {输入 Input >} "TUI restart"
+wait_for {开始任务|继续任务} "TUI restart"
 after 1000
 send_command ":tasks"
 # The restart banner fills the transcript viewport, so the first task line

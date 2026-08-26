@@ -32,7 +32,7 @@ spawn -noecho $env(CANDY_TERMINAL_MATRIX_NODE) $env(CANDY_TERMINAL_MATRIX_CHILD)
 if {$env(CANDY_TERMINAL_MATRIX_MODE) == "startup-failure"} {
   expect eof
 } else {
-  wait_for {Ask Candy} "usable TUI input"
+  wait_for {开始任务} "usable TUI input"
 }
 
 if {$env(CANDY_TERMINAL_MATRIX_MODE) == "normal"} {

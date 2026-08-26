@@ -65,6 +65,53 @@ test("Candy TUI surface restores a fake terminal on normal stop and Ctrl+C", asy
   }
 });
 
+test("Candy TUI surface keeps five core states clear at 80, 120, and 200 columns", async () => {
+  for (const columns of [80, 120, 200]) {
+    const root = await mkdtemp(path.join(tmpdir(), `candy-tui-design-${columns}-`));
+    const terminal = new FakeTerminal({ columns, rows: 32 });
+    let phase: string | undefined;
+    let title: string | undefined;
+    const surface = new CandyTuiSurface({
+      appDataRoot: root,
+      terminal,
+      taskId: () => (title === undefined ? undefined : "task-design-fixture"),
+      taskTitle: () => title,
+      taskPhase: () => phase,
+      recoveryTaskCount: () => 2,
+      onSubmit: (): void => undefined,
+      onInterrupt: (): void => undefined,
+    });
+    try {
+      surface.start();
+      await waitForOutput(terminal, /准备新任务[\s\S]*● 就绪/u);
+
+      title = "深入分析当前产品，评估相比 Pi 有哪些差异";
+      phase = "tool 读取文件";
+      surface.upsertToolActivity("call-1", "◇ 读取文件：docs/product/candy-v1.md");
+      await waitForOutput(terminal, /● 读取文件[\s\S]*读取文件：docs\/product\/candy-v1\.md/u);
+
+      phase = "waiting for your approval";
+      surface.appendTranscript(
+        "! 需要你的确认\n  操作  删除文件\n\n/approve delete-1  删除并继续",
+        "approval",
+      );
+      await waitForOutput(terminal, /● 等待确认[\s\S]*需要你的确认/u);
+
+      phase = "completed";
+      surface.appendTranscript("已完成分析，可以继续追问。", "assistant");
+      await waitForOutput(terminal, /● 上轮完成[\s\S]*Candy[\s\S]*已完成分析/u);
+
+      surface.appendTranscript("diff --git a/src/value.ts b/src/value.ts\n+const value = 42;\n");
+      const output = await waitForOutput(terminal, /diff --git a\/src\/value\.ts/u);
+      assert.match(output, /↻ 2 待恢复/u);
+      assert.doesNotMatch(output, /⌘K|local coding studio|recoverable/u);
+    } finally {
+      await surface.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Candy TUI surface uses an explicit Candy app-data log directory", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-log-path-"));
   const terminal: FakeTerminal = new FakeTerminal();
@@ -230,7 +277,7 @@ test("Candy TUI surface scrolls the transcript with the mouse wheel", async () =
     terminal.writes.length = 0;
     terminal.emitInput("\x1b[<65;10;10M"); // SGR mouse-wheel down
     const tail = await waitForOutput(terminal, /wheel filler line 39/u);
-    assert.doesNotMatch(tail, /wheel filler line 25/u);
+    assert.match(tail, /wheel filler line 39/u);
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });
@@ -377,12 +424,12 @@ test("Candy TUI surface toggles thinking blocks with Ctrl+T", async () => {
   try {
     surface.start();
     surface.appendTranscript("hidden reasoning payload", "thinking");
-    await waitForLastWrite(terminal, /思考 · 已折叠/u);
+    await waitForLastWrite(terminal, /思考过程 · Ctrl\+T 展开/u);
     assert.equal(terminal.writes.slice(-1).join("").includes("hidden reasoning"), false);
     terminal.emitInput("\x14"); // Ctrl+T expands
     await waitForLastWrite(terminal, /hidden reasoning payload/u);
     terminal.emitInput("\x14"); // Ctrl+T collapses again
-    await waitForLastWrite(terminal, /思考 · 已折叠 · Ctrl+T 展开/u);
+    await waitForLastWrite(terminal, /思考过程 · Ctrl\+T 展开/u);
     assert.equal(terminal.writes.slice(-1).join("").includes("hidden reasoning"), false);
   } finally {
     await surface.stop();

@@ -10,6 +10,7 @@ import {
   VStack,
   isKeyRelease,
   matchesKey,
+  truncateToWidth,
   visibleWidth,
   type Component,
   type EditorTheme,
@@ -30,7 +31,7 @@ const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
 ];
 
 /** Fixed rows above the live transcript. */
-const HEADER_ROWS = 3;
+const HEADER_ROWS = 2;
 const MIN_TRANSCRIPT_ROWS = 8;
 
 const ANSI_RESET = "\x1b[0m";
@@ -56,34 +57,47 @@ function dim(value: string): string {
 
 function truncateMiddle(value: string, maxWidth: number): string {
   if (visibleWidth(value) <= maxWidth) return value;
-  if (value.includes("\x1b")) return "…";
-  if (maxWidth <= 3) return value.slice(0, maxWidth);
-  const tailWidth = Math.max(1, Math.floor((maxWidth - 3) / 2));
-  const headWidth = Math.max(1, maxWidth - 3 - tailWidth);
-  return `${value.slice(0, headWidth)}...${value.slice(-tailWidth)}`;
+  if (value.includes("\x1b")) return truncateToWidth(value, maxWidth);
+  if (maxWidth <= 1) return "…".slice(0, maxWidth);
+  const available = maxWidth - 1;
+  const headWidth = Math.ceil(available / 2);
+  const tailWidth = Math.floor(available / 2);
+  return `${takeVisible(value, headWidth)}…${takeVisible(value, tailWidth, true)}`;
+}
+
+function takeVisible(value: string, maxWidth: number, fromEnd: boolean = false): string {
+  const characters = [...value];
+  const ordered = fromEnd ? characters.reverse() : characters;
+  const selected: string[] = [];
+  let width = 0;
+  for (const character of ordered) {
+    const characterWidth = visibleWidth(character);
+    if (width + characterWidth > maxWidth) break;
+    selected.push(character);
+    width += characterWidth;
+  }
+  return (fromEnd ? selected.reverse() : selected).join("");
 }
 
 function composeChromeLine(left: string, right: string, width: number): string {
   const leftWidth = visibleWidth(left);
   const rightWidth = visibleWidth(right);
   if (leftWidth + rightWidth + 2 > width) {
-    return truncateMiddle(`${left}  ${right}`, width);
+    if (rightWidth + 2 >= width) return truncateToWidth(right, width);
+    const leftBudget = width - rightWidth - 1;
+    const clippedLeft = truncateToWidth(left, leftBudget);
+    return `${clippedLeft}${" ".repeat(width - visibleWidth(clippedLeft) - rightWidth)}${right}`;
   }
   return `${left}${" ".repeat(width - leftWidth - rightWidth)}${right}`;
 }
 
 function paddedLine(value: string, width: number): string {
-  const clipped = truncateMiddle(value, width);
+  const clipped = truncateToWidth(value, width);
   return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
 }
 
 function shortModel(value: string): string {
   return value.replace("deepseek-v4-", "DS ").replace("MiniMax-M3", "MiniMax M3");
-}
-
-function shortTask(value: string | undefined): string {
-  if (value === undefined || value.length === 0) return "no active task";
-  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 }
 
 interface CandyChromeOptions {
@@ -93,6 +107,7 @@ interface CandyChromeOptions {
   readonly worktreeEnabled: (() => boolean) | undefined;
   readonly trustedShellEnabled: (() => boolean) | undefined;
   readonly taskId: (() => string | undefined) | undefined;
+  readonly taskTitle: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
   readonly recoveryTaskCount: (() => number) | undefined;
 }
@@ -108,78 +123,135 @@ class CandyChrome implements Component {
   public invalidate(): void {}
 
   public render(width: number): string[] {
-    const safeWidth = Math.max(24, width);
-    const workspace = truncateMiddle(this.#options.workspacePath?.() ?? process.cwd(), 40);
+    const safeWidth = Math.max(1, width);
+    const workspaceWidth = safeWidth >= 140 ? 48 : safeWidth >= 100 ? 36 : 24;
+    const workspace = truncateMiddle(
+      this.#options.workspacePath?.() ?? process.cwd(),
+      workspaceWidth,
+    );
     const model = shortModel(this.#options.model?.() ?? "deepseek-v4-flash");
     const phase = this.#options.taskPhase?.();
     const recoveryTaskCount = this.#options.recoveryTaskCount?.() ?? 0;
-    const status = phase?.includes("approval")
-      ? tint("● waiting approval", ANSI_WARNING)
-      : phase !== undefined
-        ? tint(`● ${truncateMiddle(phase, 24)}`, ANSI_MINT)
-        : tint("● ready", ANSI_MINT);
+    const status = phaseStatus(phase);
     const recovery =
       recoveryTaskCount > 0
-        ? ` ${dim("·")} ${tint(`${recoveryTaskCount} recoverable`, ANSI_WARNING)}`
+        ? ` ${dim("·")} ${tint(`↻ ${recoveryTaskCount} 待恢复`, ANSI_WARNING)}`
         : "";
-    const profile = this.#options.profile?.() ?? "auto";
-    const worktree = this.#options.worktreeEnabled?.() === true ? "isolated" : "direct";
-    const shell = this.#options.trustedShellEnabled?.() === true ? "shell on" : "shell off";
-    const task = shortTask(this.#options.taskId?.());
+    const profile = (this.#options.profile?.() ?? "auto") === "auto" ? "Auto" : "Read-only";
+    const worktree = this.#options.worktreeEnabled?.() === true ? "隔离" : "Direct";
+    const shell = this.#options.trustedShellEnabled?.() === true ? "Shell 开启" : "Shell 关闭";
+    const taskTitle =
+      this.#options.taskTitle?.() ??
+      (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");
+    const title = truncateMiddle(taskTitle, Math.max(16, Math.min(72, safeWidth - 30)));
 
     return [
       composeChromeLine(
-        ` ${tint("●", ANSI_ACCENT)} ${bold("Candy")} ${dim("local coding studio")}`,
-        `${dim("⌘K")} ${tint("commands", ANSI_SOFT)}`,
+        ` ${tint("●", ANSI_ACCENT)} ${bold("Candy")} ${dim("·")} ${tint(title, ANSI_TEXT)}`,
+        status,
         safeWidth,
       ),
       composeChromeLine(
-        ` ${dim("workspace")} ${tint(workspace, ANSI_TEXT)}`,
-        `${dim("model")} ${tint(model, ANSI_SOFT)}`,
-        safeWidth,
-      ),
-      paddedLine(
-        ` ${dim("⌁")} ${tint(profile, ANSI_TEXT)}  ${dim("·")} ${tint(worktree, ANSI_TEXT)}  ${dim("·")} ${tint(shell, ANSI_TEXT)}  ${dim("·")} ${status}${recovery}  ${dim("·")} ${tint(task, ANSI_TEXT)}`,
+        ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
+        `${tint(model, ANSI_SOFT)}${recovery}`,
         safeWidth,
       ),
     ];
   }
 }
 
+function phaseStatus(phase: string | undefined): string {
+  if (phase === undefined) return tint("● 就绪", ANSI_MINT);
+  if (phase.includes("approval")) return tint("● 等待确认", ANSI_WARNING);
+  if (phase.startsWith("tool "))
+    return tint(`● ${truncateMiddle(phase.slice(5), 20)}`, ANSI_ACCENT);
+  if (phase.startsWith("provider retry")) return tint("● 正在重试", ANSI_WARNING);
+  const labels: Readonly<Record<string, string>> = {
+    starting: "准备中",
+    "turn running": "正在回答",
+    "context compaction": "整理上下文",
+    "turn settled": "正在收尾",
+    completed: "上轮完成",
+    paused: "已暂停",
+    interrupted: "待恢复",
+    cancelled: "已取消",
+  };
+  const label = labels[phase] ?? truncateMiddle(phase, 20);
+  const color =
+    phase === "paused" || phase === "interrupted" || phase === "cancelled"
+      ? ANSI_WARNING
+      : ANSI_MINT;
+  return tint(`● ${label}`, color);
+}
+
 class CandyPromptLabel implements Component {
+  readonly #taskPhase: (() => string | undefined) | undefined;
+
+  public constructor(taskPhase: (() => string | undefined) | undefined) {
+    this.#taskPhase = taskPhase;
+  }
+
   public invalidate(): void {}
 
   public render(width: number): string[] {
+    const phase = this.#taskPhase?.();
+    const label = phase?.includes("approval")
+      ? tint("需要你的确认", ANSI_WARNING)
+      : isActivePhase(phase)
+        ? "Candy 正在处理"
+        : phase === "completed"
+          ? "继续任务"
+          : "开始任务";
+    const hint = phase?.includes("approval")
+      ? "· 按上方命令批准、拒绝或取消"
+      : isActivePhase(phase)
+        ? "· 输入 /steer 补充当前轮"
+        : "· 回答、继续，或输入 / 查看命令";
     return [
-      paddedLine(
-        ` ${tint("›", ANSI_ACCENT)} ${bold("Ask Candy")} ${dim("· 输入任务，或键入 / 查看命令")}`,
-        Math.max(24, width),
-      ),
+      paddedLine(` ${tint("›", ANSI_ACCENT)} ${bold(label)} ${dim(hint)}`, Math.max(1, width)),
     ];
   }
 }
 
 class CandyFooter implements Component {
+  readonly #taskPhase: (() => string | undefined) | undefined;
+
+  public constructor(taskPhase: (() => string | undefined) | undefined) {
+    this.#taskPhase = taskPhase;
+  }
+
   public invalidate(): void {}
 
   public render(width: number): string[] {
-    return [
-      paddedLine(
-        ` ${dim("/ help")}  ${dim("·")}  ${dim("滚轮/PageUp/PageDown 历史")}  ${dim("·")}  ${dim("Ctrl+G 编辑")}  ${dim("·")}  ${dim("Ctrl+T 思考")}`,
-        Math.max(24, width),
-      ),
-    ];
+    const phase = this.#taskPhase?.();
+    const content = phase?.includes("approval")
+      ? "/status 查看详情  ·  按上方命令作出决定"
+      : isActivePhase(phase)
+        ? "/steer 补充当前轮  ·  /follow-up 排队下一轮"
+        : "/ 查看命令  ·  Enter 发送  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
+    return [paddedLine(` ${dim(content)}`, Math.max(1, width))];
   }
 }
 
+function isActivePhase(phase: string | undefined): boolean {
+  return (
+    phase === "starting" ||
+    phase === "turn running" ||
+    phase === "context compaction" ||
+    phase === "turn settled" ||
+    phase?.startsWith("tool ") === true ||
+    phase?.startsWith("provider retry") === true
+  );
+}
+
 const EDITOR_THEME: EditorTheme = {
-  borderColor: (value: string): string => value,
+  borderColor: dim,
   selectList: {
-    selectedPrefix: (value: string): string => value,
-    selectedText: (value: string): string => value,
-    description: (value: string): string => value,
-    scrollInfo: (value: string): string => value,
-    noMatch: (value: string): string => value,
+    selectedPrefix: (value: string): string => tint(value, ANSI_ACCENT),
+    selectedText: bold,
+    description: dim,
+    scrollInfo: dim,
+    noMatch: (value: string): string => tint(value, ANSI_WARNING),
   },
 };
 
@@ -209,6 +281,7 @@ export interface CandyTuiSurfaceOptions {
   readonly worktreeEnabled?: () => boolean;
   readonly trustedShellEnabled?: () => boolean;
   readonly taskId?: () => string | undefined;
+  readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
   readonly recoveryTaskCount?: () => number;
   readonly skills?: readonly CandySkillSlashCommand[];
@@ -276,6 +349,7 @@ export class CandyTuiSurface {
       worktreeEnabled: options.worktreeEnabled,
       trustedShellEnabled: options.trustedShellEnabled,
       taskId: options.taskId,
+      taskTitle: options.taskTitle,
       taskPhase: options.taskPhase,
       recoveryTaskCount: options.recoveryTaskCount,
     });
@@ -296,9 +370,9 @@ export class CandyTuiSurface {
           minSize: MIN_TRANSCRIPT_ROWS,
         },
         { component: new Spacer(1), basis: 1, shrink: 0 },
-        { component: new CandyPromptLabel(), basis: 1, shrink: 0 },
+        { component: new CandyPromptLabel(options.taskPhase), basis: 1, shrink: 0 },
         { component: this.#editor, basis: "auto", shrink: 0 },
-        { component: new CandyFooter(), basis: 1, shrink: 0 },
+        { component: new CandyFooter(options.taskPhase), basis: 1, shrink: 0 },
       ]),
     );
     this.#tui.setFocus(this.#editor);
@@ -367,6 +441,11 @@ export class CandyTuiSurface {
 
   public appendTranscript(value: string, kind: CandyTranscriptKind = "plain"): void {
     this.#transcript.append(value, kind);
+    this.#tui.requestRender();
+  }
+
+  public upsertToolActivity(key: string, value: string): void {
+    this.#transcript.upsertTool(key, value);
     this.#tui.requestRender();
   }
 

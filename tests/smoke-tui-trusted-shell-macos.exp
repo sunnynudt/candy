@@ -21,7 +21,7 @@ proc wait_for {pattern description} {
 
 cd $env(CANDY_JOURNEY_LAUNCH_DIR)
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {输入 Input >} "usable TUI input"
+wait_for {开始任务|继续任务} "usable TUI input"
 
 send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
@@ -41,7 +41,7 @@ expect {
   timeout { fail "timed out waiting for coding task creation" }
   eof { fail "TUI exited while waiting for coding task creation" }
 }
-wait_for {操作：} "network elevation request"
+wait_for {操作[[:space:]]+} "network elevation request"
 wait_for {命令：} "bounded network command"
 expect {
   -re {/approve (network-[a-z0-9]+)} { set network_approval_id $expect_out(1,string) }
@@ -89,7 +89,7 @@ send_command ":quit"
 expect eof
 
 spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
-wait_for {输入 Input >} "TUI restart"
+wait_for {开始任务|继续任务} "TUI restart"
 after 1000
 send_command ":tasks"
 wait_for {(?s)(completed.*cancelled|cancelled.*completed)} "restarted task listing"

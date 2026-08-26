@@ -120,7 +120,7 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
     terminal.emitInput("inspect fixture");
     terminal.emitInput("\r");
     const output: string = await waitForOutput(terminal, /completed/u);
-    assert.match(output, /\[user\] inspect fixture/u);
+    assert.match(output, /你[\s\S]*inspect fixture/u);
     terminal.emitInput(":tasks");
     terminal.emitInput("\r");
     terminal.emitInput(":quit");
@@ -539,7 +539,7 @@ test("interactive TUI echoes a redacted line when a prompt contains credential-s
     );
     assert.match(
       output,
-      /\[user\] 请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
+      /你[\s\S]*请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
     );
     assert.doesNotMatch(output, /HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn/u);
     terminal.emitInput("\x03");
@@ -756,12 +756,12 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     const approvalOutput = await waitForOutput(
       terminal,
-      /=== 等待你的确认 ===[\s\S]*操作：删除文件[\s\S]*文件：obsolete-\[REDACTED\]\.ts[\s\S]*状态：任务已暂停[\s\S]*\/approve delete-[a-z0-9]+[\s\S]*删除此文件并继续任务/u,
+      /需要你的确认[\s\S]*操作\s+删除文件[\s\S]*文件：obsolete-\[REDACTED\]\.ts[\s\S]*状态：任务已暂停[\s\S]*\/approve delete-[a-z0-9]+[\s\S]*删除此文件并继续任务/u,
       5_000,
     );
     const approvalId = approvalOutput.match(/\/approve (delete-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
-    const taskId = approvalOutput.match(/任务：(task-[a-z0-9]+)/u)?.[1];
+    const taskId = approvalOutput.match(/任务\s+(task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     terminal.emitInput("what needs my attention?");
     terminal.emitInput("\r");
@@ -787,7 +787,7 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     await runPromise;
     assert.equal(observedProfile, "auto");
     assert.equal(deleteApproved, true);
-    assert.match(completedOutput, /\[工具\] ✓ 删除文件 完成/u);
+    assert.match(completedOutput, /✓[\s\S]*删除文件[\s\S]*完成/u);
     assert.doesNotMatch(completedOutput, new RegExp(activeSecret, "u"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -856,15 +856,14 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("start a long turn");
     terminal.emitInput("\r");
-    const taskOutput = await waitForOutput(terminal, /\[工具\] 读取文件：src\/value\.ts…/u);
-    const updatedOutput = await waitForOutput(terminal, /\[工具\] 读取文件 正在返回结果…/u);
-    const completedOutput = await waitForOutput(terminal, /\[工具\] ✓ .+ 完成/u);
+    const taskOutput = await waitForOutput(terminal, /读取文件：src\/value\.ts/u);
+    const completedOutput = await waitForOutput(terminal, /x{20}[\s\S]*完成/u);
     assert.doesNotMatch(taskOutput, /x{150}/u);
     assert.match(taskOutput, /src\/value\.ts/u);
-    assert.doesNotMatch(updatedOutput, /partial fixture output/u);
+    assert.doesNotMatch(taskOutput, /partial fixture output/u);
     assert.doesNotMatch(completedOutput, /sk-proj-tool-output-canary|Bearer fixture-secret/u);
-    const redactedToolOutput = await waitForOutput(terminal, /\[工具\] ✓ \[REDACTED\] 完成/u);
-    assert.match(redactedToolOutput, /\[工具\] ✓ \[REDACTED\] 完成/u);
+    const redactedToolOutput = await waitForOutput(terminal, /\[REDACTED\][\s\S]*完成/u);
+    assert.match(redactedToolOutput, /\[REDACTED\][\s\S]*完成/u);
     const taskId = taskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     terminal.emitInput(":steer focus on the failing test");
@@ -915,9 +914,7 @@ test("interactive TUI confirms activity before the first model event", async () 
     const output = await waitForOutput(terminal, /正在处理中（准备上下文并请求模型）/u);
     const taskId = output.match(/状态：(task-[a-z0-9]+) 正在处理中/u)?.[1];
     assert.ok(taskId);
-    assert.ok(
-      output.indexOf("[user] wait for the first model event") < output.indexOf("正在处理中"),
-    );
+    assert.ok(output.indexOf("wait for the first model event") < output.indexOf("正在处理中"));
     releaseFirstEvent?.();
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
     terminal.emitInput(":quit");
@@ -1264,7 +1261,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git fetch origin[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+[\s\S]*执行此命令并继续任务/u,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git fetch origin[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+[\s\S]*执行此命令并继续任务/u,
     );
     const approvalId = waiting.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
@@ -1406,7 +1403,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
     );
     const staleApprovalId = waiting.match(/\/approve (network-[a-z0-9]+)/u)?.[1];
     assert.ok(staleApprovalId);
@@ -1499,7 +1496,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
       terminal,
-      /=== 等待你的确认 ===[\s\S]*操作：执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
     );
     const taskId = waiting.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
@@ -2112,7 +2109,7 @@ test("interactive TUI accepts a fresh direct task after an interrupted task", as
         },
       },
     }).run();
-    await waitForOutput(terminal, /1 recoverable/u);
+    await waitForOutput(terminal, /↻ 1 待恢复/u);
     terminal.emitInput("start a fresh task");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /completed/u);
