@@ -6,7 +6,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { access, lstat, mkdir, open, opendir, realpath, unlink } from "node:fs/promises";
+import { access, lstat, mkdir, open, opendir, readFile, realpath, unlink } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -19,6 +19,7 @@ import {
 } from "@candy/platform";
 import { Type } from "typebox";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
+export { resolveCandySkillRoots } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
 export const MAX_WORKSPACE_FILE_BYTES = 16 * 1024 * 1024;
@@ -71,6 +72,7 @@ export interface CandyResourceDiagnosticInfo extends CandyPromptDiagnosticInfo {
 export function loadCandySkillInfos(
   candyRoot: string,
   activeSecrets: readonly string[] = [],
+  skillRoots: readonly string[] = [],
 ): {
   readonly skills: readonly CandySkillInfo[];
   readonly diagnostics: readonly CandySkillDiagnosticInfo[];
@@ -80,6 +82,7 @@ export function loadCandySkillInfos(
     undefined,
     activeSecrets,
     candyRoot,
+    skillRoots,
   ).getSkills();
   return {
     skills: result.skills.map((skill) => ({
@@ -725,6 +728,12 @@ export interface CandyWorkspaceToolOptions {
   readonly webFetch?: CandyWebFetchOperationsOptions;
   /** Candy-owned roots that external image reads must not enter. */
   readonly externalImageRoots?: readonly string[];
+  /**
+   * Read-only roots for loaded skill directories. candy_read and candy_list
+   * accept absolute paths inside these roots (bounded, symlink-free,
+   * secret-redacted); writes and searches never enter them.
+   */
+  readonly readRoots?: readonly string[];
 }
 
 export interface CandyBashPathSeam {
@@ -2189,11 +2198,12 @@ interface CandyWorkspaceBrowseTools {
 function createCandyWorkspaceBrowseTools(
   workspaceRoot: string,
   activeSecrets: readonly string[] = [],
+  readRoots: readonly string[] = [],
 ): CandyWorkspaceBrowseTools {
   const root = path.resolve(workspaceRoot);
   return {
     list: async (requestedPath, signal) => {
-      const absolutePath = await resolveBrowsePath(root, requestedPath);
+      const absolutePath = await resolveBrowsePath(root, requestedPath, readRoots);
       throwIfToolAborted(signal);
       const directory = await lstat(absolutePath);
       if (!directory.isDirectory()) throw new Error("candy_list requires a workspace directory.");
@@ -2215,7 +2225,7 @@ function createCandyWorkspaceBrowseTools(
         const childStats = await lstat(childPath);
         if (childStats.isSymbolicLink()) continue;
         if (!childStats.isDirectory() && !childStats.isFile()) continue;
-        await assertBrowsePath(root, childPath);
+        await assertBrowseEntryPath(root, readRoots, childPath);
         const entry: CandyBrowseEntry = {
           path: relativeBrowsePath(root, childPath, activeSecrets),
           kind: childStats.isDirectory() ? "directory" : "file",
@@ -2426,7 +2436,11 @@ function assertBrowseInput(value: string, label: string): void {
   }
 }
 
-async function resolveBrowsePath(root: string, requestedPath: string | undefined): Promise<string> {
+async function resolveBrowsePath(
+  root: string,
+  requestedPath: string | undefined,
+  readRoots: readonly string[] = [],
+): Promise<string> {
   const value = requestedPath ?? ".";
   assertBrowseInput(value, "Workspace browse paths");
   if (
@@ -2434,7 +2448,10 @@ async function resolveBrowsePath(root: string, requestedPath: string | undefined
     path.win32.isAbsolute(value) ||
     path.win32.parse(value).root !== ""
   ) {
-    throw new Error("Workspace browse paths must be relative.");
+    // Absolute paths are allowed only inside registered skill read roots.
+    const absolutePath = path.resolve(value);
+    await assertSkillBrowsePath(readRoots, absolutePath);
+    return absolutePath;
   }
   if (value.split(/[\\/]+/u).some((segment) => segment === "..")) {
     throw new Error("Workspace browse path escaped the selected workspace.");
@@ -2454,13 +2471,110 @@ async function assertBrowsePath(root: string, candidate: string): Promise<void> 
   }
 }
 
+function isPathInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
+  return roots.some((root) => isPathInsideRoot(root, candidate));
+}
+
+async function assertSkillBrowsePath(
+  readRoots: readonly string[],
+  candidate: string,
+): Promise<void> {
+  if (readRoots.length === 0) throw new Error("No skill read roots are registered.");
+  if (!path.isAbsolute(candidate)) throw new Error("Skill browse paths must be absolute.");
+  const resolved = path.resolve(candidate);
+  const entry = await lstat(resolved);
+  if (entry.isSymbolicLink())
+    throw new Error("Symbolic links are not allowed in skill browse paths.");
+  if (!entry.isDirectory()) throw new Error("Skill browse paths require a directory.");
+  const realCandidate = await realpath(resolved);
+  for (const root of readRoots) {
+    let realRoot: string;
+    try {
+      realRoot = await realpath(root);
+    } catch {
+      continue;
+    }
+    if (isPathInsideRoot(realRoot, realCandidate)) return;
+  }
+  throw new Error("Skill browse path escaped the registered skill roots.");
+}
+
+async function assertBrowseEntryPath(
+  root: string,
+  readRoots: readonly string[],
+  candidate: string,
+): Promise<void> {
+  if (isPathInsideRoot(root, candidate)) {
+    await assertBrowsePath(root, candidate);
+    return;
+  }
+  const resolved = path.resolve(candidate);
+  const entry = await lstat(resolved);
+  if (entry.isSymbolicLink())
+    throw new Error("Symbolic links are not allowed in skill browse entries.");
+  if (!entry.isFile() && !entry.isDirectory()) throw new Error("Invalid skill browse entry.");
+  const realCandidate = await realpath(resolved);
+  for (const readRoot of readRoots) {
+    let realRoot: string;
+    try {
+      realRoot = await realpath(readRoot);
+    } catch {
+      continue;
+    }
+    if (isPathInsideRoot(realRoot, realCandidate)) return;
+  }
+  throw new Error("Skill browse entry escaped the registered skill roots.");
+}
+
+async function assertSkillReadPath(readRoots: readonly string[], candidate: string): Promise<void> {
+  if (readRoots.length === 0) throw new Error("No skill read roots are registered.");
+  if (!path.isAbsolute(candidate)) throw new Error("Skill read paths must be absolute.");
+  const resolved = path.resolve(candidate);
+  const entry = await lstat(resolved);
+  if (entry.isSymbolicLink()) throw new Error("Symbolic links are not allowed in skill reads.");
+  if (!entry.isFile()) throw new Error("Skill reads require a regular file.");
+  if (entry.size > MAX_WORKSPACE_FILE_BYTES) throw new Error("Skill reads exceed the size bound.");
+  const realCandidate = await realpath(resolved);
+  for (const root of readRoots) {
+    let realRoot: string;
+    try {
+      realRoot = await realpath(root);
+    } catch {
+      continue;
+    }
+    if (isPathInsideRoot(realRoot, realCandidate)) return;
+  }
+  throw new Error("Skill read escaped the registered skill roots.");
+}
+
+async function readSkillFile(
+  readRoots: readonly string[],
+  absolutePath: string,
+  activeSecrets: readonly string[],
+): Promise<Buffer> {
+  await assertSkillReadPath(readRoots, absolutePath);
+  const content = await readFile(absolutePath);
+  if (content.includes(0)) {
+    if (containsActiveSecretBytes(content, activeSecrets))
+      throw new Error("Provider credentials are forbidden in binary skill reads.");
+    return content;
+  }
+  return Buffer.from(redactBashOutput(content.toString("utf8"), activeSecrets), "utf8");
+}
+
 function relativeBrowsePath(
   root: string,
   absolutePath: string,
   activeSecrets: readonly string[] = [],
 ): string {
   const relative = path.relative(root, absolutePath);
-  return normalizeWorkspaceToolPath(redactBashOutput(relative || ".", activeSecrets));
+  if (relative === "") return ".";
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    // Outside the workspace (skill roots): report the absolute path so the
+    // model can read the entry with candy_read.
+    return normalizeWorkspaceToolPath(redactBashOutput(absolutePath, activeSecrets));
+  }
+  return normalizeWorkspaceToolPath(redactBashOutput(relative, activeSecrets));
 }
 
 function fitsBrowseResult(value: object): boolean {
@@ -2493,14 +2607,25 @@ export function createCandyWorkspaceTools(
   options: CandyWorkspaceToolOptions = {},
 ) {
   const operations = createCandyWorkspaceOperations(workspaceRoot, activeSecrets);
-  const browseTools = createCandyWorkspaceBrowseTools(workspaceRoot, activeSecrets);
+  const readRoots = options.readRoots ?? [];
+  const browseTools = createCandyWorkspaceBrowseTools(workspaceRoot, activeSecrets, readRoots);
   const read = piSdk.createReadToolDefinition(workspaceRoot, {
     operations: {
       readFile: (absolutePath) =>
-        readWorkspaceFileForModel(operations, absolutePath, activeSecrets),
-      access: operations.access,
+        isPathInsideAnyRoot(readRoots, absolutePath)
+          ? readSkillFile(readRoots, absolutePath, activeSecrets)
+          : readWorkspaceFileForModel(operations, absolutePath, activeSecrets),
+      access: async (absolutePath) => {
+        if (isPathInsideAnyRoot(readRoots, absolutePath)) {
+          await assertSkillReadPath(readRoots, absolutePath);
+          return;
+        }
+        await operations.access(absolutePath);
+      },
       detectImageMimeType: async (absolutePath) =>
-        detectImageMimeTypeFromBuffer(await operations.readFile(absolutePath)),
+        isPathInsideAnyRoot(readRoots, absolutePath)
+          ? undefined
+          : detectImageMimeTypeFromBuffer(await operations.readFile(absolutePath)),
     },
   });
   const tools: piSdk.ToolDefinition[] = [
@@ -2508,7 +2633,7 @@ export function createCandyWorkspaceTools(
       name: "candy_list",
       label: "List workspace files",
       description:
-        "List immediate files and directories inside the selected workspace without following symbolic links.",
+        "List immediate files and directories inside the selected workspace (relative paths) or inside a loaded skill directory (absolute paths under the registered skill roots), without following symbolic links.",
       promptSnippet: "List files and directories in the selected workspace",
       parameters: listWorkspaceSchema,
       executionMode: "parallel",
@@ -3311,6 +3436,12 @@ export interface PiAgentEngineInput {
   readonly bashPath?: string;
   /** All Candy-owned provider secrets currently active for Shell redaction. */
   readonly shellActiveSecrets?: readonly string[];
+  /**
+   * External skill roots (shared and configured directories) resolved by
+   * resolveCandySkillRoots. Skills load through the restricted loader only;
+   * their base directories become read-only roots for workspace tools.
+   */
+  readonly skillRoots?: readonly string[];
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
   readonly shellNetworkApproval?: CandyNetworkOperationsOptions["onApproval"];
   readonly webFetchApproval?: CandyWebFetchOperationsOptions["onApproval"];
@@ -3618,6 +3749,7 @@ export class PiAgentEngine {
         undefined,
         activeSecrets,
         path.dirname(this.sessionRoot),
+        input.skillRoots ?? [],
       );
       const workspaceTools = createCandyWorkspaceTools(
         input.cwd,
@@ -3643,6 +3775,7 @@ export class PiAgentEngine {
             ...(input.webFetchApproval === undefined ? {} : { onApproval: input.webFetchApproval }),
           },
           externalImageRoots: [path.resolve(this.sessionRoot, "..")],
+          readRoots: [...resourceLoader.getSkillReadRoots()],
         },
       );
       const sessionBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);

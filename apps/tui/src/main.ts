@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,6 +14,7 @@ import {
   loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
   loadCandySkillInfos,
+  resolveCandySkillRoots,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
@@ -154,6 +155,8 @@ export interface InteractiveTuiOptions {
   readonly trustedShellAutoAvailable?: boolean;
   /** Test seam; the production default copies through the platform adapter. */
   readonly copyToClipboardImpl?: (text: string) => Promise<void>;
+  /** Test seam; the production default resolves the platform skill roots. */
+  readonly skillRoots?: readonly string[];
 }
 
 const MACOS_TRUSTED_SHELL_AUTO_G2_ATTESTATION = Object.freeze({
@@ -293,6 +296,7 @@ export class InteractiveTui {
   >();
   readonly #engine: TuiAgentEngine;
   readonly #ownerId = `tui:${process.pid}:${randomUUID()}`;
+  readonly #skillRoots: readonly string[];
   #currentTaskId: string | undefined;
   #surface: CandyTuiSurface | undefined = undefined;
   #resolveExit: (() => void) | undefined = undefined;
@@ -381,6 +385,7 @@ export class InteractiveTui {
       );
       this.#engine = new TuiModelRouter(deepseek, minimax);
     }
+    this.#skillRoots = options.skillRoots ?? resolveCandySkillRoots(process.env);
   }
 
   public async run(): Promise<void> {
@@ -1530,7 +1535,11 @@ export class InteractiveTui {
   }
 
   private listSkills(): void {
-    const result = loadCandySkillInfos(this.#appDataRoot, this.activeSecretsSnapshot());
+    const result = loadCandySkillInfos(
+      this.#appDataRoot,
+      this.activeSecretsSnapshot(),
+      this.#skillRoots,
+    );
     for (const diagnostic of result.diagnostics) {
       this.write(`skill resource ${diagnostic.type}: ${diagnostic.message}\n`);
     }
@@ -1539,10 +1548,12 @@ export class InteractiveTui {
       return;
     }
     this.write(
-      "Candy skills (loaded into the agent context; place SKILL.md files under app-data/skills/):\n",
+      "Candy skills (model-visible; SKILL.md and references readable via candy_read; scripts runnable via Trusted Shell):\n",
     );
     for (const skill of result.skills) {
-      this.write(`${skill.name}\t${skill.description}\t${skill.baseDir}\n`);
+      this.write(
+        `${skill.name}\t${skill.description}\t${skillSourceLabel(skill.baseDir, this.#appDataRoot)}\t${skill.baseDir}\n`,
+      );
     }
   }
 
@@ -2573,6 +2584,19 @@ class TuiModelRouter implements TuiAgentEngine {
       return Promise.reject(new Error("Pi follow-up is unavailable."));
     return engine.followUp(taskId, text);
   }
+}
+
+/** Classify a loaded skill's source by its base directory. */
+function skillSourceLabel(baseDir: string, appDataRoot: string): string {
+  let root = appDataRoot;
+  try {
+    root = realpathSync(appDataRoot);
+  } catch {
+    // Keep the resolved path when realpath is unavailable.
+  }
+  if (isPathInside(root, baseDir)) return "candy";
+  if (baseDir.includes(path.join(".agents", "skills"))) return "shared";
+  return "configured";
 }
 
 function parseModelId(value: string): CandyModelId | undefined {

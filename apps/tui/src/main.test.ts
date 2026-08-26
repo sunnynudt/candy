@@ -275,6 +275,7 @@ test("/skills lists Candy-owned skills and their diagnostics", async () => {
     const runPromise = new TestInteractiveTui({
       appDataRoot: root,
       terminal,
+      skillRoots: [],
     }).run();
     await new Promise<void>((resolve: () => void): void => {
       setImmediate(resolve);
@@ -283,12 +284,55 @@ test("/skills lists Candy-owned skills and their diagnostics", async () => {
     terminal.emitInput("\r");
     const output = await waitForOutput(terminal, /fixture-skill/u);
     assert.match(output, /fixture skill description/u);
-    assert.match(output, /app-data\/skills\//u);
+    // Tabs render as three spaces; the source column follows the description.
+    assert.match(output, /fixture skill description\s+candy\s+/u);
+    assert.match(output, /skills\/fixture/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skills marks shared and configured skill sources", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-sources-"));
+  const sharedRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-shared-"));
+  const configuredRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-configured-"));
+  const shared = path.join(sharedRoot, ".agents", "skills", "shared-fixture");
+  const configured = path.join(configuredRoot, "skills", "cfg-fixture");
+  await mkdir(shared, { recursive: true });
+  await mkdir(configured, { recursive: true });
+  await writeFile(
+    path.join(shared, "SKILL.md"),
+    "---\nname: shared-fixture\ndescription: shared fixture\n---\ncontent\n",
+  );
+  await writeFile(
+    path.join(configured, "SKILL.md"),
+    "---\nname: cfg-fixture\ndescription: configured fixture\n---\ncontent\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [path.join(sharedRoot, ".agents", "skills"), configuredRoot],
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skills");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /shared-fixture/u);
+    assert.match(output, /shared fixture\s+shared\s+/u);
+    assert.match(output, /configured fixture\s+configured\s+/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(sharedRoot, { recursive: true, force: true });
+    await rm(configuredRoot, { recursive: true, force: true });
   }
 });
 

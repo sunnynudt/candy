@@ -89,7 +89,11 @@ The default profile permits only the contracted workspace operations. Read-only 
 
 ## Candy-owned instructions and resources
 
-Candy may load global instructions, prompt templates, and declarative Markdown skills only from its Candy-owned application-data resource root. Resource files are bounded, non-symlinked, validated, and redacted before entering Pi context. Workspace `AGENTS.md` is handled through the same restricted adapter boundary. External tool configuration, Pi default resources, and unrelated repositories are never Candy runtime sources.
+## Candy-owned instructions and resources
+
+Candy may load global instructions, prompt templates, and declarative Markdown skills from its Candy-owned application-data resource root (highest priority) and from external skill roots: the agent-agnostic shared directory `~/.agents/skills` by default, plus directories listed in `CANDY_SKILL_DIRS` (path-delimiter separated, `~` expanded) when the user configures them. Resource files are bounded, non-symlinked, validated, and redacted before entering Pi context; the model-visible skill list is capped at 80 skills with higher-priority roots winning, and duplicate names report a collision diagnostic. Workspace `AGENTS.md` is handled through the same restricted adapter boundary. External tool configuration, Pi default resources, and unrelated repositories are never Candy runtime credential or execution sources.
+
+Loaded skill directories become read-only roots for Candy's file tools: `candy_read` and `candy_list` accept absolute paths inside them (bounded, symlink-free, secret-redacted); writes, deletes, and searches never enter them. Skill scripts are plain files executed only through Trusted Shell commands with the usual command policy and approvals; Candy never auto-executes skill content. Candy does not read or execute Pi's own `.pi` resources, extensions, packages, themes, or executable resources.
 
 ## Providers and credentials
 

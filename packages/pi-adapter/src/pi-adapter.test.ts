@@ -29,6 +29,7 @@ import {
   PI_COMPATIBILITY_VERSION,
   listPiPublicExports,
   loadCandySkillInfos,
+  resolveCandySkillRoots,
   PiAgentEngine,
   type PiAgentObservation,
   projectPiLifecycleObservation,
@@ -1324,6 +1325,7 @@ test("Candy restricted resource loader is empty, local-context-only, and fail-cl
       lstat: (filePath) => ({
         size: filePath === path.join(root, "AGENTS.md") ? 128 : 0,
         isFile: () => filePath === path.join(root, "AGENTS.md"),
+        isDirectory: () => true,
         isSymbolicLink: () => filePath === path.join(root, "AGENTS.md"),
       }),
       readFile: () => readFileSync(outsideContext),
@@ -1402,6 +1404,7 @@ test("Candy restricted context loader rejects a resource that changes during the
     lstat: (filePath) => ({
       size: 19,
       isFile: () => !swapped && filePath === path.join(root, "AGENTS.md"),
+      isDirectory: () => true,
       isSymbolicLink: () => swapped && filePath === path.join(root, "AGENTS.md"),
     }),
     readFile: () => {
@@ -1492,7 +1495,12 @@ test("Candy restricted resource loader rejects oversized directory entry streams
   const loader = new CandyRestrictedResourceLoader(
     root,
     {
-      lstat: () => ({ size: 0, isFile: () => false, isSymbolicLink: () => false }),
+      lstat: () => ({
+        size: 0,
+        isFile: () => false,
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+      }),
       readFile: () => Buffer.alloc(0),
       realpath: (filePath) => filePath,
       readDirectory: (_directory, visit) => {
@@ -1553,6 +1561,188 @@ test("loadCandySkillInfos exposes only bounded skill metadata and diagnostics", 
     assert.match(result.diagnostics[0]?.message ?? "", /frontmatter name and description/u);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy skill roots resolve the shared directory and CANDY_SKILL_DIRS", () => {
+  const home = path.join(tmpdir(), "candy-skill-roots-home-");
+  const extra = path.join(tmpdir(), "candy-skill-roots-extra-");
+  assert.deepEqual(resolveCandySkillRoots({}, home), [path.join(home, ".agents", "skills")]);
+  assert.deepEqual(
+    resolveCandySkillRoots(
+      { CANDY_SKILL_DIRS: `${path.join("~", "claude", "skills")}:${extra}::` },
+      home,
+    ),
+    [path.join(home, ".agents", "skills"), path.join(home, "claude", "skills"), extra],
+  );
+  assert.deepEqual(resolveCandySkillRoots({ CANDY_SKILL_DIRS: "   " }, home), [
+    path.join(home, ".agents", "skills"),
+  ]);
+});
+
+test("Candy restricted loader merges shared skill roots with Candy-owned priority", async () => {
+  const candyRoot = await mkdtemp(path.join(tmpdir(), "candy-skill-merge-candy-"));
+  const sharedRoot = await mkdtemp(path.join(tmpdir(), "candy-skill-merge-shared-"));
+  await mkdir(path.join(candyRoot, "skills", "unique-candy"), { recursive: true });
+  await mkdir(path.join(candyRoot, "skills", "clash"), { recursive: true });
+  await mkdir(path.join(sharedRoot, "unique-shared"), { recursive: true });
+  await mkdir(path.join(sharedRoot, "clash"), { recursive: true });
+  const writeSkill = async (
+    directory: string,
+    name: string,
+    description: string,
+  ): Promise<void> => {
+    await writeFile(
+      path.join(directory, "SKILL.md"),
+      `---\nname: ${name}\ndescription: ${description}\n---\ncontent\n`,
+    );
+  };
+  try {
+    await writeSkill(path.join(candyRoot, "skills", "unique-candy"), "unique-candy", "candy one");
+    await writeSkill(path.join(candyRoot, "skills", "clash"), "clash", "candy wins");
+    await writeSkill(path.join(sharedRoot, "unique-shared"), "unique-shared", "shared one");
+    await writeSkill(path.join(sharedRoot, "clash"), "clash", "shared loses");
+    const loader = new CandyRestrictedResourceLoader(candyRoot, undefined, [], candyRoot, [
+      sharedRoot,
+    ]);
+    const skills = loader.getSkills().skills;
+    const names = skills.map((skill) => skill.name).sort();
+    assert.deepEqual(names, ["clash", "unique-candy", "unique-shared"]);
+    const clash = skills.find((skill) => skill.name === "clash");
+    assert.ok(clash?.description.includes("candy wins"));
+    assert.ok(loader.getSkills().diagnostics.some((diagnostic) => diagnostic.type === "collision"));
+    const readRoots = loader.getSkillReadRoots();
+    assert.ok(readRoots.some((root) => root.endsWith(path.join("skills", "clash"))));
+    assert.ok(readRoots.some((root) => root.endsWith(path.join("unique-shared"))));
+  } finally {
+    await rm(candyRoot, { recursive: true, force: true });
+    await rm(sharedRoot, { recursive: true, force: true });
+  }
+});
+
+test("Candy workspace tools read loaded skill roots and reject escapes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-skill-roots-"));
+  const skillRoot = await mkdtemp(path.join(tmpdir(), "candy-skill-read-root-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-skill-read-outside-"));
+  try {
+    await writeFile(path.join(root, "workspace.txt"), "workspace content\n");
+    await mkdir(path.join(skillRoot, "fixture-skill"), { recursive: true });
+    await writeFile(
+      path.join(skillRoot, "fixture-skill", "SKILL.md"),
+      "# Fixture\nsecret-value fixture-secret\n",
+    );
+    await writeFile(path.join(outside, "secret.txt"), "outside\n");
+    await symlink(
+      path.join(outside, "secret.txt"),
+      path.join(skillRoot, "fixture-skill", "linked.md"),
+    );
+    const activeSecret = "fixture-secret";
+    const tools = createCandyWorkspaceTools(
+      root,
+      "read-only",
+      undefined,
+      undefined,
+      [activeSecret],
+      {
+        readRoots: [skillRoot],
+      },
+    );
+    const read = tools.find((tool) => tool.name === "candy_read");
+    const list = tools.find((tool) => tool.name === "candy_list");
+    assert.ok(read);
+    assert.ok(list);
+
+    const skillResult = await read.execute(
+      "read-skill",
+      { path: path.join(skillRoot, "fixture-skill", "SKILL.md") },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const skillText = skillResult.content
+      .filter(
+        (content): content is { readonly type: "text"; readonly text: string } =>
+          content.type === "text",
+      )
+      .map((content) => content.text)
+      .join("\n");
+    assert.match(skillText, /# Fixture/u);
+    assert.doesNotMatch(skillText, /fixture-secret/u);
+
+    const listResult = await list.execute(
+      "list-skill",
+      { path: path.join(skillRoot, "fixture-skill") },
+      new AbortController().signal,
+      undefined,
+      {} as never,
+    );
+    const listText = listResult.content
+      .filter(
+        (content): content is { readonly type: "text"; readonly text: string } =>
+          content.type === "text",
+      )
+      .map((content) => content.text)
+      .join("\n");
+    const listEntries = (JSON.parse(listText) as { entries: Array<{ path: string }> }).entries;
+    assert.ok(listEntries.some((entry) => entry.path.includes("SKILL.md")));
+    assert.ok(listEntries.some((entry) => entry.path.startsWith("/")));
+
+    await assert.rejects(
+      read.execute(
+        "read-outside",
+        { path: path.join(outside, "secret.txt") },
+        new AbortController().signal,
+        undefined,
+        {} as never,
+      ),
+      /No skill read roots|escaped/u,
+    );
+    await assert.rejects(
+      read.execute(
+        "read-symlink",
+        { path: path.join(skillRoot, "fixture-skill", "linked.md") },
+        new AbortController().signal,
+        undefined,
+        {} as never,
+      ),
+      /Symbolic links/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(skillRoot, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("Candy restricted loader follows directory symlinks in shared skill roots and rejects retargeting", async () => {
+  const sharedRoot = await mkdtemp(path.join(tmpdir(), "candy-skill-symlink-shared-"));
+  const sourceTree = await mkdtemp(path.join(tmpdir(), "candy-skill-symlink-source-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-skill-symlink-outside-"));
+  await mkdir(path.join(sourceTree, "linked-skill"), { recursive: true });
+  await writeFile(
+    path.join(sourceTree, "linked-skill", "SKILL.md"),
+    "---\nname: linked-skill\ndescription: via symlink\n---\ncontent\n",
+  );
+  await symlink(path.join(sourceTree, "linked-skill"), path.join(sharedRoot, "linked-skill"));
+  await writeFile(
+    path.join(outside, "SKILL.md"),
+    "---\nname: outside-skill\ndescription: must not load\n---\ncontent\n",
+  );
+  await symlink(path.join(outside, "SKILL.md"), path.join(sharedRoot, "file-link.md"));
+  try {
+    const loader = new CandyRestrictedResourceLoader(sharedRoot, undefined, [], undefined, [
+      sharedRoot,
+    ]);
+    const names = loader.getSkills().skills.map((skill) => skill.name);
+    assert.deepEqual(names, ["linked-skill"]);
+    const readRoots = loader.getSkillReadRoots();
+    assert.equal(readRoots.length, 1);
+    assert.ok(readRoots[0]?.endsWith(path.join("linked-skill")));
+    assert.equal(readRoots[0]?.includes("candy-skill-symlink-source"), true);
+  } finally {
+    await rm(sharedRoot, { recursive: true, force: true });
+    await rm(sourceTree, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

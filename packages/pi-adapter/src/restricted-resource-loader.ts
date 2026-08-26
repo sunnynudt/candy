@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import { redactCredentialMaterial } from "@candy/platform";
@@ -25,6 +26,40 @@ const MAX_CANDY_RESOURCE_DIRECTORIES = 2_048;
 const MAX_CANDY_RESOURCE_FILES = 2_048;
 const MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES = 2_048;
 const MAX_CANDY_RESOURCE_TOTAL_BYTES = 8 * 1024 * 1024;
+/** Model-visible skill budget across all skill roots; higher-priority roots win. */
+const MAX_MODEL_SKILLS = 80;
+
+/**
+ * Resolve the external skill roots in priority order: the agent-agnostic
+ * shared directory `~/.agents/skills` first, then directories listed in
+ * `CANDY_SKILL_DIRS` (path-delimiter separated, `~` expanded). Candy-owned
+ * `app-data/skills` is added separately by the loader and wins over all of
+ * these. External roots are only ever read through the restricted loader;
+ * they are never execution roots.
+ */
+export function resolveCandySkillRoots(
+  environment: NodeJS.ProcessEnv = process.env,
+  homeDirectory: string = os.homedir(),
+): readonly string[] {
+  const roots: string[] = [path.join(homeDirectory, ".agents", "skills")];
+  const configured = environment.CANDY_SKILL_DIRS;
+  if (configured !== undefined) {
+    for (const raw of configured.split(path.delimiter)) {
+      const trimmed = raw.trim();
+      if (trimmed.length === 0) continue;
+      roots.push(expandHomePath(trimmed, homeDirectory));
+    }
+  }
+  return roots;
+}
+
+function expandHomePath(value: string, homeDirectory: string): string {
+  if (value === "~") return homeDirectory;
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(homeDirectory, value.slice(2));
+  }
+  return value;
+}
 const CONTEXT_FILE_NAME = "AGENTS.md";
 const DEFAULT_CANDY_SYSTEM_PROMPT =
   "Candy is a local-first coding agent. Keep provider credentials, session content, and diagnostics inside Candy's approved boundaries. Use the selected workspace only and report bounded evidence.";
@@ -32,6 +67,7 @@ const DEFAULT_CANDY_SYSTEM_PROMPT =
 interface RestrictedResourceFileStats {
   readonly size: number;
   isFile(): boolean;
+  isDirectory(): boolean;
   isSymbolicLink(): boolean;
 }
 
@@ -95,6 +131,7 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
   private readonly agentsFiles: Array<{ path: string; content: string }>;
   private readonly skills: Skill[];
   private readonly skillDiagnostics: ResourceDiagnostic[];
+  private readonly skillReadRoots: string[];
   private readonly prompts: PromptTemplate[];
   private readonly promptDiagnostics: ResourceDiagnostic[];
   private readonly systemPrompt: string;
@@ -107,17 +144,35 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
     fileSystem: RestrictedResourceFileSystem = DEFAULT_FILE_SYSTEM,
     activeSecrets: readonly string[] = [],
     candyRoot?: string,
+    skillRoots: readonly string[] = [],
   ) {
     this.agentsFiles = readApprovedContextFile(cwd, fileSystem, activeSecrets);
     const resources = readCandyResources(candyRoot, fileSystem, activeSecrets);
-    this.skills = resources.skills;
-    this.skillDiagnostics = resources.skillDiagnostics;
+    const skills = loadCandySkills(
+      [
+        ...(candyRoot === undefined ? [] : [path.join(path.resolve(candyRoot), "skills")]),
+        ...skillRoots,
+      ],
+      fileSystem,
+      activeSecrets,
+    );
+    this.skills = skills.resources;
+    this.skillDiagnostics = skills.diagnostics;
+    this.skillReadRoots = skills.readRoots;
     this.prompts = resources.prompts;
     this.promptDiagnostics = resources.promptDiagnostics;
     this.systemPrompt = resources.systemPrompt;
     this.systemPromptSource = resources.systemPromptSource;
     this.appendSystemPrompt = resources.appendSystemPrompt;
     this.appendSystemPromptSources = resources.appendSystemPromptSources;
+  }
+
+  /**
+   * Real (unredacted) base directories of the successfully loaded skills.
+   * Used only for read-root validation; never exposed to the model.
+   */
+  public getSkillReadRoots(): readonly string[] {
+    return [...this.skillReadRoots];
   }
 
   public getExtensions(): LoadExtensionsResult {
@@ -186,8 +241,6 @@ type RestrictedResourceExtensionPaths = {
 };
 
 interface CandyResources {
-  readonly skills: Skill[];
-  readonly skillDiagnostics: ResourceDiagnostic[];
   readonly prompts: PromptTemplate[];
   readonly promptDiagnostics: ResourceDiagnostic[];
   readonly systemPrompt: string;
@@ -203,8 +256,6 @@ function readCandyResources(
 ): CandyResources {
   if (candyRoot === undefined) {
     return {
-      skills: [],
-      skillDiagnostics: [],
       prompts: [],
       promptDiagnostics: [],
       systemPrompt: DEFAULT_CANDY_SYSTEM_PROMPT,
@@ -222,7 +273,6 @@ function readCandyResources(
     fileSystem,
     activeSecrets,
   );
-  const skillResult = loadCandySkills(path.join(root, "skills"), root, fileSystem, activeSecrets);
   const promptResult = loadCandyPrompts(
     path.join(root, "prompts"),
     root,
@@ -230,8 +280,6 @@ function readCandyResources(
     activeSecrets,
   );
   return {
-    skills: skillResult.resources,
-    skillDiagnostics: skillResult.diagnostics,
     prompts: promptResult.resources,
     promptDiagnostics: promptResult.diagnostics,
     systemPrompt: system?.content ?? DEFAULT_CANDY_SYSTEM_PROMPT,
@@ -241,54 +289,79 @@ function readCandyResources(
   };
 }
 
+interface CandySkillsResult {
+  readonly resources: Skill[];
+  readonly diagnostics: ResourceDiagnostic[];
+  /** Real base directories of loaded skills, used only for read-root IO validation. */
+  readonly readRoots: string[];
+}
+
 function loadCandySkills(
-  directory: string,
-  root: string,
+  roots: readonly string[],
   fileSystem: RestrictedResourceFileSystem,
   activeSecrets: readonly string[],
-): { resources: Skill[]; diagnostics: ResourceDiagnostic[] } {
+): CandySkillsResult {
   const resources: Skill[] = [];
   const diagnostics: ResourceDiagnostic[] = [];
-  for (const filePath of listCandyFiles(directory, fileSystem).filter(
-    (candidate) => path.basename(candidate) === "SKILL.md",
-  )) {
-    const file = readCandyFile(filePath, root, fileSystem, activeSecrets);
-    if (file === undefined) continue;
-    const document = parseMarkdownDocument(file.content);
-    const name = stringField(document.frontmatter.name);
-    const description = stringField(document.frontmatter.description);
-    if (name === undefined || description === undefined) {
-      diagnostics.push({
-        type: "error",
-        message: "Candy skill requires frontmatter name and description.",
-        path: file.path,
-      });
-      continue;
-    }
-    if (resources.some((skill) => skill.name === name)) {
-      diagnostics.push({
-        type: "collision",
-        message: `skill name "${name}" collision`,
-        path: file.path,
-      });
-      continue;
-    }
-    resources.push({
-      name,
-      description,
-      filePath: file.path,
-      baseDir: path.dirname(file.path),
-      sourceInfo: {
-        path: file.path,
-        source: "candy",
-        scope: "user",
-        origin: "top-level",
+  const readRoots: string[] = [];
+  for (const directory of roots) {
+    const walk = listCandyFiles(directory, fileSystem);
+    for (const filePath of walk.files.filter(
+      (candidate) => path.basename(candidate) === "SKILL.md",
+    )) {
+      if (resources.length >= MAX_MODEL_SKILLS) {
+        diagnostics.push({
+          type: "error",
+          message: `skill budget exhausted at ${MAX_MODEL_SKILLS}; higher-priority roots win`,
+          path: directory,
+        });
+        return { resources, diagnostics, readRoots };
+      }
+      const file = readCandyFile(
+        filePath,
+        directory,
+        fileSystem,
+        activeSecrets,
+        walk.allowedTargets,
+      );
+      if (file === undefined) continue;
+      const document = parseMarkdownDocument(file.content);
+      const name = stringField(document.frontmatter.name);
+      const description = stringField(document.frontmatter.description);
+      if (name === undefined || description === undefined) {
+        diagnostics.push({
+          type: "error",
+          message: "Candy skill requires frontmatter name and description.",
+          path: file.path,
+        });
+        continue;
+      }
+      if (resources.some((skill) => skill.name === name)) {
+        diagnostics.push({
+          type: "collision",
+          message: `skill name "${name}" collision`,
+          path: file.path,
+        });
+        continue;
+      }
+      resources.push({
+        name,
+        description,
+        filePath: file.path,
         baseDir: path.dirname(file.path),
-      },
-      disableModelInvocation: document.frontmatter["disable-model-invocation"] === true,
-    });
+        sourceInfo: {
+          path: file.path,
+          source: "candy",
+          scope: "user",
+          origin: "top-level",
+          baseDir: path.dirname(file.path),
+        },
+        disableModelInvocation: document.frontmatter["disable-model-invocation"] === true,
+      });
+      readRoots.push(path.dirname(filePath));
+    }
   }
-  return { resources, diagnostics };
+  return { resources, diagnostics, readRoots };
 }
 
 function loadCandyPrompts(
@@ -299,7 +372,7 @@ function loadCandyPrompts(
 ): { resources: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
   const resources: PromptTemplate[] = [];
   const diagnostics: ResourceDiagnostic[] = [];
-  for (const filePath of listCandyFiles(directory, fileSystem).filter((candidate) =>
+  for (const filePath of listCandyFiles(directory, fileSystem).files.filter((candidate) =>
     candidate.endsWith(".md"),
   )) {
     if (path.basename(filePath) === "SKILL.md") continue;
@@ -336,20 +409,60 @@ function loadCandyPrompts(
   return { resources, diagnostics };
 }
 
-function listCandyFiles(directory: string, fileSystem: RestrictedResourceFileSystem): string[] {
-  const pending = [{ directory, depth: 0 }];
+interface CandyFileWalk {
+  readonly files: string[];
+  /**
+   * Realpath targets of directory symlinks discovered under the root.
+   * Directory-level symlinks are the standard way shared skill directories
+   * are installed (one source tree linked into ~/.agents/skills), so the
+   * walker enters them but only after resolving and recording the target;
+   * every file read is still validated against these recorded targets, which
+   * fails closed when a link is retargeted between discovery and read.
+   * File-level symlinks stay rejected.
+   */
+  readonly allowedTargets: string[];
+}
+
+function listCandyFiles(
+  directory: string,
+  fileSystem: RestrictedResourceFileSystem,
+): CandyFileWalk {
+  const pending: Array<{ directory: string; depth: number }> = [{ directory, depth: 0 }];
   const files: string[] = [];
+  const allowedTargets: string[] = [];
   let directoryCount = 0;
   let totalBytes = 0;
+  const empty = (): CandyFileWalk => ({ files: [], allowedTargets: [] });
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined) break;
     directoryCount += 1;
-    if (directoryCount > MAX_CANDY_RESOURCE_DIRECTORIES) return [];
+    if (directoryCount > MAX_CANDY_RESOURCE_DIRECTORIES) return empty();
     let exceededDirectoryBudget = false;
     const visit = (entry: RestrictedResourceDirectoryEntry): boolean => {
-      if (entry.isSymbolicLink()) return true;
       const filePath = path.join(current.directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (current.depth >= MAX_CANDY_RESOURCE_DEPTH) {
+          exceededDirectoryBudget = true;
+          return false;
+        }
+        let target: string;
+        try {
+          target = fileSystem.realpath(filePath);
+        } catch {
+          return true;
+        }
+        let targetStats: RestrictedResourceFileStats;
+        try {
+          targetStats = fileSystem.lstat(target);
+        } catch {
+          return true;
+        }
+        if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) return true;
+        allowedTargets.push(target);
+        pending.push({ directory: target, depth: current.depth + 1 });
+        return true;
+      }
       if (entry.isFile()) {
         let stats: RestrictedResourceFileStats;
         try {
@@ -392,7 +505,7 @@ function listCandyFiles(directory: string, fileSystem: RestrictedResourceFileSys
         });
       } else {
         const entries = fileSystem.readdir?.(current.directory) ?? [];
-        if (entries.length > MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES) return [];
+        if (entries.length > MAX_CANDY_RESOURCE_DIRECTORY_ENTRIES) return empty();
         for (const entry of entries) {
           if (!visit(entry)) break;
         }
@@ -400,9 +513,9 @@ function listCandyFiles(directory: string, fileSystem: RestrictedResourceFileSys
     } catch {
       continue;
     }
-    if (exceededDirectoryBudget) return [];
+    if (exceededDirectoryBudget) return empty();
   }
-  return files.sort();
+  return { files: files.sort(), allowedTargets };
 }
 
 function readCandyFile(
@@ -410,6 +523,7 @@ function readCandyFile(
   root: string,
   fileSystem: RestrictedResourceFileSystem,
   activeSecrets: readonly string[],
+  allowedTargets: readonly string[] = [],
 ): { path: string; content: string } | undefined {
   try {
     const stats = fileSystem.lstat(filePath);
@@ -417,7 +531,10 @@ function readCandyFile(
       return undefined;
     const realPath = fileSystem.realpath(filePath);
     const realRoot = fileSystem.realpath(root);
-    if (!isWithinRoot(realRoot, realPath)) return undefined;
+    const withinRoot =
+      isWithinRoot(realRoot, realPath) ||
+      allowedTargets.some((target) => isWithinRoot(target, realPath));
+    if (!withinRoot) return undefined;
     const content = readStableResource(filePath, realPath, stats, fileSystem);
     return content === undefined
       ? undefined
