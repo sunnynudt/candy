@@ -16,11 +16,10 @@ import {
  * - plain evidence lines (status, tool activity, diffs, approval frames)
  *   rendered literally so markdown syntax inside them is never interpreted.
  *
- * Rendering is bounded to a rolling tail window so long sessions keep a
+ * Rendering is bounded to a rolling live window so long sessions keep a
  * bounded render cost; the full saved transcript remains available through
- * /transcript. The component renders a viewport-sized window ending at the
- * live tail, and PageUp/PageDown scroll the window while it is not at the
- * tail. When the user has left the tail, a hint line shows how to return.
+ * /transcript. The owning Pi ScrollView supplies the viewport, mouse-wheel
+ * handling, PageUp/PageDown navigation, follow-tail behavior, and scrollbar.
  */
 
 export type CandyTranscriptKind = "assistant" | "thinking" | "plain";
@@ -65,36 +64,13 @@ interface CandyTranscriptSegment {
   readonly markdown: Markdown | undefined;
 }
 
-const SCROLLED_HINT = "[↑ 回看历史 · PageUp/PageDown 翻页 · 翻到底部回到最新]";
-const SCROLLED_STALE_HINT = "[↓ 有新内容 · PageUp/PageDown 翻页 · 翻到底部回到最新]";
 const THINKING_COLLAPSED_HINT = "[思考 · 已折叠 · Ctrl+T 展开]";
 const THINKING_EXPANDED_HINT = "[思考 · Ctrl+T 折叠]";
 
 export class CandyTranscript implements Component {
-  readonly #viewportRows: () => number;
   #segments: CandyTranscriptSegment[] = [];
-  /** Lines from the tail; 0 means pinned to the live tail. */
-  #scrollOffset = 0;
-  /** True when content arrived while the user was scrolled away from the tail. */
-  #stale = false;
-  /** Total wrapped line count of the last render. */
-  #wrappedLineCount = 0;
   /** Thinking blocks are collapsed by default; Ctrl+T toggles. */
   #thinkingVisible = false;
-
-  public constructor(viewportRows: () => number) {
-    this.#viewportRows = viewportRows;
-  }
-
-  /** True when the rendered content exceeds the viewport window. */
-  public get overflowing(): boolean {
-    return this.#wrappedLineCount > Math.max(1, this.#viewportRows());
-  }
-
-  /** True when the viewport is pinned to the live tail. */
-  public get atTail(): boolean {
-    return this.#scrollOffset === 0;
-  }
 
   /** Toggle the visibility of collapsed thinking blocks (Ctrl+T). */
   public toggleThinking(): void {
@@ -122,28 +98,6 @@ export class CandyTranscript implements Component {
       });
     }
     this.#dropOldest();
-    if (this.#scrollOffset > 0) this.#stale = true;
-  }
-
-  /** Scroll by a signed number of lines; positive moves toward older content. */
-  public scrollBy(delta: number): void {
-    // Clamping to the real content extent happens in render(), where the
-    // wrapped line count is known; the offset may be stale between renders.
-    this.#scrollOffset = Math.max(0, this.#scrollOffset + delta);
-    if (this.#scrollOffset === 0) this.#stale = false;
-  }
-
-  public pageUp(): void {
-    this.scrollBy(Math.max(1, this.#viewportRows()));
-  }
-
-  public pageDown(): void {
-    this.scrollBy(-Math.max(1, this.#viewportRows()));
-  }
-
-  public scrollToTail(): void {
-    this.#scrollOffset = 0;
-    this.#stale = false;
   }
 
   public invalidate(): void {
@@ -162,17 +116,7 @@ export class CandyTranscript implements Component {
         lines.push(...wrapPlainLines(segment.text, width));
       }
     }
-    this.#wrappedLineCount = lines.length;
-    const viewport = Math.max(1, this.#viewportRows());
-    const maxOffset = Math.max(0, lines.length - viewport);
-    if (this.#scrollOffset > maxOffset) this.#scrollOffset = maxOffset;
-    if (this.#scrollOffset === 0) {
-      this.#stale = false;
-      return lines.length <= viewport ? lines : lines.slice(lines.length - viewport);
-    }
-    const end = lines.length - this.#scrollOffset;
-    const start = Math.max(0, end - viewport);
-    return [this.#stale ? SCROLLED_STALE_HINT : SCROLLED_HINT, ...lines.slice(start, end)];
+    return lines;
   }
 
   /** Drop oldest segments until the live window fits the byte bound. */

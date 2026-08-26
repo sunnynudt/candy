@@ -168,24 +168,56 @@ test("Candy TUI surface scrolls the transcript with PageUp/PageDown", async () =
       surface.appendTranscript(`filler line ${index}\n`);
     }
     await waitForOutput(terminal, /filler line 39/u);
-    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+    terminal.writes.length = 0;
     terminal.emitInput("\x1b[5~"); // PageUp
-    await waitForOutput(terminal, /回看历史/u);
+    terminal.emitInput("\x1b[5~");
+    terminal.emitInput("\x1b[5~");
+    const scrolled = await waitForOutput(terminal, /filler line 0/u);
+    assert.match(scrolled, /filler line 0/u);
+
+    terminal.writes.length = 0;
     terminal.emitInput("\x1b[6~"); // PageDown
     terminal.emitInput("\x1b[6~");
     terminal.emitInput("\x1b[6~");
-    await waitForOutput(terminal, /filler line 39/u);
-    await new Promise<void>((resolve: () => void): void => {
-      setTimeout(resolve, 40);
-    });
-    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+    const tail = await waitForOutput(terminal, /filler line 39/u);
+    assert.doesNotMatch(tail, /filler line 0/u);
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("Candy TUI surface leaves PageUp/PageDown to the editor when the transcript fits", async () => {
+test("Candy TUI surface scrolls the transcript with the mouse wheel", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-wheel-scrollback-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    for (let index: number = 0; index < 40; index += 1) {
+      surface.appendTranscript(`wheel filler line ${index}\n`);
+    }
+    await waitForOutput(terminal, /wheel filler line 39/u);
+    terminal.writes.length = 0;
+    terminal.emitInput("\x1b[<64;10;10M"); // SGR mouse-wheel up
+    const scrolled = await waitForOutput(terminal, /wheel filler line 25/u);
+    assert.match(scrolled, /wheel filler line 25/u);
+
+    terminal.writes.length = 0;
+    terminal.emitInput("\x1b[<65;10;10M"); // SGR mouse-wheel down
+    const tail = await waitForOutput(terminal, /wheel filler line 39/u);
+    assert.doesNotMatch(tail, /wheel filler line 25/u);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface keeps a fitting transcript at the tail", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-scroll-fit-"));
   const terminal: FakeTerminal = new FakeTerminal();
   const surface: CandyTuiSurface = new CandyTuiSurface({
@@ -198,12 +230,15 @@ test("Candy TUI surface leaves PageUp/PageDown to the editor when the transcript
     surface.start();
     surface.appendTranscript("short transcript\n");
     await waitForOutput(terminal, /short transcript/u);
-    terminal.emitInput("\x1b[5~"); // PageUp must not enter scrollback mode
-    terminal.emitInput("\x1b[6~"); // PageDown must not enter scrollback mode
+    terminal.writes.length = 0;
+    terminal.emitInput("\x1b[5~");
+    terminal.emitInput("\x1b[6~");
+    terminal.emitInput("\x1b[<64;10;10M");
+    terminal.emitInput("\x1b[<65;10;10M");
     await new Promise<void>((resolve: () => void): void => {
       setTimeout(resolve, 40);
     });
-    assert.equal(terminal.writes.slice(-3).join("").includes("回看历史"), false);
+    assert.doesNotMatch(terminal.writes.join(""), /short transcript/u);
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });

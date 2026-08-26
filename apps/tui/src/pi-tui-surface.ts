@@ -4,8 +4,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import {
   Editor,
   ProcessTerminal,
+  ScrollView,
   Spacer,
   TuiAltScreen,
+  VStack,
   isKeyRelease,
   matchesKey,
   visibleWidth,
@@ -24,10 +26,9 @@ const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_DEBUG_REDRAW",
 ];
 
-/** Rows occupied by the fixed chrome around the live transcript. */
+/** Fixed rows above the live transcript. */
 const HEADER_ROWS = 3;
-const FOOTER_ROWS = 6;
-const RESERVED_BELOW_TRANSCRIPT_ROWS = HEADER_ROWS + FOOTER_ROWS;
+const MIN_TRANSCRIPT_ROWS = 8;
 
 const ANSI_RESET = "\x1b[0m";
 const ANSI_BOLD = "\x1b[1m";
@@ -161,7 +162,7 @@ class CandyFooter implements Component {
   public render(width: number): string[] {
     return [
       paddedLine(
-        ` ${dim("/ help")}  ${dim("·")}  ${dim("PageUp/PageDown 历史")}  ${dim("·")}  ${dim("Ctrl+G 编辑")}  ${dim("·")}  ${dim("Ctrl+T 思考")}`,
+        ` ${dim("/ help")}  ${dim("·")}  ${dim("滚轮/PageUp/PageDown 历史")}  ${dim("·")}  ${dim("Ctrl+G 编辑")}  ${dim("·")}  ${dim("Ctrl+T 思考")}`,
         Math.max(24, width),
       ),
     ];
@@ -232,7 +233,6 @@ export class CandyTuiSurface {
   readonly #onCycleModel: ((direction: 1 | -1) => void) | undefined;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #removeInterruptListener: () => void;
-  readonly #removeScrollListener: () => void;
   readonly #removeKeybindingListener: () => void;
   readonly #removeInputLogListener: (() => void) | undefined;
   public readonly logDirectory: string;
@@ -252,9 +252,7 @@ export class CandyTuiSurface {
       ((target: string): Promise<number> => launchExternalEditor(target));
     this.logDirectory = path.join(this.#appDataRoot, "logs");
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory);
-    this.#transcript = new CandyTranscript(() =>
-      Math.max(8, this.#terminal.rows - RESERVED_BELOW_TRANSCRIPT_ROWS),
-    );
+    this.#transcript = new CandyTranscript();
     this.#editor = new Editor(this.#tui, EDITOR_THEME, { paddingX: 1 });
     this.#editor.setAutocompleteProvider(
       createCandySlashCommandAutocompleteProvider(options.workspacePath ?? (() => process.cwd())),
@@ -264,51 +262,44 @@ export class CandyTuiSurface {
       this.#editor.setText("");
       if (submittedText.length > 0) this.#onSubmit(submittedText);
     };
-    this.#tui.addChild(
-      new CandyChrome({
-        workspacePath: options.workspacePath,
-        model: options.model,
-        profile: options.profile,
-        worktreeEnabled: options.worktreeEnabled,
-        trustedShellEnabled: options.trustedShellEnabled,
-        taskId: options.taskId,
-        taskPhase: options.taskPhase,
-        recoveryTaskCount: options.recoveryTaskCount,
-      }),
+    const chrome = new CandyChrome({
+      workspacePath: options.workspacePath,
+      model: options.model,
+      profile: options.profile,
+      worktreeEnabled: options.worktreeEnabled,
+      trustedShellEnabled: options.trustedShellEnabled,
+      taskId: options.taskId,
+      taskPhase: options.taskPhase,
+      recoveryTaskCount: options.recoveryTaskCount,
+    });
+    const transcriptViewport = new ScrollView(this.#transcript, {
+      follow: "end",
+      primary: true,
+      overscroll: "contain",
+      scrollbar: "auto",
+    });
+    this.#tui.setLayoutRoot(
+      new VStack([
+        { component: chrome, basis: HEADER_ROWS, shrink: 0 },
+        {
+          component: transcriptViewport,
+          basis: MIN_TRANSCRIPT_ROWS,
+          grow: 1,
+          shrink: 1,
+          minSize: MIN_TRANSCRIPT_ROWS,
+        },
+        { component: new Spacer(1), basis: 1, shrink: 0 },
+        { component: new CandyPromptLabel(), basis: 1, shrink: 0 },
+        { component: this.#editor, basis: "auto", shrink: 0 },
+        { component: new CandyFooter(), basis: 1, shrink: 0 },
+      ]),
     );
-    this.#tui.addChild(this.#transcript);
-    this.#tui.addChild(new Spacer(1));
-    this.#tui.addChild(new CandyPromptLabel());
-    this.#tui.addChild(this.#editor);
-    this.#tui.addChild(new CandyFooter());
     this.#tui.setFocus(this.#editor);
     this.#removeInterruptListener = this.#tui.addInputListener(
       (data: string): { consume: boolean } | undefined => {
         if (!matchesKey(data, "ctrl+c")) return undefined;
         this.#onInterrupt();
         return { consume: true };
-      },
-    );
-    // Transcript scrollback. PageUp/PageDown scroll the transcript only while
-    // it overflows the viewport; otherwise they stay available to the editor
-    // for paging multi-line input. Key releases are filtered so kitty
-    // terminals do not scroll twice per key press. A consumed scroll key must
-    // request a render itself because the TUI only re-renders after the
-    // focused component handles input.
-    this.#removeScrollListener = this.#tui.addInputListener(
-      (data: string): { consume: boolean } | undefined => {
-        if (!this.#transcript.overflowing || isKeyRelease(data)) return undefined;
-        if (matchesKey(data, "pageUp")) {
-          this.#transcript.pageUp();
-          this.#tui.requestRender();
-          return { consume: true };
-        }
-        if (matchesKey(data, "pageDown")) {
-          this.#transcript.pageDown();
-          this.#tui.requestRender();
-          return { consume: true };
-        }
-        return undefined;
       },
     );
     // Application keybindings: copy the last assistant reply (Ctrl+X) and
@@ -432,7 +423,6 @@ export class CandyTuiSurface {
     const wasStarted: boolean = this.#started;
     this.#started = false;
     this.#removeInterruptListener();
-    this.#removeScrollListener();
     this.#removeKeybindingListener();
     this.#removeInputLogListener?.();
     let rendererStopped: boolean = false;

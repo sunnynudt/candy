@@ -64,13 +64,16 @@ try {
         log.includes("no paused or interrupted tasks to resume") &&
         log.includes("usage: /cancel <task-id>") &&
         log.includes("/quit — Exit Candy");
+      const firstTaskMarkerCount = log.match(/terminal-matrix-first-ok/gu)?.length ?? 0;
       if (
         !log.includes("terminal-matrix-first-ok") ||
         !log.includes("terminal-matrix-paste-ok") ||
+        firstTaskMarkerCount < 2 ||
         !commandReferenceEvidence
       )
         throw new Error("Normal terminal matrix output was missing.");
       results.normalInputPasteResize = true;
+      results.transcriptScrollback = true;
       results.commandReference = true;
     } else if (mode === "startup-failure") {
       if (tasks.length !== 0)

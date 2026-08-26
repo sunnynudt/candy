@@ -25,8 +25,16 @@ const engine = {
       await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
       throw new Error("terminal matrix cancelled");
     }
-    const marker = turnCount++ === 0 ? "terminal-matrix-first-ok" : "terminal-matrix-paste-ok";
-    yield { type: "assistant.delta", taskId: input.taskId, text: marker };
+    const turnIndex = turnCount++;
+    const text =
+      turnIndex === 0
+        ? "terminal-matrix-first-ok"
+        : [
+            "terminal-matrix-scroll-oldest",
+            ...Array.from({ length: 48 }, (_, index) => `terminal-matrix-scroll-line-${index}`),
+            "terminal-matrix-paste-ok",
+          ].join("\n");
+    yield { type: "assistant.delta", taskId: input.taskId, text };
     yield { type: "turn.completed", taskId: input.taskId };
   },
 };

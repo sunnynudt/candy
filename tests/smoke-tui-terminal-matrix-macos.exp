@@ -11,6 +11,13 @@ proc send_command {value} {
   send -- "$value\r"
 }
 
+proc send_wheel {button count} {
+  for {set index 0} {$index < $count} {incr index} {
+    send -- "\033\[<$button;10;10M"
+    after 5
+  }
+}
+
 proc wait_for {pattern description} {
   expect {
     -re $pattern {}
@@ -35,6 +42,10 @@ if {$env(CANDY_TERMINAL_MATRIX_MODE) == "normal"} {
   wait_for {new task ready} "paste task"
   send -- "\033\[200~粘贴内容\n第二行\033\[201~\r"
   wait_for {terminal-matrix-paste-ok} "bracketed paste task"
+  send_wheel 64 60
+  wait_for {terminal-matrix-first-ok} "mouse-wheel scrollback"
+  send_wheel 65 60
+  wait_for {terminal-matrix-paste-ok} "mouse-wheel return to tail"
   send_command "/model"
   wait_for {Available models} "bare /model model list"
   wait_for {deepseek-flash} "bare /model model choices"
