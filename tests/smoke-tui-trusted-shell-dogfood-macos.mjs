@@ -169,9 +169,17 @@ try {
   if (diagnosis !== "export function readiness() { return 'ready'; }\n")
     throw new Error("Failing-test diagnosis repair was not applied in its Task Worktree.");
   const transcriptChecks = {
-    understanding: ["读取文件 完成", "bash 完成"],
-    repair: ["读取文件 完成", "编辑文件 完成", "bash 完成"],
-    diagnosis: ["读取文件 完成", "编辑文件 完成", "bash 完成"],
+    understanding: ["读取文件 · candy_read 完成", "运行命令 · candy_bash 完成"],
+    repair: [
+      "读取文件 · candy_read 完成",
+      "编辑文件 · candy_edit 完成",
+      "运行命令 · candy_bash 完成",
+    ],
+    diagnosis: [
+      "读取文件 · candy_read 完成",
+      "编辑文件 · candy_edit 完成",
+      "运行命令 · candy_bash 完成",
+    ],
   };
   const transcriptChecksPassed = {};
   for (const [label, markers] of Object.entries(transcriptChecks)) {

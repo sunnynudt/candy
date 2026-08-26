@@ -1783,14 +1783,14 @@ export class InteractiveTui {
           if (observation.type === "tool.updated") {
             const tool = boundedToolName(observation.tool, activeSecrets);
             const key = toolActivityKey(tool, observation.toolCallId, "updated");
-            this.writeToolActivity(key, `… ${toolActivities.get(key) ?? formatToolLabel(tool)}`);
+            this.writeToolActivity(key, `… ${toolActivities.get(key) ?? formatToolIdentity(tool)}`);
           }
           if (observation.type === "tool.completed") {
             const tool = boundedToolName(observation.tool, activeSecrets);
             this.#taskPhases.set(taskId, "turn running");
             const key = toolActivityKey(tool, observation.toolCallId, "completed");
-            const activity = toolActivities.get(key) ?? formatToolLabel(tool);
-            const summary = `${formatToolLabel(tool)} ${observation.ok ? "完成" : "失败"}`;
+            const activity = toolActivities.get(key) ?? formatToolIdentity(tool);
+            const summary = `${formatToolIdentity(tool)} ${observation.ok ? "完成" : "失败"}`;
             this.writeToolActivity(
               key,
               `${observation.ok ? "✓" : "✗"} ${activity} · ${observation.ok ? "完成" : "失败"}`,
@@ -3000,20 +3000,29 @@ function formatToolActivity(
 ): string {
   const label = formatToolLabel(tool);
   const details = summarizeToolArguments(args, activeSecrets);
-  return details === undefined ? label : `${label}：${details}`;
+  const activity = details === undefined ? label : `${label}：${details}`;
+  return label === tool ? activity : `${activity} · ${tool}`;
 }
 
 function formatToolLabel(tool: string): string {
   const labels: Readonly<Record<string, string>> = {
+    candy_list: "列出目录",
     candy_read: "读取文件",
+    candy_read_image: "读取图片",
     candy_search: "搜索代码",
     candy_edit: "编辑文件",
     candy_write: "写入文件",
     candy_delete: "删除文件",
+    candy_bash: "运行命令",
     candy_web_fetch: "读取网页",
     candy_bash_network: "读取网络资源",
   };
   return labels[tool] ?? tool.replace(/^candy_/u, "").replaceAll("_", " ");
+}
+
+function formatToolIdentity(tool: string): string {
+  const label = formatToolLabel(tool);
+  return label === tool ? tool : `${label} · ${tool}`;
 }
 
 function createToolActivityKeyResolver(

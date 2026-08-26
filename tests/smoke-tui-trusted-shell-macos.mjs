@@ -114,18 +114,22 @@ try {
     throw new Error("Restarted task state retained an execution owner.");
   const toolTexts =
     transcript?.filter((entry) => entry.role === "tool").map((entry) => entry.text) ?? [];
-  const offlineBashRuns = toolTexts.filter((text) => text.includes("bash 完成")).length;
+  const offlineBashRuns = toolTexts.filter((text) =>
+    text.includes("运行命令 · candy_bash 完成"),
+  ).length;
   if (offlineBashRuns < 2)
     throw new Error(
       "The real coding journey did not run offline Bash for diagnosis and verification.",
     );
-  if (!toolTexts.some((text) => text.includes("搜索代码 完成")))
+  if (!toolTexts.some((text) => text.includes("搜索代码 · candy_search 完成")))
     throw new Error("The real coding journey did not use the Candy search tool.");
-  for (const marker of ["读取文件 完成", "编辑文件 完成"]) {
+  for (const marker of ["读取文件 · candy_read 完成", "编辑文件 · candy_edit 完成"]) {
     if (!toolTexts.some((text) => text.includes(marker)))
       throw new Error(`The real coding journey transcript lacks ${marker} tool evidence.`);
   }
-  const networkRuns = toolTexts.filter((text) => text.includes("读取网络资源 完成")).length;
+  const networkRuns = toolTexts.filter((text) =>
+    text.includes("读取网络资源 · candy_bash_network 完成"),
+  ).length;
   if (networkRuns !== 1) throw new Error("Network Bash was not exactly one approved command.");
   store.close();
 

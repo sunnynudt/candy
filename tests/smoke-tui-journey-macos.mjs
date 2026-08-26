@@ -164,15 +164,20 @@ try {
     throw new Error("The first assistant transcript was not restored.");
   if (!transcript?.some((entry) => entry.text.includes("fixture turn 2")))
     throw new Error("The second assistant transcript was not restored.");
-  if (!transcript?.some((entry) => entry.text.includes("list 完成")))
+  if (!transcript?.some((entry) => entry.text.includes("列出目录 · candy_list 完成")))
     throw new Error("The list tool result was not persisted.");
-  for (const marker of ["读取文件 完成", "搜索代码 完成", "写入文件 完成", "编辑文件 完成"]) {
+  for (const marker of [
+    "读取文件 · candy_read 完成",
+    "搜索代码 · candy_search 完成",
+    "写入文件 · candy_write 完成",
+    "编辑文件 · candy_edit 完成",
+  ]) {
     if (!transcript?.some((entry) => entry.text.includes(marker)))
       throw new Error(`The journey transcript lacks ${marker} tool evidence.`);
   }
-  if (!transcript?.some((entry) => entry.text.includes("删除文件 失败")))
+  if (!transcript?.some((entry) => entry.text.includes("删除文件 · candy_delete 失败")))
     throw new Error("The denied delete result was not persisted.");
-  if (!transcript?.some((entry) => entry.text.includes("删除文件 完成")))
+  if (!transcript?.some((entry) => entry.text.includes("删除文件 · candy_delete 完成")))
     throw new Error("The approved delete result was not persisted.");
   if (validatorStatus === "pass" && run?.stopReason !== "validator_succeeded")
     throw new Error("The validator pass was not persisted.");

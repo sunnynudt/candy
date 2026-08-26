@@ -34,8 +34,6 @@ const MAX_LIVE_TRANSCRIPT_BYTES = 192 * 1024;
 const MAX_SEGMENT_BYTES = 64 * 1024;
 /** Horizontal padding matching the plain Text widget this replaces. */
 const CONTENT_PADDING_X = 1;
-/** Comfortable reading measure for prose; evidence and diffs may still use the full terminal. */
-const MAX_READABLE_WIDTH = 112;
 
 const BOLD = (value: string): string => `\x1b[1m${value}\x1b[0m`;
 const DIM = (value: string): string => `\x1b[2m${value}\x1b[0m`;
@@ -145,7 +143,7 @@ export class CandyTranscript implements Component {
         if (markdown !== undefined) {
           appendBlockSeparator(lines, width);
           lines.push(roleLabel("Candy", width, "assistant"));
-          lines.push(...markdown.render(readableWidth(width)));
+          lines.push(...markdown.render(width));
         }
       } else if (segment.kind === "user") {
         appendBlockSeparator(lines, width);
@@ -193,7 +191,7 @@ function renderThinkingLines(text: string, width: number, visible: boolean): str
   const marker = visible ? THINKING_EXPANDED_HINT : THINKING_COLLAPSED_HINT;
   const lines: string[] = [dimLine(marker, width)];
   if (!visible) return lines;
-  const contentWidth = Math.max(1, readableWidth(width) - CONTENT_PADDING_X * 2);
+  const contentWidth = Math.max(1, width - CONTENT_PADDING_X * 2);
   const margin = " ".repeat(CONTENT_PADDING_X + 2);
   for (const line of wrapTextWithAnsi(text, contentWidth - 2)) {
     const styled = DIM(line);
@@ -208,10 +206,6 @@ function dimLine(value: string, width: number): string {
   return truncateToWidth(" ".repeat(CONTENT_PADDING_X) + DIM(value), width);
 }
 
-function readableWidth(width: number): number {
-  return Math.max(1, Math.min(width, MAX_READABLE_WIDTH));
-}
-
 function appendBlockSeparator(lines: string[], width: number): void {
   if (lines.length > 0) lines.push(" ".repeat(width));
 }
@@ -222,7 +216,7 @@ function roleLabel(value: string, width: number, role: "assistant" | "user"): st
 }
 
 function wrapReadableLines(text: string, width: number): string[] {
-  const contentWidth = Math.max(1, readableWidth(width) - CONTENT_PADDING_X * 2);
+  const contentWidth = Math.max(1, width - CONTENT_PADDING_X * 2);
   const margin = " ".repeat(CONTENT_PADDING_X);
   return wrapTextWithAnsi(text, contentWidth).map((line) =>
     truncateToWidth(`${margin}${line}`, width),
@@ -230,7 +224,7 @@ function wrapReadableLines(text: string, width: number): string[] {
 }
 
 function renderToolLines(text: string, width: number): string[] {
-  const contentWidth = Math.max(1, readableWidth(width) - CONTENT_PADDING_X * 2);
+  const contentWidth = Math.max(1, width - CONTENT_PADDING_X * 2);
   const match = text.match(/^([✓✗◇…])\s*(.*)$/su);
   const icon = match?.[1];
   const body = match?.[2] ?? text;
@@ -250,7 +244,7 @@ function renderToolLines(text: string, width: number): string[] {
 }
 
 function renderApprovalLines(text: string, width: number): string[] {
-  const contentWidth = Math.max(1, Math.min(width, 120) - CONTENT_PADDING_X * 2);
+  const contentWidth = Math.max(1, width - CONTENT_PADDING_X * 2);
   const lines: string[] = [];
   for (const sourceLine of text.split("\n")) {
     const value = sourceLine.trimEnd();

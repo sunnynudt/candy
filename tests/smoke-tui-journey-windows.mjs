@@ -163,6 +163,15 @@ try {
     throw new Error("Windows journey task was not persisted completed.");
   if (!transcript?.some((entry) => entry.role === "user" && entry.text.includes("Windows fixture")))
     throw new Error("Windows journey prompt was not persisted.");
+  for (const marker of [
+    "列出目录 · candy_list 完成",
+    "读取文件 · candy_read 完成",
+    "写入文件 · candy_write 完成",
+    "编辑文件 · candy_edit 完成",
+  ]) {
+    if (!transcript?.some((entry) => entry.text.includes(marker)))
+      throw new Error(`The Windows journey transcript lacks ${marker} tool evidence.`);
+  }
   console.log(
     JSON.stringify({
       platform: process.platform,

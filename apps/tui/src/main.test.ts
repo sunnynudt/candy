@@ -806,6 +806,20 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
         yield {
           type: "tool.started",
           taskId: input.taskId,
+          tool: "candy_list",
+          toolCallId: "call-list",
+          args: '{"path":"docs/product"}',
+        };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "candy_list",
+          toolCallId: "call-list",
+          ok: true,
+        };
+        yield {
+          type: "tool.started",
+          taskId: input.taskId,
           tool: "candy_read",
           toolCallId: "call-1",
           args: '{"path":"src/value.ts","token":"sk-proj-tool-output-canary-1234567890"}',
@@ -856,8 +870,11 @@ test("interactive TUI bounds and redacts tool visibility while steering and canc
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("start a long turn");
     terminal.emitInput("\r");
-    const taskOutput = await waitForOutput(terminal, /读取文件：src\/value\.ts/u);
+    const toolActivityPattern =
+      /列出目录：docs\/product · candy_list[\s\S]*读取文件：src\/value\.ts · candy_read/u;
+    const taskOutput = await waitForOutput(terminal, toolActivityPattern);
     const completedOutput = await waitForOutput(terminal, /x{20}[\s\S]*完成/u);
+    assert.match(taskOutput, toolActivityPattern);
     assert.doesNotMatch(taskOutput, /x{150}/u);
     assert.match(taskOutput, /src\/value\.ts/u);
     assert.doesNotMatch(taskOutput, /partial fixture output/u);

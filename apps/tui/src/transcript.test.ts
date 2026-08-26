@@ -40,12 +40,14 @@ test("user and assistant turns have quiet role labels", () => {
   assert.match(output, /我会先检查差异/u);
 });
 
-test("assistant prose uses a readable measure on wide terminals", () => {
+test("assistant markdown reflows to the current terminal width", () => {
   const transcript = new CandyTranscript();
   transcript.append("word ".repeat(80), "assistant");
-  const contentLines = renderLines(transcript, 200).filter((line) => line.includes("word"));
-  assert.ok(contentLines.length > 1);
-  assert.ok(contentLines.every((line) => visibleWidth(line.trimEnd()) <= 112));
+  const narrowLines = renderLines(transcript, 80).filter((line) => line.includes("word"));
+  const wideLines = renderLines(transcript, 200).filter((line) => line.includes("word"));
+  assert.ok(wideLines.length < narrowLines.length);
+  assert.ok(wideLines.some((line) => visibleWidth(line.trimEnd()) > 112));
+  assert.ok(wideLines.every((line) => visibleWidth(line.trimEnd()) <= 200));
 });
 
 test("tool activity updates in place and keeps one bounded evidence row", () => {
