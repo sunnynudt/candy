@@ -78,6 +78,7 @@
 | `/trusted-shell`（`/shell`） | `/trusted-shell on|off` | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
 | `/prompt` | `/prompt <name> [args]` | 运行 Candy 自有提示词模板 |
 | `/prompts` | `/prompts` | 列出提示词模板 |
+| `/skills` | `/skills` | 列出 Candy 自有技能（名称/描述/目录） |
 | `/resources` | `/resources` | 显示 Candy 资源诊断 |
 | `/help` | `/help` | 显示完整命令参考 |
 
@@ -90,6 +91,12 @@
 - `Ctrl+P` 在模型间向前循环（flash → pro → M3），`Ctrl+Shift+P` 向后循环；与 `/model` 相同的校验（图片附件需 M3、活动 turn 不可切换）会拒绝并说明原因。
 - 模型推理过程（thinking 流）默认折叠为一行暗色标记 `[思考 · 已折叠]`，按 `Ctrl+T` 展开/收起暗色推理正文；thinking 只做实时展示，不写入任务存档（`/transcript` 回放不含推理），也不会进入 `Ctrl+X` 的复制内容。
 - `Ctrl+G` 用外部编辑器编辑当前输入行：按 `$VISUAL` → `$EDITOR` → 平台默认（macOS `nano` / Windows `notepad.exe`）解析命令（支持 `code -w` 这类带参数值）；编辑期间 TUI 挂起，保存退出后输入回填（编辑器追加的尾部换行会被去掉，CRLF 归一为 LF），非零退出或启动失败时输入保持不变；临时文件位于 Candy 应用数据目录，退出后必删。
+
+## Candy 自有技能
+
+- 技能放在 Candy 应用数据目录的 `skills/<名称>/SKILL.md`，frontmatter 含 `name` 和 `description`；加载后模型可通过模型调用契约使用（与 Pi 技能目录隔离，Pi 的 `~/.pi` 资源不会进入 Candy 会话边界）。
+- `/skills` 只列出技能元数据（名称/描述/目录），技能正文不进入 TUI 输出；`/resources` 显示解析诊断（缺失 frontmatter、重名冲突等）。
+- 文件大小、目录深度、条目数与总字节均有上界；符号链接、越界路径与凭据形内容会被拒绝或脱敏。
 
 ## 安全边界
 

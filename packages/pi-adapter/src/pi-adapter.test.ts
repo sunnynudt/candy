@@ -28,6 +28,7 @@ import {
   MODEL_CATALOG,
   PI_COMPATIBILITY_VERSION,
   listPiPublicExports,
+  loadCandySkillInfos,
   PiAgentEngine,
   type PiAgentObservation,
   projectPiLifecycleObservation,
@@ -1526,6 +1527,30 @@ test("Candy restricted resource loader redacts active secrets from model-visible
     assert.equal(skill?.filePath.includes(activeSecret), false);
     assert.equal(skill?.sourceInfo.path.includes(activeSecret), false);
     assert.equal(skill?.filePath.includes("[REDACTED]"), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadCandySkillInfos exposes only bounded skill metadata and diagnostics", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-skill-infos-"));
+  await mkdir(path.join(root, "skills", "example"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "example", "SKILL.md"),
+    "---\nname: example\ndescription: fixture skill\n---\n# Example\ncontent\n",
+  );
+  await mkdir(path.join(root, "skills", "broken"), { recursive: true });
+  await writeFile(path.join(root, "skills", "broken", "SKILL.md"), "no frontmatter here\n");
+  try {
+    const result = loadCandySkillInfos(root);
+    assert.equal(result.skills.length, 1);
+    assert.equal(result.skills[0]?.name, "example");
+    assert.equal(result.skills[0]?.description, "fixture skill");
+    assert.ok(result.skills[0]?.baseDir.endsWith(path.join("skills", "example")) ?? false);
+    assert.ok(result.skills[0]?.path.endsWith(path.join("skills", "example", "SKILL.md")));
+    assert.equal(result.diagnostics.length, 1);
+    assert.equal(result.diagnostics[0]?.type, "error");
+    assert.match(result.diagnostics[0]?.message ?? "", /frontmatter name and description/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

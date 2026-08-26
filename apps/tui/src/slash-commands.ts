@@ -100,6 +100,10 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "Show Candy resource diagnostics",
   },
   {
+    name: "skills",
+    description: "List Candy-owned skills",
+  },
+  {
     name: "prompts",
     description: "List Candy prompt templates",
   },

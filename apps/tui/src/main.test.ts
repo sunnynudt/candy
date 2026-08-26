@@ -263,6 +263,35 @@ test("thinking streams render dim, stay out of the store, and never enter the co
   }
 });
 
+test("/skills lists Candy-owned skills and their diagnostics", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-"));
+  await mkdir(path.join(root, "skills", "fixture"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "fixture", "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: fixture skill description\n---\ncontent\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skills");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /fixture-skill/u);
+    assert.match(output, /fixture skill description/u);
+    assert.match(output, /app-data\/skills\//u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
   const terminal = new FakeTerminal();

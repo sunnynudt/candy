@@ -13,6 +13,7 @@ import {
   type CandyPromptTemplateInfo,
   loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
+  loadCandySkillInfos,
   type PiAgentEngineInput,
   type PiAgentObservation,
   listPiPublicExports,
@@ -414,7 +415,7 @@ export class InteractiveTui {
         "            /credentials set|replace|delete <deepseek|minimax-cn>",
         "Review      /changes · /diff [path] · /apply · /discard · /validate",
         "Control     /steer /follow-up <text> · /pause /resume /cancel <task-id>",
-        "Personal    /prompts · /prompt <name> [args] · /resources · /transcript",
+        "Personal    /prompts · /prompt <name> [args] · /skills · /resources · /transcript",
         "Modes       /profile read-only|auto · /worktree on|off · /trusted-shell on|off · /validator <exec>",
         "Help        /help — 完整命令参考（full command reference）",
         "Quit        /quit",
@@ -481,6 +482,8 @@ export class InteractiveTui {
       this.showTranscript(trimmed.slice(11).trim());
     } else if (trimmed === "/resources") {
       this.showResourceDiagnostics();
+    } else if (trimmed === "/skills") {
+      this.listSkills();
     } else if (trimmed === "/prompts") {
       this.listPromptTemplates();
     } else if (trimmed === "/prompt" || trimmed.startsWith("/prompt ")) {
@@ -1524,6 +1527,23 @@ export class InteractiveTui {
         ].join("\n"),
       ),
     );
+  }
+
+  private listSkills(): void {
+    const result = loadCandySkillInfos(this.#appDataRoot, this.activeSecretsSnapshot());
+    for (const diagnostic of result.diagnostics) {
+      this.write(`skill resource ${diagnostic.type}: ${diagnostic.message}\n`);
+    }
+    if (result.skills.length === 0) {
+      this.write("no Candy skills found\n");
+      return;
+    }
+    this.write(
+      "Candy skills (loaded into the agent context; place SKILL.md files under app-data/skills/):\n",
+    );
+    for (const skill of result.skills) {
+      this.write(`${skill.name}\t${skill.description}\t${skill.baseDir}\n`);
+    }
   }
 
   private listPromptTemplates(): void {

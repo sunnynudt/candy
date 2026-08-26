@@ -46,6 +46,13 @@ export interface CandyPromptTemplateInfo {
   readonly content: string;
 }
 
+export interface CandySkillInfo {
+  readonly name: string;
+  readonly description: string;
+  readonly path: string;
+  readonly baseDir: string;
+}
+
 export interface CandyPromptDiagnosticInfo {
   readonly type: string;
   readonly message: string;
@@ -54,6 +61,45 @@ export interface CandyPromptDiagnosticInfo {
 
 export interface CandyResourceDiagnosticInfo extends CandyPromptDiagnosticInfo {
   readonly category: "skill" | "prompt";
+}
+
+/**
+ * Read only metadata for Candy-owned skills. Skill contents stay behind the
+ * restricted loader boundary and enter the agent context only through the
+ * model-invocation contract.
+ */
+export function loadCandySkillInfos(
+  candyRoot: string,
+  activeSecrets: readonly string[] = [],
+): {
+  readonly skills: readonly CandySkillInfo[];
+  readonly diagnostics: readonly CandySkillDiagnosticInfo[];
+} {
+  const result = new CandyRestrictedResourceLoader(
+    candyRoot,
+    undefined,
+    activeSecrets,
+    candyRoot,
+  ).getSkills();
+  return {
+    skills: result.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.filePath,
+      baseDir: skill.baseDir,
+    })),
+    diagnostics: result.diagnostics.map((diagnostic) => ({
+      type: diagnostic.type,
+      message: diagnostic.message,
+      path: diagnostic.path ?? "<candy-resource>",
+    })),
+  };
+}
+
+export interface CandySkillDiagnosticInfo {
+  readonly type: string;
+  readonly message: string;
+  readonly path: string;
 }
 
 /**
