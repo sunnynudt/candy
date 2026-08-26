@@ -106,6 +106,26 @@ export interface CandySkillDiagnosticInfo {
 }
 
 /**
+ * Read the redacted body of a loaded skill for explicit invocation
+ * (/skill <name>). The content is bounded, symlink-free, and redacted by
+ * the restricted loader; returns undefined when the skill is unknown.
+ */
+export function loadCandySkillContent(
+  candyRoot: string,
+  name: string,
+  activeSecrets: readonly string[] = [],
+  skillRoots: readonly string[] = [],
+): string | undefined {
+  return new CandyRestrictedResourceLoader(
+    candyRoot,
+    undefined,
+    activeSecrets,
+    candyRoot,
+    skillRoots,
+  ).getSkillContent(name);
+}
+
+/**
  * Read the user-invokable Candy prompt templates without exposing Pi's
  * unrestricted resource discovery surface.
  */

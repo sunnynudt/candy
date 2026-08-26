@@ -127,6 +127,8 @@ const DEFAULT_FILE_SYSTEM: RestrictedResourceFileSystem = {
  */
 export class CandyRestrictedResourceLoader implements ResourceLoader {
   private readonly extensionRuntime = createExtensionRuntime();
+  private readonly fileSystem: RestrictedResourceFileSystem;
+  private readonly activeSecrets: readonly string[];
 
   private readonly agentsFiles: Array<{ path: string; content: string }>;
   private readonly skills: Skill[];
@@ -134,6 +136,7 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
   private readonly skillReadRoots: string[];
   private readonly prompts: PromptTemplate[];
   private readonly promptDiagnostics: ResourceDiagnostic[];
+  private readonly skillContentPaths: ReadonlyMap<string, string>;
   private readonly systemPrompt: string;
   private readonly systemPromptSource: { path: string };
   private readonly appendSystemPrompt: string[];
@@ -146,6 +149,8 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
     candyRoot?: string,
     skillRoots: readonly string[] = [],
   ) {
+    this.fileSystem = fileSystem;
+    this.activeSecrets = activeSecrets;
     this.agentsFiles = readApprovedContextFile(cwd, fileSystem, activeSecrets);
     const resources = readCandyResources(candyRoot, fileSystem, activeSecrets);
     const skills = loadCandySkills(
@@ -159,6 +164,7 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
     this.skills = skills.resources;
     this.skillDiagnostics = skills.diagnostics;
     this.skillReadRoots = skills.readRoots;
+    this.skillContentPaths = skills.contentPaths;
     this.prompts = resources.prompts;
     this.promptDiagnostics = resources.promptDiagnostics;
     this.systemPrompt = resources.systemPrompt;
@@ -173,6 +179,20 @@ export class CandyRestrictedResourceLoader implements ResourceLoader {
    */
   public getSkillReadRoots(): readonly string[] {
     return [...this.skillReadRoots];
+  }
+
+  /**
+   * Read the redacted body of a loaded skill for explicit invocation
+   * (/skill <name>). Revalidates the file through the restricted boundary so
+   * a changed or retargeted skill fails closed. Returns undefined when the
+   * skill is unknown or no longer readable.
+   */
+  public getSkillContent(name: string): string | undefined {
+    const filePath = this.skillContentPaths.get(name);
+    if (filePath === undefined) return undefined;
+    const root = path.dirname(filePath);
+    const file = readCandyFile(filePath, root, this.fileSystem, this.activeSecrets);
+    return file?.content;
   }
 
   public getExtensions(): LoadExtensionsResult {
@@ -294,6 +314,11 @@ interface CandySkillsResult {
   readonly diagnostics: ResourceDiagnostic[];
   /** Real base directories of loaded skills, used only for read-root IO validation. */
   readonly readRoots: string[];
+  /**
+   * Real SKILL.md paths keyed by skill name, used only for explicit skill
+   * invocation; the model-visible Skill objects keep the redacted paths.
+   */
+  readonly contentPaths: ReadonlyMap<string, string>;
 }
 
 function loadCandySkills(
@@ -304,6 +329,7 @@ function loadCandySkills(
   const resources: Skill[] = [];
   const diagnostics: ResourceDiagnostic[] = [];
   const readRoots: string[] = [];
+  const contentPaths = new Map<string, string>();
   for (const directory of roots) {
     const walk = listCandyFiles(directory, fileSystem);
     for (const filePath of walk.files.filter(
@@ -315,7 +341,7 @@ function loadCandySkills(
           message: `skill budget exhausted at ${MAX_MODEL_SKILLS}; higher-priority roots win`,
           path: directory,
         });
-        return { resources, diagnostics, readRoots };
+        return { resources, diagnostics, readRoots, contentPaths };
       }
       const file = readCandyFile(
         filePath,
@@ -359,9 +385,10 @@ function loadCandySkills(
         disableModelInvocation: document.frontmatter["disable-model-invocation"] === true,
       });
       readRoots.push(path.dirname(filePath));
+      contentPaths.set(name, filePath);
     }
   }
-  return { resources, diagnostics, readRoots };
+  return { resources, diagnostics, readRoots, contentPaths };
 }
 
 function loadCandyPrompts(

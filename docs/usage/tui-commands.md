@@ -78,7 +78,8 @@
 | `/trusted-shell`（`/shell`） | `/trusted-shell on|off` | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
 | `/prompt` | `/prompt <name> [args]` | 运行 Candy 自有提示词模板 |
 | `/prompts` | `/prompts` | 列出提示词模板 |
-| `/skills` | `/skills` | 列出 Candy 自有技能（名称/描述/目录） |
+| `/skills` | `/skills` | 列出 Candy 自有技能（名称/描述/来源/目录） |
+| `/skill` | `/skill <name> [goal]` | 显式加载技能正文并提交任务（无参列出技能） |
 | `/resources` | `/resources` | 显示 Candy 资源诊断 |
 | `/help` | `/help` | 显示完整命令参考 |
 
@@ -96,6 +97,7 @@
 
 - 技能按优先级从多个根加载：① Candy 应用数据目录的 `skills/<名称>/SKILL.md`（Candy-owned，最高优先）→ ② `~/.agents/skills/`（agent 无关共享目录，默认启用，与 Pi/Claude Code 共享）→ ③ `CANDY_SKILL_DIRS` 环境变量列出的目录（`:` 或 `;` 分隔，`~` 可展开，如 `~/.pi/agent/skills`、`~/.claude/skills`、`~/.config/opencode/skills`）。重名时高优先级生效，`/resources` 显示 collision 诊断。
 - `/skills` 列出技能元数据（名称/描述/来源 `candy|shared|configured`/目录）；模型可见清单上限 80 个技能，超出时更高优先级根优先并在诊断中说明。
+- `/skill <name> [goal]` 显式触发技能：把该技能的 SKILL.md 正文（受限读、脱敏、有界）与可选目标拼成 prompt 提交，适合强制使用某个技能（如 `/skill tdd 为这个函数补测试`）；无参 `/skill` 列出全部技能。
 - 已加载技能目录对 `candy_read`/`candy_list` 开放只读（绝对路径、64 KiB 单文件有界、拒绝符号链接、realpath 越界校验、凭据脱敏）；**写/删/搜索不进入技能目录**。
 - 技能脚本（`scripts/`）是普通文件：通过 Trusted Shell 显式执行（`bash <技能目录>/scripts/xxx.sh`），走常规命令策略与审批；用户 PATH 中的全局 CLI（如 `ones2`）在 Trusted Shell 中可用。Candy 从不自动执行技能内容。
 - 文件大小、目录深度、条目数与总字节均有上界；符号链接、越界路径与凭据形内容会被拒绝或脱敏。Pi 的 `~/.pi` 资源、扩展、包、主题与可执行资源不会进入 Candy 会话边界。

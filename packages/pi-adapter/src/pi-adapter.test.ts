@@ -1746,6 +1746,30 @@ test("Candy restricted loader follows directory symlinks in shared skill roots a
   }
 });
 
+test("Candy restricted loader returns redacted skill content for explicit invocation", async () => {
+  const candyRoot = await mkdtemp(path.join(tmpdir(), "candy-skill-content-"));
+  await mkdir(path.join(candyRoot, "skills", "fixture"), { recursive: true });
+  await writeFile(
+    path.join(candyRoot, "skills", "fixture", "SKILL.md"),
+    "---\nname: fixture\ndescription: content fixture\n---\n# Fixture skill\nvalue: fixture-content-secret\n",
+  );
+  try {
+    const loader = new CandyRestrictedResourceLoader(
+      candyRoot,
+      undefined,
+      ["fixture-content-secret"],
+      candyRoot,
+    );
+    const content = loader.getSkillContent("fixture");
+    assert.ok(content?.includes("# Fixture skill"));
+    assert.ok(content?.includes("[REDACTED]"));
+    assert.equal(content?.includes("fixture-content-secret"), false);
+    assert.equal(loader.getSkillContent("missing"), undefined);
+  } finally {
+    await rm(candyRoot, { recursive: true, force: true });
+  }
+});
+
 test("Pi agent sanitizes provider failures before exposing them to Runtime", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-provider-error-"));
   const originalFetch = globalThis.fetch;

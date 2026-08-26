@@ -104,6 +104,13 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "List Candy-owned skills",
   },
   {
+    name: "skill",
+    argumentHint: "<name> [prompt]",
+    description: "Run a Candy skill with an optional goal",
+    requiredArgument: true,
+    usage: "/skill <name> [prompt]",
+  },
+  {
     name: "prompts",
     description: "List Candy prompt templates",
   },

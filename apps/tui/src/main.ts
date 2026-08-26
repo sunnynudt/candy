@@ -13,6 +13,7 @@ import {
   type CandyPromptTemplateInfo,
   loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
+  loadCandySkillContent,
   loadCandySkillInfos,
   resolveCandySkillRoots,
   type PiAgentEngineInput,
@@ -489,6 +490,8 @@ export class InteractiveTui {
       this.showResourceDiagnostics();
     } else if (trimmed === "/skills") {
       this.listSkills();
+    } else if (trimmed === "/skill" || trimmed.startsWith("/skill ")) {
+      this.invokeSkill(trimmed.slice(6).trim());
     } else if (trimmed === "/prompts") {
       this.listPromptTemplates();
     } else if (trimmed === "/prompt" || trimmed.startsWith("/prompt ")) {
@@ -1532,6 +1535,36 @@ export class InteractiveTui {
         ].join("\n"),
       ),
     );
+  }
+
+  private invokeSkill(value: string): void {
+    const separator = value.search(/[\s]/u);
+    const name = separator < 0 ? value : value.slice(0, separator);
+    const goal = separator < 0 ? "" : value.slice(separator).trim();
+    if (name.length === 0) {
+      this.write("usage: /skill <name> [goal]\n");
+      this.listSkills();
+      return;
+    }
+    if (goal.length > MAX_TUI_TURN_MESSAGE_CHARS || containsControlCharacter(goal)) {
+      this.write("skill goal rejected: text is outside the allowed bounds\n");
+      return;
+    }
+    const content = loadCandySkillContent(
+      this.#appDataRoot,
+      name,
+      this.activeSecretsSnapshot(),
+      this.#skillRoots,
+    );
+    if (content === undefined || content.trim().length === 0) {
+      this.write(`skill not found or unreadable: ${name}\n`);
+      return;
+    }
+    const prompt =
+      `按照下面的技能执行任务（skill: ${name}）。\n\n` +
+      `---\n${content}\n---\n\n` +
+      (goal.length === 0 ? "请按技能指示执行。\n" : `任务目标：${goal}\n`);
+    this.submitPrompt(prompt);
   }
 
   private listSkills(): void {

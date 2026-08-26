@@ -336,6 +336,113 @@ test("/skills marks shared and configured skill sources", async () => {
   }
 });
 
+test("/skill submits the skill body with an optional goal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-run-"));
+  await mkdir(path.join(root, "skills", "fixture"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "fixture", "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: fixture skill description\n---\n# Fixture Instructions\nstep one; step two\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn(input) {
+          prompts.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "done" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill fixture-skill 分析当前工作区");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /done/u);
+    assert.match(output, /preparing task-/u);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /skill: fixture-skill/u);
+    assert.match(prompts[0] ?? "", /# Fixture Instructions/u);
+    assert.match(prompts[0] ?? "", /step one; step two/u);
+    assert.match(prompts[0] ?? "", /任务目标：分析当前工作区/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skill without a name lists skills and does not submit a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-list-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "never" };
+          throw new Error("bare /skill must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /usage: \/skill <name> \[goal\]/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(turnCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skill reports an unknown skill without submitting a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-missing-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "never" };
+          throw new Error("unknown skill must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill does-not-exist");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /skill not found or unreadable: does-not-exist/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(turnCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
   const terminal = new FakeTerminal();
