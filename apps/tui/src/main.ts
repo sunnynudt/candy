@@ -393,6 +393,13 @@ export class InteractiveTui {
     this.#surface = new CandyTuiSurface({
       appDataRoot: this.#appDataRoot,
       workspacePath: () => this.#workspacePath,
+      model: () => this.#selectedModel,
+      profile: () => this.#approvalProfile,
+      worktreeEnabled: () => this.#worktreeEnabled,
+      trustedShellEnabled: () => this.#trustedShellEnabled,
+      taskId: () => this.#currentTaskId,
+      taskPhase: () =>
+        this.#currentTaskId === undefined ? undefined : this.#taskPhases.get(this.#currentTaskId),
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -405,32 +412,6 @@ export class InteractiveTui {
       onCopyLastAssistant: (): void => this.copyLastAssistant(),
       onCycleModel: (direction: 1 | -1): void => this.cycleModel(direction),
     });
-    this.write(
-      [
-        "Candy TUI — local-first, one agent per task",
-        "你好！这是 Candy 本地编码助手：直接输入任务描述即开始，/new 新建任务；",
-        "默认使用 Auto + 当前工作区（允许已有未提交修改）；/worktree on 可启用隔离。",
-        "/profile read-only 切换只读；支持的平台上 /trusted-shell on 会自动启用隔离。",
-        "/quit 退出。",
-        "",
-        "命令参考（Commands）:",
-        "Start       type a prompt, or /new [prompt]",
-        "Context     type @file or @directory to attach workspace context",
-        "Workspace   /workspace <path> · /use <task-id> · /tasks",
-        "Provider    /model deepseek-flash|deepseek-pro|minimax-m3 · /attach <path>",
-        "            /credentials set|replace|delete <deepseek|minimax-cn>",
-        "Review      /changes · /diff [path] · /apply · /discard · /validate",
-        "Control     /steer /follow-up <text> · /pause /resume /cancel <task-id>",
-        "Personal    /prompts · /prompt <name> [args] · /skills · /resources · /transcript",
-        "Modes       /profile read-only|auto · /worktree on|off · /trusted-shell on|off · /validator <exec>",
-        "Help        /help — 完整命令参考（full command reference）",
-        "Quit        /quit",
-        "",
-      ].join("\n") + "\n",
-    );
-    this.write(
-      `Profile: auto（可增删查改）· Worktree: ${this.#worktreeEnabled ? "on（隔离）" : "off（直接模式）"}· Trusted Shell Auto: off（关闭）\n`,
-    );
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });

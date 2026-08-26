@@ -5,10 +5,11 @@ import {
   Editor,
   ProcessTerminal,
   Spacer,
-  Text,
   TuiAltScreen,
   isKeyRelease,
   matchesKey,
+  visibleWidth,
+  type Component,
   type EditorTheme,
   Key,
 } from "@earendil-works/pi-tui";
@@ -23,8 +24,143 @@ const TUI_DEBUG_ENVIRONMENT_NAMES: readonly string[] = [
   "PI_DEBUG_REDRAW",
 ];
 
-/** Rows below the transcript viewport: spacer + input hint + editor border + editor content + slack. */
-const RESERVED_BELOW_TRANSCRIPT_ROWS = 6;
+/** Rows occupied by the fixed chrome around the live transcript. */
+const HEADER_ROWS = 3;
+const FOOTER_ROWS = 6;
+const RESERVED_BELOW_TRANSCRIPT_ROWS = HEADER_ROWS + FOOTER_ROWS;
+
+const ANSI_RESET = "\x1b[0m";
+const ANSI_BOLD = "\x1b[1m";
+const ANSI_DIM = "\x1b[2m";
+const ANSI_ACCENT = "\x1b[38;5;75m";
+const ANSI_MINT = "\x1b[38;5;78m";
+const ANSI_TEXT = "\x1b[38;5;252m";
+const ANSI_SOFT = "\x1b[38;5;117m";
+const ANSI_WARNING = "\x1b[38;5;221m";
+
+function tint(value: string, color: string): string {
+  return `${color}${value}${ANSI_RESET}`;
+}
+
+function bold(value: string): string {
+  return `${ANSI_BOLD}${value}${ANSI_RESET}`;
+}
+
+function dim(value: string): string {
+  return `${ANSI_DIM}${value}${ANSI_RESET}`;
+}
+
+function truncateMiddle(value: string, maxWidth: number): string {
+  if (visibleWidth(value) <= maxWidth) return value;
+  if (value.includes("\x1b")) return "…";
+  if (maxWidth <= 3) return value.slice(0, maxWidth);
+  const tailWidth = Math.max(1, Math.floor((maxWidth - 3) / 2));
+  const headWidth = Math.max(1, maxWidth - 3 - tailWidth);
+  return `${value.slice(0, headWidth)}...${value.slice(-tailWidth)}`;
+}
+
+function composeChromeLine(left: string, right: string, width: number): string {
+  const leftWidth = visibleWidth(left);
+  const rightWidth = visibleWidth(right);
+  if (leftWidth + rightWidth + 2 > width) {
+    return truncateMiddle(`${left}  ${right}`, width);
+  }
+  return `${left}${" ".repeat(width - leftWidth - rightWidth)}${right}`;
+}
+
+function paddedLine(value: string, width: number): string {
+  const clipped = truncateMiddle(value, width);
+  return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
+}
+
+function shortModel(value: string): string {
+  return value.replace("deepseek-v4-", "DS ").replace("MiniMax-M3", "MiniMax M3");
+}
+
+function shortTask(value: string | undefined): string {
+  if (value === undefined || value.length === 0) return "no active task";
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
+}
+
+interface CandyChromeOptions {
+  readonly workspacePath: (() => string) | undefined;
+  readonly model: (() => string) | undefined;
+  readonly profile: (() => string) | undefined;
+  readonly worktreeEnabled: (() => boolean) | undefined;
+  readonly trustedShellEnabled: (() => boolean) | undefined;
+  readonly taskId: (() => string | undefined) | undefined;
+  readonly taskPhase: (() => string | undefined) | undefined;
+}
+
+/** Quiet, fixed chrome that keeps the transcript focused on the current turn. */
+class CandyChrome implements Component {
+  readonly #options: CandyChromeOptions;
+
+  public constructor(options: CandyChromeOptions) {
+    this.#options = options;
+  }
+
+  public invalidate(): void {}
+
+  public render(width: number): string[] {
+    const safeWidth = Math.max(24, width);
+    const workspace = truncateMiddle(this.#options.workspacePath?.() ?? process.cwd(), 40);
+    const model = shortModel(this.#options.model?.() ?? "deepseek-v4-flash");
+    const phase = this.#options.taskPhase?.();
+    const status = phase?.includes("approval")
+      ? tint("● waiting approval", ANSI_WARNING)
+      : phase !== undefined
+        ? tint(`● ${truncateMiddle(phase, 24)}`, ANSI_MINT)
+        : tint("● ready", ANSI_MINT);
+    const profile = this.#options.profile?.() ?? "auto";
+    const worktree = this.#options.worktreeEnabled?.() === true ? "isolated" : "direct";
+    const shell = this.#options.trustedShellEnabled?.() === true ? "shell on" : "shell off";
+    const task = shortTask(this.#options.taskId?.());
+
+    return [
+      composeChromeLine(
+        ` ${tint("●", ANSI_ACCENT)} ${bold("Candy")} ${dim("local coding studio")}`,
+        `${dim("⌘K")} ${tint("commands", ANSI_SOFT)}`,
+        safeWidth,
+      ),
+      composeChromeLine(
+        ` ${dim("workspace")} ${tint(workspace, ANSI_TEXT)}`,
+        `${dim("model")} ${tint(model, ANSI_SOFT)}`,
+        safeWidth,
+      ),
+      paddedLine(
+        ` ${dim("⌁")} ${tint(profile, ANSI_TEXT)}  ${dim("·")} ${tint(worktree, ANSI_TEXT)}  ${dim("·")} ${tint(shell, ANSI_TEXT)}  ${dim("·")} ${status}  ${dim("·")} ${tint(task, ANSI_TEXT)}`,
+        safeWidth,
+      ),
+    ];
+  }
+}
+
+class CandyPromptLabel implements Component {
+  public invalidate(): void {}
+
+  public render(width: number): string[] {
+    return [
+      paddedLine(
+        ` ${tint("›", ANSI_ACCENT)} ${bold("Ask Candy")} ${dim("· 输入任务，或键入 / 查看命令")}`,
+        Math.max(24, width),
+      ),
+    ];
+  }
+}
+
+class CandyFooter implements Component {
+  public invalidate(): void {}
+
+  public render(width: number): string[] {
+    return [
+      paddedLine(
+        ` ${dim("/ help")}  ${dim("·")}  ${dim("PageUp/PageDown 历史")}  ${dim("·")}  ${dim("Ctrl+G 编辑")}  ${dim("·")}  ${dim("Ctrl+T 思考")}`,
+        Math.max(24, width),
+      ),
+    ];
+  }
+}
 
 const EDITOR_THEME: EditorTheme = {
   borderColor: (value: string): string => value,
@@ -58,6 +194,12 @@ export interface CandyTuiTerminal {
 export interface CandyTuiSurfaceOptions {
   readonly appDataRoot: string;
   readonly workspacePath?: () => string;
+  readonly model?: () => string;
+  readonly profile?: () => string;
+  readonly worktreeEnabled?: () => boolean;
+  readonly trustedShellEnabled?: () => boolean;
+  readonly taskId?: () => string | undefined;
+  readonly taskPhase?: () => string | undefined;
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -115,10 +257,22 @@ export class CandyTuiSurface {
       this.#editor.setText("");
       if (submittedText.length > 0) this.#onSubmit(submittedText);
     };
+    this.#tui.addChild(
+      new CandyChrome({
+        workspacePath: options.workspacePath,
+        model: options.model,
+        profile: options.profile,
+        worktreeEnabled: options.worktreeEnabled,
+        trustedShellEnabled: options.trustedShellEnabled,
+        taskId: options.taskId,
+        taskPhase: options.taskPhase,
+      }),
+    );
     this.#tui.addChild(this.#transcript);
     this.#tui.addChild(new Spacer(1));
-    this.#tui.addChild(new Text("输入 Input >（最底部输入行，回车提交）"));
+    this.#tui.addChild(new CandyPromptLabel());
     this.#tui.addChild(this.#editor);
+    this.#tui.addChild(new CandyFooter());
     this.#tui.setFocus(this.#editor);
     this.#removeInterruptListener = this.#tui.addInputListener(
       (data: string): { consume: boolean } | undefined => {

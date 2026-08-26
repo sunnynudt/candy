@@ -2830,7 +2830,6 @@ test("interactive TUI selects each explicit model through the slash command", as
       terminal.emitInput(":new");
       terminal.emitInput("\r");
       await waitForOutput(terminal, /new task ready/u);
-      assert.match(terminal.writes.join(""), /Provider\s+\/model/u);
       terminal.emitInput(`/model ${alias}`);
       terminal.emitInput("\r");
       await waitForOutput(terminal, new RegExp(`model selected: ${model}`, "u"));
