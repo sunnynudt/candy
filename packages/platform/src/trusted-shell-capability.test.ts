@@ -13,7 +13,7 @@ test("Windows Trusted Shell rejects non-Windows and non-x64 hosts", () => {
   );
   assert.equal(
     getWindowsTrustedShellCapabilityStatus({ platform: "win32", architecture: "ia32" }).reason,
-    "Windows Trusted Shell Auto requires an x64 host.",
+    "Windows local commands require an x64 host.",
   );
 });
 

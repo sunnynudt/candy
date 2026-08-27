@@ -742,14 +742,14 @@ export class InteractiveTui {
       this.localCommandsEnabled();
     if (trustedShell) {
       if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
-        throw new Error("macOS Trusted Shell Auto is unavailable on this platform.");
-      if (approvalProfile !== "auto")
-        throw new Error("Trusted Shell Auto requires the Auto approval profile.");
+        throw new Error("Local commands are unavailable on this platform.");
+      if (approvalProfile !== "auto") throw new Error("Local commands require the Auto profile.");
       if (this.#shellRunner === undefined)
-        throw new Error("Trusted Shell Auto is unavailable on this installation.");
-      if (!this.#worktreeEnabled) throw new Error("Trusted Shell Auto requires /worktree on.");
+        throw new Error("Local commands are unavailable in this installation.");
+      if (!this.#worktreeEnabled)
+        throw new Error("Local commands require an isolated Task Worktree.");
       if (workspaceBaseline === undefined)
-        throw new Error("Trusted Shell Auto requires a Git-backed Task Worktree.");
+        throw new Error("Local commands require a Git-backed Task Worktree.");
     }
     if (approvalProfile === "auto" && workspaceBaseline !== undefined && !this.#worktreeEnabled) {
       const directTaskActive = this.#store
@@ -1974,7 +1974,7 @@ export class InteractiveTui {
         throw new Error(
           process.platform === "win32"
             ? getWindowsTrustedShellCapabilityStatus().reason
-            : "Trusted Shell Auto is disabled pending the macOS G2 gate.",
+            : "Local commands are unavailable because this build has not passed the macOS containment gate.",
         );
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
       const trustedGitCommonDirectory =
@@ -2953,13 +2953,13 @@ export class InteractiveTui {
     const executionPath = metadata.worktreePath ?? metadata.workspacePath;
     if (!metadata.trustedShell) return executionPath;
     if (metadata.worktreePath === undefined)
-      throw new Error("Trusted Shell Auto requires a Git Task Worktree.");
+      throw new Error("Local commands require a Git Task Worktree.");
     const [canonicalPath, root] = await Promise.all([
       realpath(metadata.worktreePath).catch(() => undefined),
       lstat(metadata.worktreePath).catch(() => undefined),
     ]);
     if (canonicalPath === undefined || root?.isSymbolicLink() === true)
-      throw new Error("Trusted Shell Task Worktree is unavailable or symlinked.");
+      throw new Error("The Task Worktree for local commands is unavailable or symlinked.");
     return canonicalPath;
   }
 

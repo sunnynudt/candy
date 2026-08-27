@@ -120,7 +120,7 @@
 - `/local off` 会关闭后续任务的本地命令能力；如果平台能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
-- `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/Shell 工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用 Trusted Shell，`/build` 只对 plan 任务生效。
+- `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/本地命令工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用本地命令，`/build` 只对 plan 任务生效。
 - `/debug` 创建 Auto Debug 任务（`mode=debug`，要求已配置 validator）：每轮先跑模型回合，再自动运行 validator；失败时把有界、脱敏的验证证据追加到下一轮 prompt 继续修复，直到验证通过、连续两轮证据相同（stall）或达到预算（默认最多 6 轮）。中途可用 `/cancel` 停止；非通过停止会把任务置为 interrupted，只能通过显式 `/resume` 继续。进度写入任务 run 记录（`/status` 可查）。
 - `/undo` 只作用于隔离任务（`/worktree on`）：每个会变动的模型回合开始前，Candy 会把当前 changed-file 内容以有界、脱敏快照存入内存 undo 历史（每任务最多 8 轮）；`/undo` 恢复最新一轮快照（凭据形内容永不快照/恢复），并清除过期的 review 状态，之后需重新 `/changes`+`/diff` 审查。direct 模式下 Candy 不重置本地修改，请用 git restore/clean。undo 历史不跨重启持久化，重启后仍需显式 `/resume`。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。

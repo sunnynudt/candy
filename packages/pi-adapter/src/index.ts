@@ -842,8 +842,8 @@ export function createCandyBashOperations(
   return {
     exec: async (command, cwd, execution) => {
       if (pathImpl.resolve(cwd) !== root)
-        throw new Error("Trusted Shell cwd must be the Task Worktree.");
-      if (!pathImpl.isAbsolute(bashPath)) throw new Error("Trusted Shell executable is invalid.");
+        throw new Error("Local command cwd must be the Task Worktree.");
+      if (!pathImpl.isAbsolute(bashPath)) throw new Error("Local command executable is invalid.");
       if (!(options.exists ?? existsSync)(bashPath))
         throw new Error(`Git Bash was not found at ${bashPath}.`);
       if (
@@ -857,7 +857,7 @@ export function createCandyBashOperations(
           (secret) => secret.length > 0 && command.includes(secret),
         )
       )
-        throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+        throw new Error("Provider credentials are forbidden in local commands.");
       if (containsShellPublicationAction(command))
         throw new Error("Repository publication and external release actions are forbidden.");
       const approved =
@@ -1361,7 +1361,7 @@ export function createCandyNetworkToolDefinition(
       const executionSignal = signal ?? new AbortController().signal;
       if (executionSignal.aborted) throw new Error("Operation aborted");
       if (pathImpl.resolve(root) !== root || !pathImpl.isAbsolute(bashPath))
-        throw new Error("Trusted Shell executable is invalid.");
+        throw new Error("Local command executable is invalid.");
       if (!(options.exists ?? existsSync)(bashPath))
         throw new Error(`Git Bash was not found at ${bashPath}.`);
       if (
@@ -1388,7 +1388,7 @@ export function createCandyNetworkToolDefinition(
             secret.length > 0 && (input.command.includes(secret) || input.reason.includes(secret)),
         )
       )
-        throw new Error("Provider credentials are forbidden in Trusted Shell commands.");
+        throw new Error("Provider credentials are forbidden in local commands.");
       if (containsShellPublicationAction(input.command))
         throw new Error("Repository publication and external release actions are forbidden.");
       const approved = await options.onApproval(
@@ -1857,7 +1857,7 @@ function resolveCandyShellReadOnlyPaths(
   ];
   if (markerMetadata === undefined) return extraPaths;
   if (markerMetadata.isSymbolicLink())
-    throw new Error("Trusted Shell Git metadata marker cannot be a symbolic link.");
+    throw new Error("Local command Git metadata marker cannot be a symbolic link.");
   const paths = [marker];
   let gitDirectory: string | undefined;
   if (markerMetadata.isDirectory()) {
@@ -1875,10 +1875,10 @@ function resolveCandyShellReadOnlyPaths(
   }
   if (gitDirectory === undefined) return [...new Set([...paths, ...extraPaths])];
   if (trustedGitCommonDirectory === undefined)
-    throw new Error("Trusted Shell Git metadata has no Candy-approved common directory.");
+    throw new Error("Local command Git metadata has no Candy-approved common directory.");
   const trustedCommonDirectory = trySync(() => realpathSync.native(trustedGitCommonDirectory));
   if (trustedCommonDirectory === undefined || !isPathWithin(trustedCommonDirectory, gitDirectory))
-    throw new Error("Trusted Shell Git metadata is outside Candy's approved repository.");
+    throw new Error("Local command Git metadata is outside Candy's approved repository.");
   paths.push(gitDirectory);
   const commondir = trySync(() => readFileSync(path.join(gitDirectory, "commondir"), "utf8")) ?? "";
   const commonTarget = commondir.trim();
@@ -1889,7 +1889,7 @@ function resolveCandyShellReadOnlyPaths(
       ),
     );
     if (commonDirectory === undefined || commonDirectory !== trustedCommonDirectory)
-      throw new Error("Trusted Shell Git common directory changed.");
+      throw new Error("Local command Git common directory changed.");
     paths.push(commonDirectory);
   }
   return [...new Set([...paths, ...extraPaths])];
@@ -1923,7 +1923,7 @@ function isPathWithin(root: string, candidate: string): boolean {
 function resolveCandyShellProcessExecPath(): string {
   const executable = trySync(() => realpathSync.native(process.execPath));
   if (executable === undefined)
-    throw new Error("Candy Trusted Shell could not canonicalize the runtime executable.");
+    throw new Error("Candy could not canonicalize the local-command runtime executable.");
   return path.dirname(executable);
 }
 

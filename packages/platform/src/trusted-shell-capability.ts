@@ -41,13 +41,13 @@ export function getWindowsTrustedShellCapabilityStatus(
   if (platform !== WINDOWS_TRUSTED_SHELL_AUTO_ATTESTATION.platform) {
     return {
       available: false,
-      reason: "Windows Trusted Shell Auto requires a Windows host.",
+      reason: "Windows local commands require a Windows host.",
     };
   }
   if (architecture !== WINDOWS_TRUSTED_SHELL_AUTO_ATTESTATION.architecture) {
     return {
       available: false,
-      reason: "Windows Trusted Shell Auto requires an x64 host.",
+      reason: "Windows local commands require an x64 host.",
     };
   }
 
@@ -71,13 +71,13 @@ export function getWindowsTrustedShellCapabilityStatus(
       available: false,
       bashPath,
       reason:
-        "Windows Trusted Shell Auto is disabled until the native workspace and network containment gate is accepted.",
+        "Windows local commands are unavailable until the native workspace and network containment gate is accepted.",
     };
   }
   return {
     available: true,
     bashPath,
-    reason: "Windows Trusted Shell Auto is available.",
+    reason: "Windows local commands are available.",
   };
 }
 
