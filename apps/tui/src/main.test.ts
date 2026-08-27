@@ -2937,6 +2937,7 @@ test("interactive TUI selects each explicit model through the slash command", as
   const cases = [
     ["deepseek-flash", "deepseek-v4-flash"],
     ["deepseek-pro", "deepseek-v4-pro"],
+    ["deepseek-flash-vision", "deepseek-v4-flash-vision-exp"],
     ["minimax-m3", "MiniMax-M3"],
   ] as const;
   try {
@@ -3202,6 +3203,44 @@ test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", asyn
     terminal.emitInput("\r");
     await waitForOutput(terminal, /clipboard image accepted/u);
     assert.equal(clipboardReads, 1);
+    assert.equal(images.length, 1);
+    assert.equal(images[0]?.[0]?.mimeType, "image/png");
+    assert.equal(images[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI accepts a clipboard image for the experimental DeepSeek vision model", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-deepseek-vision-image-"));
+  const terminal = new FakeTerminal();
+  const images: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => ({ mimeType: "image/png", content: VALID_PNG }),
+      engine: {
+        async *runTurn(input) {
+          images.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "vision accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/model deepseek-flash-vision");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /model selected: deepseek-v4-flash-vision-exp/u);
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    terminal.emitInput("describe the pasted image");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /vision accepted/u);
     assert.equal(images.length, 1);
     assert.equal(images[0]?.[0]?.mimeType, "image/png");
     assert.equal(images[0]?.[0]?.data, VALID_PNG.toString("base64"));

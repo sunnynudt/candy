@@ -43,8 +43,27 @@ export interface AppPaths {
   readonly worktrees: string;
 }
 
-export type CandyModelId = "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
+export type CandyModelId =
+  "deepseek-v4-flash" | "deepseek-v4-pro" | "deepseek-v4-flash-vision-exp" | "MiniMax-M3";
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
+
+/**
+ * Vision-capable Primary Models accept image attachments natively and may
+ * control the agent loop. The set is the source of truth for every TUI
+ * attachment gate, Pi Adapter image guard, and acceptance evidence row that
+ * needs to distinguish "model accepts images" from "model does not". Keep
+ * additions tied to a live provider gate on macOS Tahoe `26.x` and
+ * Windows 11; see `docs/architecture/technical-plan-v1.md` and
+ * `docs/testing/live-provider-credentials.md`.
+ */
+export const VISION_CAPABLE_MODELS: ReadonlySet<CandyModelId> = new Set<CandyModelId>([
+  "deepseek-v4-flash-vision-exp",
+  "MiniMax-M3",
+]);
+
+export function isVisionCapableModel(model: CandyModelId): boolean {
+  return VISION_CAPABLE_MODELS.has(model);
+}
 
 export function resolveAppPaths(appDataRoot: string): AppPaths {
   const root = path.resolve(appDataRoot);
@@ -919,7 +938,12 @@ function assertAttachmentIds(ids: readonly string[]): void {
 }
 
 function assertModelId(model: CandyModelId): void {
-  if (model !== "deepseek-v4-flash" && model !== "deepseek-v4-pro" && model !== "MiniMax-M3")
+  if (
+    model !== "deepseek-v4-flash" &&
+    model !== "deepseek-v4-pro" &&
+    model !== "deepseek-v4-flash-vision-exp" &&
+    model !== "MiniMax-M3"
+  )
     throw new Error("Model id is invalid.");
 }
 

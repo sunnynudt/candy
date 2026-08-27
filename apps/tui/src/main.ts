@@ -47,6 +47,7 @@ import {
   type PersistedRunStopReason,
   discoverGitBashExecutable,
   getWindowsTrustedShellCapabilityStatus,
+  isVisionCapableModel,
   isTrustedShellAutoAvailable as isPlatformTrustedShellAutoAvailable,
 } from "@candy/platform";
 import {
@@ -694,9 +695,9 @@ export class InteractiveTui {
       this.write("prompt rejected: credential-shaped content is forbidden\n");
       return;
     }
-    if (this.#selectedAttachmentIds.length > 0 && this.#selectedModel !== "MiniMax-M3") {
+    if (this.#selectedAttachmentIds.length > 0 && !isVisionCapableModel(this.#selectedModel)) {
       this.write(
-        "image attachments require explicit /model minimax-m3; switch models before creating the task\n",
+        "image attachments require explicit /model minimax-m3 or /model deepseek-flash-vision; switch models before creating the task\n",
       );
       return;
     }
@@ -1101,19 +1102,27 @@ export class InteractiveTui {
     }
     const model = parseModelId(value);
     if (model === undefined) {
-      this.write("model rejected: choose deepseek-flash, deepseek-pro, or minimax-m3\n");
+      this.write(
+        "model rejected: choose deepseek-flash, deepseek-pro, deepseek-flash-vision, or minimax-m3\n",
+      );
       return;
     }
-    if (this.#selectedAttachmentIds.length > 0 && model !== "MiniMax-M3" && current === undefined) {
+    if (
+      this.#selectedAttachmentIds.length > 0 &&
+      !isVisionCapableModel(model) &&
+      current === undefined
+    ) {
       // Staged image attachments would conflict with the next task's payload
-      // because non-M3 models do not accept images. Clear them as part of
+      // because non-vision models do not accept images. Clear them as part of
       // the explicit model switch; their binaries stay in the AttachmentStore
       // for cleanupBefore.
       const detachedCount = this.#selectedAttachmentIds.length;
       this.#selectedAttachmentIds = [];
       this.#selectedModel = model;
       this.write(`model selected: ${model}\n`);
-      this.write(`image attachments detached: ${detachedCount}; only MiniMax M3 accepts images\n`);
+      this.write(
+        `image attachments detached: ${detachedCount}; use MiniMax M3 or DeepSeek Vision\n`,
+      );
       return;
     }
     if (current === undefined) {
@@ -1135,11 +1144,11 @@ export class InteractiveTui {
       this.write(`model switch rejected: task ${snapshot.taskId} is queued\n`);
       return;
     }
-    // Stored image attachments would collide with a non-M3 model on the next
+    // Stored image attachments would collide with a non-vision model on the next
     // `/resume` because the runtime re-feeds them every turn. Persist both
     // changes together so a stale fence cannot leave the task half-switched.
     const detachedCount =
-      metadata.attachmentIds.length > 0 && model !== "MiniMax-M3"
+      metadata.attachmentIds.length > 0 && !isVisionCapableModel(model)
         ? metadata.attachmentIds.length
         : 0;
     try {
@@ -1155,7 +1164,7 @@ export class InteractiveTui {
       this.write(`model selected: ${model} for ${snapshot.taskId}\n`);
       if (detachedCount > 0)
         this.write(
-          `image attachments detached: ${detachedCount}; only MiniMax M3 accepts images\n`,
+          `image attachments detached: ${detachedCount}; use MiniMax M3 or DeepSeek Vision\n`,
         );
     } catch (error) {
       this.write(`model switch rejected: ${safeError(error)}\n`);
@@ -1196,8 +1205,10 @@ export class InteractiveTui {
         throw new Error("Attachments cannot change during an active turn.");
       if (snapshot.state === "queued")
         throw new Error("Attachments cannot change on a queued task.");
-      if (snapshot.model !== "MiniMax-M3")
-        throw new Error("Image attachments require explicit /model minimax-m3.");
+      if (!isVisionCapableModel(snapshot.model))
+        throw new Error(
+          "Image attachments require explicit /model minimax-m3 or /model deepseek-flash-vision.",
+        );
       if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
     }
     return { snapshot, taskMetadata };
@@ -1224,8 +1235,10 @@ export class InteractiveTui {
       if (!this.#selectedAttachmentIds.includes(attachment.id))
         this.#selectedAttachmentIds.push(attachment.id);
       this.write(`${successPrefix}: ${attachment.id}\n`);
-      if (this.#selectedModel !== "MiniMax-M3")
-        this.write("image attachment requires /model minimax-m3 before starting a task\n");
+      if (!isVisionCapableModel(this.#selectedModel))
+        this.write(
+          "image attachment requires /model minimax-m3 or /model deepseek-flash-vision before starting a task\n",
+        );
       return;
     }
     if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
@@ -1958,8 +1971,10 @@ export class InteractiveTui {
           : await Promise.all(
               taskSnapshot.attachmentIds.map((id) => this.#attachments.getImagePayload(id)),
             );
-      if (attachments !== undefined && taskSnapshot.model !== "MiniMax-M3") {
-        throw new Error("DeepSeek does not accept image attachments; switch to MiniMax M3.");
+      if (attachments !== undefined && !isVisionCapableModel(taskSnapshot.model)) {
+        throw new Error(
+          "The selected model does not accept image attachments; switch to MiniMax M3 or DeepSeek Flash Vision.",
+        );
       }
       const runEngineTurn = async (
         activeSecrets: readonly string[],
@@ -3074,6 +3089,9 @@ function parseModelId(value: string): CandyModelId | undefined {
     case "deepseek-pro":
     case "deepseek-v4-pro":
       return "deepseek-v4-pro";
+    case "deepseek-flash-vision":
+    case "deepseek-v4-flash-vision-exp":
+      return "deepseek-v4-flash-vision-exp";
     case "minimax-m3":
       return "MiniMax-M3";
     default:

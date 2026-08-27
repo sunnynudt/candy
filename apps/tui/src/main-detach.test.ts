@@ -111,7 +111,7 @@ test("interactive TUI auto-detaches stored image attachments when switching a co
     terminal.emitInput("\r");
     const switchOutput = await waitForOutput(terminal, /model selected: deepseek-v4-flash for /u);
     assert.match(switchOutput, /model selected: deepseek-v4-flash for /u);
-    assert.match(switchOutput, /image attachments detached: 1; only MiniMax M3 accepts images/u);
+    assert.match(switchOutput, /image attachments detached: 1; use MiniMax M3 or DeepSeek Vision/u);
 
     const detachedStore = new SQLiteTaskStore(
       path.join(resolveAppPaths(root).state, "tasks.sqlite"),
@@ -179,7 +179,7 @@ test("interactive TUI clears staged image attachments when switching to a non-M3
     terminal.emitInput("\r");
     const switchOutput = await waitForOutput(
       terminal,
-      /image attachments detached: 1; only MiniMax M3 accepts images/u,
+      /image attachments detached: 1; use MiniMax M3 or DeepSeek Vision/u,
     );
     assert.match(switchOutput, /model selected: deepseek-v4-flash/u);
 

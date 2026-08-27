@@ -183,6 +183,7 @@ test("Candy TUI surface completes a command name and its model argument", async 
     await waitForOutput(terminal, /minimax-m3/u);
     terminal.emitInput("\x1b[B");
     terminal.emitInput("\x1b[B");
+    terminal.emitInput("\x1b[B");
     terminal.emitInput("\r");
     terminal.emitInput("\r");
     assert.deepEqual(submitted, ["/model", "/model minimax-m3"]);
@@ -201,6 +202,11 @@ test("Candy slash autocomplete keeps bare /model as an explicit query before mod
     { value: "", label: "查看当前模型", description: "显示当前模型与全部可选项" },
     { value: "deepseek-flash", label: "deepseek-flash", description: "DeepSeek V4 Flash" },
     { value: "deepseek-pro", label: "deepseek-pro", description: "DeepSeek V4 Pro" },
+    {
+      value: "deepseek-flash-vision",
+      label: "deepseek-flash-vision",
+      description: "DeepSeek V4 Flash Vision (experimental, multimodal)",
+    },
     { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3 (native image)" },
   ]);
   assert.equal(suggestions?.prefix, "/model");
@@ -239,7 +245,7 @@ test("Candy TUI surface shows the model popup and submits a bare /model as a que
   try {
     surface.start();
     terminal.emitInput("/model");
-    // Wait for the model chooser to render with all three options visible so
+    // Wait for the model chooser to render with all four options visible so
     // we know the autocomplete popup is open before we drive Enter.
     await waitForOutput(terminal, /minimax-m3/u);
     terminal.emitInput("\r");
@@ -268,6 +274,7 @@ test("Candy TUI surface lets arrow keys select a model inside a bare /model popu
     await waitForOutput(terminal, /minimax-m3/u);
     terminal.emitInput("\x1b[B"); // Down to deepseek-flash
     terminal.emitInput("\x1b[B"); // Down to deepseek-pro
+    terminal.emitInput("\x1b[B"); // Down to deepseek-flash-vision
     terminal.emitInput("\x1b[B"); // Down to minimax-m3
     terminal.emitInput("\r");
     assert.deepEqual(submitted, ["/model minimax-m3"]);

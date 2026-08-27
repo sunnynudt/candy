@@ -37,6 +37,7 @@ import {
   parseMiniMaxSseLine,
   parseDeepSeekSseLine,
   ProviderContractError,
+  type PiAgentEngineInput,
 } from "./index.js";
 import { createCandyBashOperations, createCandyNetworkToolDefinition } from "./index.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
@@ -44,6 +45,16 @@ import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 test("pinned Pi root SDK export imports under the runtime baseline", () => {
   assert.equal(PI_COMPATIBILITY_VERSION, "0.84.1");
   assert.ok(listPiPublicExports().length > 0);
+});
+
+test("Pi agent input accepts the experimental DeepSeek vision model", () => {
+  const input: PiAgentEngineInput = {
+    taskId: "task-vision-model",
+    prompt: "describe the image",
+    model: "deepseek-v4-flash-vision-exp",
+    cwd: process.cwd(),
+  };
+  assert.equal(input.model, "deepseek-v4-flash-vision-exp");
 });
 
 test("Pi tool lifecycle projections expose bounded redacted arguments and output", () => {
@@ -592,6 +603,7 @@ test("provider catalog keeps domestic endpoints and live capabilities gated", ()
     [
       ["deepseek-v4-flash", "https://api.deepseek.com/chat/completions", false],
       ["deepseek-v4-pro", "https://api.deepseek.com/chat/completions", false],
+      ["deepseek-v4-flash-vision-exp", "https://api.deepseek.com/chat/completions", false],
       ["MiniMax-M3", "https://api.minimaxi.com/anthropic/v1/messages", false],
     ],
   );
@@ -909,6 +921,53 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
     ]);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Pi agent engine sends experimental DeepSeek vision turns through the DeepSeek provider", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-pi-deepseek-vision-"));
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (input, init) => {
+    requestUrl = String(input);
+    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"vision"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  try {
+    const observations: PiAgentObservation[] = [];
+    for await (const observation of new PiAgentEngine(root, async () => ({
+      secret: "fixture-secret",
+      release: () => undefined,
+    })).runTurn(
+      {
+        taskId: "task-deepseek-vision",
+        prompt: "describe the image",
+        model: "deepseek-v4-flash-vision-exp",
+        cwd: process.cwd(),
+        images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
+      },
+      new AbortController().signal,
+    )) {
+      observations.push(observation);
+    }
+    assert.equal(requestUrl, "https://api.deepseek.com/chat/completions");
+    assert.equal(requestBody?.model, "deepseek-v4-flash-vision-exp");
+    const messages = requestBody?.messages as { content?: unknown }[] | undefined;
+    assert.ok(
+      messages?.some(
+        (message) =>
+          Array.isArray(message.content) &&
+          message.content.some((part) => JSON.stringify(part).includes("aW1hZ2U=")),
+      ),
+    );
+    assert.ok(observations.some((observation) => observation.type === "assistant.delta"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -2633,7 +2692,7 @@ test("DeepSeek image turns fail closed without silently falling back to MiniMax"
           void _observation;
         }
       })(),
-      /switch to MiniMax M3/u,
+      /does not accept image attachments/u,
     );
     assert.equal(fetchCalls, 0);
   } finally {

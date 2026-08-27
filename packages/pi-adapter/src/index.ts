@@ -15,6 +15,7 @@ import {
   cleanChildEnvironment,
   containsCredentialMaterial,
   redactCredentialMaterial,
+  type CandyModelId,
   type NativeProcessResult,
 } from "@candy/platform";
 import { Type } from "typebox";
@@ -23,6 +24,7 @@ export { resolveCandySkillRoots } from "./restricted-resource-loader.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
 export const MAX_WORKSPACE_FILE_BYTES = 16 * 1024 * 1024;
+export const DEEPSEEK_VISION_MODEL_ID = "deepseek-v4-flash-vision-exp" as const;
 const MAX_WEB_FETCH_URL_LENGTH = 4_096;
 const MAX_WEB_FETCH_REASON_LENGTH = 2_048;
 const MAX_WEB_FETCH_TIMEOUT_SECONDS = 300;
@@ -216,6 +218,15 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     gate: "live-provider",
   },
   {
+    label: "DeepSeek V4 Flash Vision (experimental)",
+    provider: "deepseek",
+    modelId: DEEPSEEK_VISION_MODEL_ID,
+    endpoint: "https://api.deepseek.com/chat/completions",
+    multimodal: true,
+    enabled: false,
+    gate: "live-provider",
+  },
+  {
     label: "MiniMax M3",
     provider: "minimax-cn",
     modelId: "MiniMax-M3",
@@ -254,7 +265,7 @@ export interface DeepSeekTool {
 }
 
 export interface DeepSeekRequest {
-  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | typeof DEEPSEEK_VISION_MODEL_ID;
   readonly messages: readonly DeepSeekMessage[];
   readonly tools?: readonly DeepSeekTool[];
   readonly stream: true;
@@ -3410,7 +3421,7 @@ export class CandyPiSessionStore {
 export interface PiEngineInput {
   readonly taskId: string;
   readonly prompt: string;
-  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro";
+  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | typeof DEEPSEEK_VISION_MODEL_ID;
 }
 
 export type PiEngineObservation =
@@ -3443,7 +3454,7 @@ export class PiProofEngine {
 export interface PiAgentEngineInput {
   readonly taskId: string;
   readonly prompt: string;
-  readonly model: "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
+  readonly model: CandyModelId;
   readonly cwd: string;
   readonly approvalProfile?: "read-only" | "auto";
   readonly images?: readonly PiImageInput[];
@@ -3470,6 +3481,37 @@ export interface PiAgentEngineInput {
 export interface PiImageInput {
   readonly mimeType: string;
   readonly data: string;
+}
+
+/**
+ * Pi 0.84.1 predates the experimental DeepSeek vision model. Register an
+ * in-memory model overlay only for the requested turn, retaining Pi's pinned
+ * DeepSeek provider and existing Flash/Pro definitions.
+ */
+function registerDeepSeekVisionModel(runtime: piSdk.ModelRuntime): void {
+  const existing = runtime.getModels("deepseek");
+  const flash = existing.find((model) => model.id === "deepseek-v4-flash");
+  if (flash === undefined) {
+    throw new ProviderContractError(
+      "DeepSeek V4 Flash is unavailable for the vision model overlay.",
+      "provider_error",
+    );
+  }
+  const models = existing.map(({ provider, ...model }) => {
+    void provider;
+    return model;
+  });
+  if (!models.some((model) => model.id === DEEPSEEK_VISION_MODEL_ID)) {
+    const { provider, ...flashConfig } = flash;
+    void provider;
+    models.push({
+      ...flashConfig,
+      id: DEEPSEEK_VISION_MODEL_ID,
+      name: "DeepSeek V4 Flash Vision (experimental)",
+      input: ["text", "image"],
+    });
+  }
+  runtime.registerProvider("deepseek", { models });
 }
 
 /**
@@ -3741,10 +3783,14 @@ export class PiAgentEngine {
         "provider_error",
       );
     }
-    if (this.provider === "deepseek" && input.images?.length) {
+    if (
+      this.provider === "deepseek" &&
+      input.images?.length &&
+      input.model !== DEEPSEEK_VISION_MODEL_ID
+    ) {
       lease.release();
       throw new ProviderContractError(
-        "DeepSeek does not accept image attachments; switch to MiniMax M3.",
+        "This DeepSeek model does not accept image attachments; switch to DeepSeek Flash Vision or MiniMax M3.",
         "provider_error",
       );
     }
@@ -3769,6 +3815,9 @@ export class PiAgentEngine {
         modelsPath: null,
         refreshOnCreate: false,
       });
+      if (this.provider === "deepseek" && input.model === DEEPSEEK_VISION_MODEL_ID) {
+        registerDeepSeekVisionModel(modelRuntime);
+      }
       const model = modelRuntime.getModel(this.provider, input.model);
       if (!model)
         throw new ProviderContractError("Requested model is not available.", "provider_error");

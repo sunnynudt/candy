@@ -12,7 +12,8 @@ export function isSafeTaskId(value: unknown): value is string {
   );
 }
 
-export type CandyModelId = "deepseek-v4-flash" | "deepseek-v4-pro" | "MiniMax-M3";
+export type CandyModelId =
+  "deepseek-v4-flash" | "deepseek-v4-pro" | "deepseek-v4-flash-vision-exp" | "MiniMax-M3";
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
 
 export type TaskState =
@@ -315,6 +316,7 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
     value.model !== undefined &&
     value.model !== "deepseek-v4-flash" &&
     value.model !== "deepseek-v4-pro" &&
+    value.model !== "deepseek-v4-flash-vision-exp" &&
     value.model !== "MiniMax-M3"
   ) {
     throw new ProtocolValidationError("invalid_message", "model is unsupported.");
@@ -466,6 +468,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
       value.model !== undefined &&
       value.model !== "deepseek-v4-flash" &&
       value.model !== "deepseek-v4-pro" &&
+      value.model !== "deepseek-v4-flash-vision-exp" &&
       value.model !== "MiniMax-M3"
     ) {
       throw new ProtocolValidationError("invalid_message", "command.model is unsupported.");
@@ -539,6 +542,7 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
       value.model !== undefined &&
       value.model !== "deepseek-v4-flash" &&
       value.model !== "deepseek-v4-pro" &&
+      value.model !== "deepseek-v4-flash-vision-exp" &&
       value.model !== "MiniMax-M3"
     ) {
       throw new ProtocolValidationError("invalid_message", "event.model is unsupported.");

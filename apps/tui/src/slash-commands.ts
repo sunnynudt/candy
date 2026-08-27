@@ -38,6 +38,11 @@ export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
     description: "DeepSeek V4 Pro",
   },
   {
+    value: "deepseek-flash-vision",
+    label: "deepseek-flash-vision",
+    description: "DeepSeek V4 Flash Vision (experimental, multimodal)",
+  },
+  {
     value: "minimax-m3",
     label: "minimax-m3",
     description: "MiniMax M3 (native image)",
