@@ -61,6 +61,7 @@ import {
   DeterministicAgentEngine,
   GitWorktreeManager,
   GitWorkspaceChangeTracker,
+  isGitWorkspaceClean,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   MAX_ATTACHMENT_BYTES,
@@ -734,6 +735,10 @@ export class InteractiveTui {
     }
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
+    const sourceWorkspaceDirty =
+      approvalProfile === "auto" && workspaceBaseline !== undefined && this.#worktreeEnabled
+        ? !(await isGitWorkspaceClean(workspacePath))
+        : false;
     const trustedShell =
       !planMode &&
       approvalProfile === "auto" &&
@@ -826,6 +831,11 @@ export class InteractiveTui {
     if (taskMode === "debug") {
       this.write(
         `debug mode: bounded Auto Debug loop (max ${MAX_DEBUG_ROUNDS} rounds); /cancel ${taskId} to stop\n`,
+      );
+    }
+    if (sourceWorkspaceDirty) {
+      this.write(
+        "本地工作区有未提交修改：此隔离任务从最新提交开始，不包含这些修改；如需基于它们工作，请取消或丢弃本任务后使用 /worktree off 新建任务\n",
       );
     }
     if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);

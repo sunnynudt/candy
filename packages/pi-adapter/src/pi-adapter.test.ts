@@ -131,8 +131,7 @@ test("Pi tool lifecycle projections classify known read and edit failures withou
     },
     {
       toolName: "candy_bash",
-      result:
-        "npm error code ENOENT: node_modules/.bin/prettier is unavailable in src/value.ts.",
+      result: "npm error code ENOENT: node_modules/.bin/prettier is unavailable in src/value.ts.",
       expected: { kind: "local_dependency_unavailable" },
     },
     {

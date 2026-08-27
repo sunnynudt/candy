@@ -2623,6 +2623,50 @@ test("interactive TUI allows direct-mode tasks when the Git workspace is dirty",
   }
 });
 
+test("interactive TUI explains that isolated tasks exclude existing uncommitted workspace changes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-dirty-source-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let taskSawSourceChange = true;
+  try {
+    await writeFile(path.join(repository, "dirty.txt"), "uncommitted\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      engine: {
+        async *runTurn(input) {
+          taskSawSourceChange = existsSync(path.join(input.cwd, "dirty.txt"));
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("inspect the current change");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /本地工作区有未提交修改：此隔离任务从最新提交开始，不包含这些修改/u,
+    );
+    assert.match(output, /使用 \/worktree off 新建任务/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    assert.equal(taskSawSourceChange, false);
+    assert.equal(await readFile(path.join(repository, "dirty.txt"), "utf8"), "uncommitted\n");
+    terminal.emitInput("/discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`discarded ${taskId}`, "u"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed Apply", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-apply-"));
   const appDataRoot = path.join(root, "app-data");
