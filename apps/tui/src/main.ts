@@ -3529,6 +3529,14 @@ function toolFailureSummary(failure: PiToolFailure | undefined): string {
       return "多个编辑范围重叠；请合并为一个编辑后重试";
     case "edit_no_change":
       return "替换没有产生变化；请检查目标与替换内容";
+    case "local_dependency_unavailable":
+      return "本地依赖不可用；Candy 不会自动下载，请先在源工作区安装依赖后新建任务";
+    case "local_command_credential_forbidden":
+      return "本地命令不能包含 Provider 凭据";
+    case "local_command_publication_forbidden":
+      return "本地命令不允许提交、推送、发布或部署";
+    case "local_command_failed":
+      return "本地命令未通过；原始输出已隐藏，请让任务根据错误继续修复，或检查脚本与本地依赖";
     default:
       return "工具未完成；请重新读取上下文后重试";
   }

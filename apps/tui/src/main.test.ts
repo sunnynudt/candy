@@ -928,6 +928,54 @@ test("interactive TUI shows safe actionable reasons for classified tool failures
   }
 });
 
+test("interactive TUI explains unavailable local dependencies without exposing command output", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-dependency-failure-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.started",
+            taskId: input.taskId,
+            tool: "candy_bash",
+            toolCallId: "missing-local-dependency",
+            args: '{"command":"npm run check"}',
+          };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_bash",
+            toolCallId: "missing-local-dependency",
+            ok: false,
+            failure: { kind: "local_dependency_unavailable" },
+            output:
+              "npm error code ENOENT: node_modules/.bin/prettier is unavailable: raw-error-body-should-not-appear",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run the project check");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /本地依赖不可用；Candy 不会自动下载，请先在源工作区安装依赖后新建任务/u,
+    );
+    assert.match(output, /运行命令 · candy_bash/u);
+    assert.doesNotMatch(output, /node_modules|raw-error-body-should-not-appear/u);
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI confirms activity before the first model event", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-activity-feedback-"));
   const terminal = new FakeTerminal();

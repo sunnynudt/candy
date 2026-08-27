@@ -3583,6 +3583,10 @@ export type PiToolFailure =
   | { readonly kind: "edit_target_not_unique" }
   | { readonly kind: "edit_targets_overlap" }
   | { readonly kind: "edit_no_change" }
+  | { readonly kind: "local_dependency_unavailable" }
+  | { readonly kind: "local_command_credential_forbidden" }
+  | { readonly kind: "local_command_publication_forbidden" }
+  | { readonly kind: "local_command_failed" }
   | { readonly kind: "tool_failed" };
 
 export type PiAgentObservation =
@@ -3663,6 +3667,15 @@ function classifyPiToolFailure(
     if (/edits\[\d+\] and edits\[\d+\] overlap/u.test(text))
       return { kind: "edit_targets_overlap" };
     if (/No changes made/u.test(text)) return { kind: "edit_no_change" };
+  }
+  if (tool === "candy_bash") {
+    if (/Provider credentials are forbidden in local commands/u.test(text))
+      return { kind: "local_command_credential_forbidden" };
+    if (/Repository publication and external release actions are forbidden/u.test(text))
+      return { kind: "local_command_publication_forbidden" };
+    if (/node_modules|Cannot find module|npm (?:ERR!|error) code ENOENT/iu.test(text))
+      return { kind: "local_dependency_unavailable" };
+    return { kind: "local_command_failed" };
   }
   return { kind: "tool_failed" };
 }

@@ -129,6 +129,17 @@ test("Pi tool lifecycle projections classify known read and edit failures withou
       result: "No changes made to src/value.ts. The replacement produced identical content.",
       expected: { kind: "edit_no_change" },
     },
+    {
+      toolName: "candy_bash",
+      result:
+        "npm error code ENOENT: node_modules/.bin/prettier is unavailable in src/value.ts.",
+      expected: { kind: "local_dependency_unavailable" },
+    },
+    {
+      toolName: "candy_bash",
+      result: "Repository publication and external release actions are forbidden.",
+      expected: { kind: "local_command_publication_forbidden" },
+    },
   ] as const;
 
   for (const fixture of cases) {
