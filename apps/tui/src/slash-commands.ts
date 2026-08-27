@@ -117,7 +117,7 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "worktree",
     argumentHint: "on|off",
-    description: "Opt into an isolated Task Worktree (default is direct workspace)",
+    description: "Isolated Task Worktree for Auto Git tasks (default on; use off to edit directly)",
     requiredArgument: true,
     usage: "/worktree on|off",
   },

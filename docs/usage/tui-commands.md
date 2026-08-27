@@ -68,7 +68,7 @@
 | `/steer`             | `/steer <text>`                                  | 向当前活动 turn 排队一条引导                                        |
 | `/follow-up`         | `/follow-up <text>`                              | 排队一条追问                                                        |
 | `/pause`             | `/pause <task-id>`                               | 暂停任务                                                            |
-| `/resume`            | `/resume <task-id> <continuation>`               | 显式续跑；无 continuation 时只展示已保存证据，不重放任何中断的 turn |
+| `/resume`            | `/resume <task-id> <continuation>`               | 显式续跑；无 continuation 时列出 paused/interrupted 任务（编号、任务标题、状态、模型、停止时长，最近更新的在前），不重放任何中断的 turn |
 | `/cancel`            | `/cancel <task-id>`                              | 取消任务                                                            |
 | `/prioritize`        | `/prioritize <task-id>`                          | 将排队任务提前                                                      |
 | `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理外部动作（如受限网络命令）                         |
@@ -79,7 +79,7 @@
 | 命令                         | 语法                    | 说明                                       |
 | ---------------------------- | ----------------------- | ------------------------------------------ |
 | `/profile`                   | `/profile read-only     | auto`                                      | 工作区模式；`auto` 自动执行受限文件读写删，结果通过变更审查确认                                                                                  |
-| `/worktree`                  | `/worktree on           | off`                                       | 默认 `off` 直接编辑当前工作区（允许已有未提交修改）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`                   |
+| `/worktree`                  | `/worktree on           | off`                                       | 默认 `on`，把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`；`off` 直接编辑当前工作区（允许已有未提交修改），作为显式覆盖                   |
 | `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
 | `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
 | `/prompts`                   | `/prompts`              | 列出提示词模板                             |
@@ -115,7 +115,7 @@
 ## 安全边界
 
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
-- 直接模式（`/worktree off`）允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成；`/worktree on` 时才使用 `/apply` 合入。
+- 默认 Auto 任务运行在隔离 Task Worktree（`/worktree on`），结束时用 `/apply` 合入；`/worktree off` 显式切回直接模式，允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成。
 - 普通开发无需配置：启动后默认就是 Auto + 直接模式；只有需要隔离或 Shell 时才需要额外命令。
 - `/trusted-shell on` 会自动切换到 Worktree；如果平台 Trusted Shell 能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。

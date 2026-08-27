@@ -12,7 +12,7 @@ import {
  *
  * The transcript mixes distinct presentation kinds:
  * - assistant text (streamed model output) rendered as markdown;
- * - user turns with a quiet role label;
+ * - user turns with a quiet accent role label;
  * - thinking text (streamed model reasoning) rendered dim, collapsed by
  *   default and toggleable with Ctrl+T;
  * - live tool activity updated in place;
@@ -38,6 +38,7 @@ const CONTENT_PADDING_X = 1;
 const BOLD = (value: string): string => `\x1b[1m${value}\x1b[0m`;
 const DIM = (value: string): string => `\x1b[2m${value}\x1b[0m`;
 const ACCENT = (value: string): string => `\x1b[38;5;75m${value}\x1b[0m`;
+const USER_ACCENT = (value: string): string => `\x1b[38;5;141m${value}\x1b[0m`;
 const MINT = (value: string): string => `\x1b[38;5;78m${value}\x1b[0m`;
 const WARNING = (value: string): string => `\x1b[38;5;221m${value}\x1b[0m`;
 const ERROR = (value: string): string => `\x1b[38;5;203m${value}\x1b[0m`;
@@ -147,7 +148,7 @@ export class CandyTranscript implements Component {
         }
       } else if (segment.kind === "user") {
         appendBlockSeparator(lines, width);
-        lines.push(roleLabel("你", width, "user"));
+        lines.push(roleLabel("用户", width, "user"));
         lines.push(...wrapReadableLines(segment.text, width));
       } else if (segment.kind === "thinking") {
         lines.push(...renderThinkingLines(segment.text, width, this.#thinkingVisible));
@@ -211,7 +212,7 @@ function appendBlockSeparator(lines: string[], width: number): void {
 }
 
 function roleLabel(value: string, width: number, role: "assistant" | "user"): string {
-  const styled = role === "assistant" ? BOLD(ACCENT(value)) : BOLD(value);
+  const styled = role === "assistant" ? BOLD(ACCENT(value)) : BOLD(USER_ACCENT(value));
   return truncateToWidth(` ${styled}`, width);
 }
 

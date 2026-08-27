@@ -2567,15 +2567,22 @@ export class InteractiveTui {
   private showResumableTasks(): void {
     const resumable = this.#store
       .list()
-      .filter((task) => task.state === "paused" || task.state === "interrupted");
+      .filter((task) => task.state === "paused" || task.state === "interrupted")
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     if (resumable.length === 0) {
       this.write("no paused or interrupted tasks to resume\n");
       return;
     }
-    for (const task of resumable) {
-      this.write(
-        `${task.taskId}\t${task.state}\t${task.model}\t${task.workspacePath}\tr${task.revision}\n`,
-      );
+    this.write(`resumable tasks (${resumable.length}):\n`);
+    for (const [index, task] of resumable.entries()) {
+      const details = [
+        task.taskId,
+        task.state,
+        task.model,
+        ...(task.updatedAt === undefined ? [] : [formatElapsed(task.updatedAt)]),
+        ...(task.workspacePath === this.#workspacePath ? [] : [task.workspacePath]),
+      ].join(" · ");
+      this.write(`  ${index + 1}. ${task.title ?? task.taskId}\n    ${details}\n`);
     }
     this.write("choose with /resume <task-id> <continuation> after reviewing the saved evidence\n");
   }
@@ -2685,8 +2692,8 @@ export class InteractiveTui {
     if (value === "off") this.#trustedShellEnabled = false;
     this.write(
       value === "on"
-        ? "worktree on: Auto Git tasks run in an isolated Task Worktree\n"
-        : "worktree off: Auto tasks edit the current workspace directly; commit with git after review\n",
+        ? "worktree on: Auto Git tasks run in an isolated Task Worktree (default)\n"
+        : "worktree off: Auto tasks edit the current workspace directly (override); commit with git after review\n",
     );
   }
 
@@ -3321,6 +3328,17 @@ function formatTaskTimestamp(timestamp: number | undefined): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toISOString();
 }
 
+function formatElapsed(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function validatorRecoveryHint(
   taskId: string,
   status: "pass" | "fail" | "cancelled" | "timeout",
@@ -3715,5 +3733,5 @@ function isDirectExecution(): boolean {
 if (isDirectExecution()) {
   if (process.argv.includes("--smoke-task")) console.log(JSON.stringify(await runTuiTaskSmoke()));
   else if (process.argv.includes("--smoke")) console.log(JSON.stringify(await runTuiSmoke()));
-  else await createDefaultInteractiveTui().run();
+  else await createDefaultInteractiveTui({ worktreeEnabled: true }).run();
 }

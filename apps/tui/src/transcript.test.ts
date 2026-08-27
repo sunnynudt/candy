@@ -34,7 +34,7 @@ test("user and assistant turns have quiet role labels", () => {
   transcript.append("请检查当前改动", "user");
   transcript.append("我会先检查差异。", "assistant");
   const output = renderLines(transcript).join("\n");
-  assert.match(output, /你/u);
+  assert.match(output, /用户/u);
   assert.match(output, /请检查当前改动/u);
   assert.match(output, /Candy/u);
   assert.match(output, /我会先检查差异/u);
