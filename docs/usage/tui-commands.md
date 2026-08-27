@@ -80,7 +80,7 @@
 | ---------------------------- | ----------------------- | ------------------------------------------ |
 | `/profile`                   | `/profile read-only     | auto`                                      | 工作区模式；`auto` 自动执行受限文件读写删，结果通过变更审查确认                                                                                  |
 | `/worktree`                  | `/worktree on           | off`                                       | 默认 `on`，把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`；`off` 直接编辑当前工作区（允许已有未提交修改），作为显式覆盖                   |
-| `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
+| `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 默认在已批准 macOS 的隔离 Auto Git 任务中启用离线本地命令；`off` 显式关闭后续任务的该能力，`on` 恢复默认（网络仍逐条确认） |
 | `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
 | `/prompts`                   | `/prompts`              | 列出提示词模板                             |
 | `/skills`                    | `/skills`               | 列出 Candy 自有技能（名称/描述/来源/目录） |
@@ -109,15 +109,15 @@
 - `/skills` 列出技能元数据（名称/描述/来源 `candy|shared|configured`/目录）；模型可见清单上限 80 个技能，超出时更高优先级根优先并在诊断中说明。
 - `/skill <name> [goal]` 显式触发技能：把该技能的 SKILL.md 正文（受限读、脱敏、有界）与可选目标拼成 prompt 提交，适合强制使用某个技能（如 `/skill tdd 为这个函数补测试`）；无参 `/skill` 列出全部技能。
 - 已加载技能目录对 `candy_read`/`candy_list` 开放只读（绝对路径、64 KiB 单文件有界、拒绝符号链接、realpath 越界校验、凭据脱敏）；**写/删/搜索不进入技能目录**。
-- 技能脚本（`scripts/`）是普通文件：通过 Trusted Shell 显式执行（`bash <技能目录>/scripts/xxx.sh`），走常规命令策略与审批；用户 PATH 中的全局 CLI（如 `ones2`）在 Trusted Shell 中可用。Candy 从不自动执行技能内容。
+- 技能脚本（`scripts/`）是普通文件：通过隔离的本地命令执行（`bash <技能目录>/scripts/xxx.sh`），受常规命令策略约束；Candy 从不自动执行技能内容，也不继承用户全局 CLI PATH。
 - 文件大小、目录深度、条目数与总字节均有上界；符号链接、越界路径与凭据形内容会被拒绝或脱敏。Pi 的 `~/.pi` 资源、扩展、包、主题与可执行资源不会进入 Candy 会话边界。
 
 ## 安全边界
 
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
 - 默认 Auto 任务运行在隔离 Task Worktree（`/worktree on`），结束时用 `/apply` 合入；`/worktree off` 显式切回直接模式，允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成。
-- 普通开发无需配置：启动后默认就是 Auto + 直接模式；只有需要隔离或 Shell 时才需要额外命令。
-- `/trusted-shell on` 会自动切换到 Worktree；如果平台 Trusted Shell 能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
+- 普通开发无需配置：启动后默认就是 Auto + 隔离 Task Worktree；已批准 macOS 主机上的本地 `npm run` 等命令离线可用，复用已有依赖而不自动下载。
+- `/trusted-shell off` 会关闭后续任务的本地命令能力；如果平台能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
 - `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/Shell 工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用 Trusted Shell，`/build` 只对 plan 任务生效。

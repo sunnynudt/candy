@@ -44,8 +44,10 @@ import {
   SerialMutationLane,
   WorkspaceHandoff,
   isGitWorkspaceClean,
+  linkTaskWorktreeDependencies,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "./v1.js";
 
@@ -770,6 +772,31 @@ test("Git worktree inspection uses an injected Windows path seam on macOS", asyn
     path.win32,
   );
   await assert.rejects(wrongLock.inspect(plan), /association/u);
+});
+
+test("Task Worktree reuses only its source workspace node_modules", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-task-dependencies-"));
+  const workspace = path.join(root, "workspace");
+  const worktree = path.join(root, "worktree");
+  const dependencies = path.join(workspace, "node_modules");
+  try {
+    await mkdir(dependencies, { recursive: true });
+    await mkdir(worktree);
+    await writeFile(path.join(dependencies, "fixture.js"), "export {};\n");
+
+    const linked = await linkTaskWorktreeDependencies(workspace, worktree);
+    assert.equal(linked, await realpath(dependencies));
+    assert.equal(
+      await resolveTaskWorktreeDependencyDirectory(workspace, worktree),
+      await realpath(dependencies),
+    );
+
+    await rm(path.join(worktree, "node_modules"));
+    await mkdir(path.join(worktree, "node_modules"));
+    assert.equal(await resolveTaskWorktreeDependencyDirectory(workspace, worktree), undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("Git worktree inspection resolves the macOS /var and /private/var aliases", async () => {

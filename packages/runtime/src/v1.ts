@@ -10,6 +10,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -1485,6 +1486,77 @@ export class GitWorktreeManager {
         throw new Error("Task worktree canonical path escaped Candy's worktree root.");
     }
   }
+}
+
+/**
+ * Bind an already-installed local dependency tree into an isolated Task
+ * Worktree. Candy never installs dependencies here: the task may only reuse
+ * a real `node_modules` directory that already belongs to its source
+ * workspace. The task-side link is verified again before it is trusted by a
+ * sandboxed shell.
+ */
+export async function linkTaskWorktreeDependencies(
+  workspacePath: string,
+  worktreePath: string,
+): Promise<string | undefined> {
+  const source = path.resolve(workspacePath, "node_modules");
+  const target = path.resolve(worktreePath, "node_modules");
+  if (!isPathWithin(path.resolve(worktreePath), target))
+    throw new Error("Task dependency link escapes the Task Worktree.");
+  const sourceMetadata = await lstat(source).catch(() => undefined);
+  if (
+    sourceMetadata === undefined ||
+    sourceMetadata.isSymbolicLink() ||
+    !sourceMetadata.isDirectory()
+  )
+    return undefined;
+  const sourceCanonical = await realpath(source).catch(() => undefined);
+  if (sourceCanonical === undefined) return undefined;
+  const targetMetadata = await lstat(target).catch(() => undefined);
+  if (targetMetadata !== undefined) return undefined;
+  await symlink(sourceCanonical, target, process.platform === "win32" ? "junction" : "dir");
+  return sourceCanonical;
+}
+
+/**
+ * Return the source dependency directory only when the task-side link still
+ * points at the expected source workspace. This stops a task from replacing
+ * `node_modules` with an arbitrary symlink and gaining a new read-only root.
+ */
+export async function resolveTaskWorktreeDependencyDirectory(
+  workspacePath: string,
+  worktreePath: string,
+): Promise<string | undefined> {
+  const source = path.resolve(workspacePath, "node_modules");
+  const target = path.resolve(worktreePath, "node_modules");
+  if (!isPathWithin(path.resolve(worktreePath), target)) return undefined;
+  const [sourceMetadata, targetMetadata] = await Promise.all([
+    lstat(source).catch(() => undefined),
+    lstat(target).catch(() => undefined),
+  ]);
+  if (
+    sourceMetadata === undefined ||
+    sourceMetadata.isSymbolicLink() ||
+    !sourceMetadata.isDirectory() ||
+    targetMetadata === undefined ||
+    !targetMetadata.isSymbolicLink()
+  )
+    return undefined;
+  const [sourceCanonical, targetCanonical] = await Promise.all([
+    realpath(source).catch(() => undefined),
+    realpath(target).catch(() => undefined),
+  ]);
+  return sourceCanonical !== undefined && sourceCanonical === targetCanonical
+    ? sourceCanonical
+    : undefined;
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 export class ApplyChangesBlockedError extends Error {

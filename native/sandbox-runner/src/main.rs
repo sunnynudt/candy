@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
+use std::collections::BTreeSet;
+#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::fs;
@@ -318,7 +320,7 @@ fn run_macos(request: RunRequest) -> String {
             path.to_str().map(str::to_owned)
         })
         .collect::<Vec<_>>();
-    let process_exec_paths = request
+    let mut process_exec_paths = request
         .process_exec_paths
         .iter()
         .filter_map(|value| {
@@ -329,6 +331,12 @@ fn run_macos(request: RunRequest) -> String {
             path.to_str().map(str::to_owned)
         })
         .collect::<Vec<_>>();
+    // `/bin/sh` may dispatch through this macOS-owned selector when npm runs
+    // a package script. It is not user writable and remains a narrow process
+    // execution/read root rather than widening `/private/var`.
+    if Path::new("/private/var/select").is_dir() {
+        process_exec_paths.push("/private/var/select".to_owned());
+    }
     let profile = sandbox_profile(
         workspace,
         executable,
@@ -667,6 +675,16 @@ fn sandbox_profile(
             )
         })
         .collect::<String>();
+    // macOS path resolution probes ancestors (for example `/Users`) with
+    // lstat before opening an authorized file. Allow metadata only for the
+    // exact ancestors of Candy-approved paths, never their contents.
+    let mut metadata_paths = vec![workspace.as_str(), executable.as_str()];
+    metadata_paths.extend(process_exec_paths.iter().map(String::as_str));
+    metadata_paths.extend(read_only_paths.iter().map(String::as_str));
+    // npm's launcher uses `/usr/bin/env`; it is already an allowed system
+    // executable, and this adds only the metadata probes for its ancestors.
+    metadata_paths.push("/usr/bin/env");
+    let ancestor_metadata_policy = metadata_ancestor_policy(&metadata_paths);
     let network_policy = if network {
         "(allow network-outbound)\n         "
     } else {
@@ -720,6 +738,7 @@ fn sandbox_profile(
          {}\
          {}\
          {}\
+         {}\
          (allow file-read-metadata file-test-existence\n\
              (literal \"/private\")\n\
              (literal \"/private/var\")\n\
@@ -737,9 +756,37 @@ fn sandbox_profile(
         process_exec_path_policy,
         read_only_policy,
         network_system_read_policy,
+        ancestor_metadata_policy,
         executable_parent,
         workspace,
         workspace
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn metadata_ancestor_policy(paths: &[&str]) -> String {
+    let mut ancestors = BTreeSet::new();
+    for path in paths {
+        for ancestor in Path::new(path).ancestors().skip(1) {
+            if ancestor == Path::new("/") {
+                break;
+            }
+            if is_safe_profile_path(ancestor) {
+                ancestors.insert(ancestor.to_string_lossy().into_owned());
+            }
+        }
+    }
+    if ancestors.is_empty() {
+        return String::new();
+    }
+    let rules = ancestors
+        .into_iter()
+        .map(|ancestor| format!("(literal \"{}\")", profile_string(&ancestor)))
+        .collect::<Vec<_>>()
+        .join("\n             ");
+    format!(
+        "(allow file-read-metadata file-test-existence\n             {})\n         ",
+        rules
     )
 }
 
@@ -2440,6 +2487,8 @@ mod tests {
         assert!(!profile.contains("(allow default)"));
         assert!(profile.contains("(deny network*)"));
         assert!(profile.contains("(allow process-exec (literal \"/Users/fixture/node/bin/node\"))"));
+        assert!(profile.contains("(literal \"/Users\")"));
+        assert!(!profile.contains("(subpath \"/Users\")"));
         assert!(profile.contains("(subpath \"/private/tmp\")"));
         assert!(profile.contains("(subpath \"/private/var/folders/fixture/workspace\")"));
         assert!(profile.contains("(allow file-write*"));
@@ -2487,7 +2536,9 @@ mod tests {
             ],
             &[],
         );
-        assert!(profile.contains("(allow process-exec (literal \"/Library/Developer/CommandLineTools/usr/bin/git\"))"));
+        assert!(profile.contains(
+            "(allow process-exec (literal \"/Library/Developer/CommandLineTools/usr/bin/git\"))"
+        ));
         assert!(
             profile.contains("(allow process-exec (subpath \"/Library/Developer/CommandLineTools/usr/libexec/git-core\"))")
         );
@@ -2496,7 +2547,9 @@ mod tests {
         );
         // The wide offline shell policy must not appear for a network command.
         assert!(!profile.contains("(subpath \"/opt/homebrew\")"));
-        assert!(!profile.contains("(allow process-exec\n             (subpath \"/Library/Developer/CommandLineTools\"))"));
+        assert!(!profile.contains(
+            "(allow process-exec\n             (subpath \"/Library/Developer/CommandLineTools\"))"
+        ));
     }
 
     #[cfg(target_os = "macos")]

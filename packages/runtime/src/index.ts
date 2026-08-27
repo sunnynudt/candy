@@ -471,8 +471,10 @@ export {
   SerialMutationLane,
   WorkspaceHandoff,
   isGitWorkspaceClean,
+  linkTaskWorktreeDependencies,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "./v1.js";
 export type {

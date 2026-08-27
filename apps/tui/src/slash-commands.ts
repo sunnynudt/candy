@@ -184,12 +184,12 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "trusted-shell",
     argumentHint: "on|off",
-    description: "Enable Trusted Shell Auto (automatically enables Worktree)",
+    description: "Toggle offline local commands for future isolated Auto Git tasks",
   },
   {
     name: "shell",
     argumentHint: "on|off",
-    description: "Alias for Trusted Shell Auto",
+    description: "Alias for offline local command setting",
   },
   {
     name: "validator",

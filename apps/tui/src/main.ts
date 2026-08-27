@@ -75,8 +75,10 @@ import {
   type WorkspaceChangeSnapshot,
   type WorkspaceChangeTracker,
   type WorkspaceFileSnapshot,
+  linkTaskWorktreeDependencies,
   planGitWorktree,
   resolveGitCommonDirectory,
+  resolveTaskWorktreeDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
@@ -355,6 +357,8 @@ export class InteractiveTui {
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
   #trustedShellEnabled = false;
+  /** An explicit opt-out overrides the macOS default for subsequent tasks. */
+  #trustedShellDisabled = false;
   #validatorCommand: CommandValidatorCommand | undefined;
   /** Contiguous assistant text of the current stream; flushed into the last reply on plain writes. */
   #assistantBuffer = "";
@@ -452,7 +456,7 @@ export class InteractiveTui {
       model: () => this.#selectedModel,
       profile: () => this.#approvalProfile,
       worktreeEnabled: () => this.#worktreeEnabled,
-      trustedShellEnabled: () => this.#trustedShellEnabled,
+      trustedShellEnabled: () => this.localCommandsEnabled(),
       taskId: () => this.#currentTaskId,
       taskTitle: () =>
         this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
@@ -712,7 +716,6 @@ export class InteractiveTui {
     const attachmentIds = [...this.#selectedAttachmentIds];
     const validatorCommand = validatorOverride ?? this.#validatorCommand;
     const title = deriveTaskTitle(prompt);
-    const trustedShell = this.#trustedShellEnabled && !planMode;
     const effectivePrompt = planMode
       ? `${PLAN_TURN_INSTRUCTION}${prompt}`
       : taskMode === "debug"
@@ -726,6 +729,12 @@ export class InteractiveTui {
     }
     this.write(`preparing ${taskId} in ${workspacePath}\n`);
     const workspaceBaseline = await this.#changeTracker.captureBaseline(workspacePath);
+    const trustedShell =
+      !planMode &&
+      approvalProfile === "auto" &&
+      workspaceBaseline !== undefined &&
+      this.#worktreeEnabled &&
+      this.localCommandsEnabled();
     if (trustedShell) {
       if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
         throw new Error("macOS Trusted Shell Auto is unavailable on this platform.");
@@ -756,10 +765,15 @@ export class InteractiveTui {
         );
     }
     let worktreePath: string | undefined;
+    let dependencyDirectory: string | undefined;
     if (approvalProfile === "auto" && workspaceBaseline !== undefined && this.#worktreeEnabled) {
       const plan = this.planForTask(taskId, workspacePath, workspaceBaseline);
       try {
         await this.#worktreeManager.create(plan);
+        dependencyDirectory = await linkTaskWorktreeDependencies(
+          workspacePath,
+          plan.worktreePath,
+        ).catch(() => undefined);
       } catch (error) {
         throw new Error("Task Worktree creation failed.", { cause: error });
       }
@@ -811,9 +825,16 @@ export class InteractiveTui {
     }
     if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);
     if (trustedShell) {
+      const explicitlyEnabled = this.#trustedShellEnabled;
       this.#trustedShellEnabled = false;
+      if (explicitlyEnabled)
+        this.write(
+          "Trusted Shell Auto enabled for this task: offline commands run automatically; network requires one-command approval\n",
+        );
       this.write(
-        "Trusted Shell Auto enabled for this task: offline commands run automatically; network requires one-command approval\n",
+        dependencyDirectory === undefined
+          ? "本地命令已就绪：隔离工作树 · 无网络；未检测到可复用的 node_modules，不会自动下载\n"
+          : "本地命令已就绪：隔离工作树 · 复用本地依赖 · 无网络；网络操作仍需逐条确认\n",
       );
     }
     if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
@@ -1955,6 +1976,15 @@ export class InteractiveTui {
         taskSnapshot.trustedShell && this.#engine instanceof TuiModelRouter
           ? await resolveGitCommonDirectory(taskSnapshot.workspacePath)
           : undefined;
+      const trustedDependencyDirectory =
+        taskSnapshot.trustedShell &&
+        taskSnapshot.worktreePath !== undefined &&
+        this.#engine instanceof TuiModelRouter
+          ? await resolveTaskWorktreeDependencyDirectory(
+              taskSnapshot.workspacePath,
+              taskSnapshot.worktreePath,
+            )
+          : undefined;
       const prompt = explicitPrompt;
       if (prompt === undefined)
         throw new Error("Explicit continuation required; the interrupted prompt was not replayed.");
@@ -2013,6 +2043,9 @@ export class InteractiveTui {
               ? {
                   trustedShell: true,
                   ...(trustedGitCommonDirectory === undefined ? {} : { trustedGitCommonDirectory }),
+                  ...(trustedDependencyDirectory === undefined
+                    ? {}
+                    : { trustedDependencyDirectory }),
                   ...(this.#shellRunner?.bashPath === undefined
                     ? {}
                     : { bashPath: this.#shellRunner.bashPath }),
@@ -2678,8 +2711,19 @@ export class InteractiveTui {
     if (value === "read-only") this.#trustedShellEnabled = false;
     this.write(
       value === "auto"
-        ? `profile auto: file read/create/edit enabled; delete requires confirmation; Trusted Shell Auto ${this.#trustedShellEnabled ? "on" : "off"}\n`
+        ? `profile auto: file read/create/edit enabled; delete requires confirmation; offline local commands ${this.localCommandsEnabled() ? "on" : "off"}\n`
         : "profile read-only: file mutation disabled\n",
+    );
+  }
+
+  private localCommandsEnabled(): boolean {
+    return (
+      this.#approvalProfile === "auto" &&
+      this.#worktreeEnabled &&
+      this.#shellRunner !== undefined &&
+      this.#trustedShellAutoAvailable &&
+      isTrustedShellAutoAvailableOnHost() &&
+      (this.#trustedShellEnabled || !this.#trustedShellDisabled)
     );
   }
 
@@ -2699,7 +2743,7 @@ export class InteractiveTui {
 
   private setTrustedShell(value: string): void {
     if (value === "") {
-      this.write(`Trusted Shell Auto: ${this.#trustedShellEnabled ? "on" : "off"}\n`);
+      this.write(`Offline local commands: ${this.localCommandsEnabled() ? "on" : "off"}\n`);
       return;
     }
     if (value !== "on" && value !== "off" && value !== "auto") {
@@ -2708,6 +2752,7 @@ export class InteractiveTui {
     }
     if (value === "off") {
       this.#trustedShellEnabled = false;
+      this.#trustedShellDisabled = true;
       this.write("Trusted Shell Auto disabled for new tasks\n");
       return;
     }
@@ -2741,6 +2786,7 @@ export class InteractiveTui {
         "Trusted Shell Auto requires isolation; Worktree enabled automatically for new tasks\n",
       );
     }
+    this.#trustedShellDisabled = false;
     this.#trustedShellEnabled = true;
     this.write(
       "Trusted Shell Auto enabled for the next Auto Git Task; offline commands run automatically\n",

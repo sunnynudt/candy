@@ -120,7 +120,7 @@ test("interactive TUI creates a queued task, runs it, and reports completion", a
     terminal.emitInput("inspect fixture");
     terminal.emitInput("\r");
     const output: string = await waitForOutput(terminal, /completed/u);
-    assert.match(output, /你[\s\S]*inspect fixture/u);
+    assert.match(output, /用户[\s\S]*inspect fixture/u);
     terminal.emitInput(":tasks");
     terminal.emitInput("\r");
     terminal.emitInput(":quit");
@@ -539,7 +539,7 @@ test("interactive TUI echoes a redacted line when a prompt contains credential-s
     );
     assert.match(
       output,
-      /你[\s\S]*请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
+      /用户[\s\S]*请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
     );
     assert.doesNotMatch(output, /HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn/u);
     terminal.emitInput("\x03");
@@ -1101,6 +1101,62 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
 test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () => {
   const expected = process.platform === "darwin" && process.arch === "arm64";
   assert.equal(isMacosTrustedShellAutoAvailable(), expected);
+});
+
+test("interactive TUI defaults Auto Git tasks to offline local commands with reused dependencies", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-default-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
+  try {
+    await mkdir(path.join(repository, "node_modules"));
+    await writeFile(path.join(repository, "node_modules", "fixture.js"), "export {};\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run local checks");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /本地命令已就绪/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    assert.equal(
+      await realpath(path.join(task.worktreePath, "node_modules")),
+      await realpath(path.join(repository, "node_modules")),
+    );
+    store.close();
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
@@ -2283,7 +2339,7 @@ test("interactive TUI reviews non-Git changed files and bounded diff without mut
   }
 });
 
-test("interactive TUI defaults to direct mode and edits the current Git workspace", async () => {
+test("interactive TUI supports the explicit direct-mode override for Git workspace edits", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-"));
   const appDataRoot = path.join(root, "app-data");
   const repository = await createTuiGitFixture(root);
@@ -2303,6 +2359,7 @@ test("interactive TUI defaults to direct mode and edits the current Git workspac
       workspacePath: repository,
       engine,
       terminal,
+      worktreeEnabled: false,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("edit directly");

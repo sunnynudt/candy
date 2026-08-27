@@ -659,7 +659,6 @@ function containsShellPublicationAction(command: string): boolean {
   )
     return true;
   if (
-    /(?:^|[;&|\s(])(npm|pnpm|yarn|bun)\s+run\b/u.test(command) ||
     /(?:^|[;&|\s(])(cargo|go|dotnet)\s+run\b/u.test(command) ||
     /(?:^|[;&|\s(])(find)\b[^;|&]*\s(?:-exec|-execdir)\b/u.test(command)
   )
@@ -801,6 +800,8 @@ export interface CandyBashOperationsOptions {
   ) => Promise<boolean>;
   /** Canonical Git common directory resolved by Candy's control plane. */
   readonly trustedGitCommonDirectory?: string;
+  /** Canonical source-workspace node_modules directory verified by Candy. */
+  readonly trustedDependencyDirectory?: string;
 }
 
 export interface CandyNetworkApprovalRequest {
@@ -822,6 +823,8 @@ export interface CandyNetworkOperationsOptions {
   ) => Promise<boolean>;
   /** Canonical Git common directory resolved by Candy's control plane. */
   readonly trustedGitCommonDirectory?: string;
+  /** Canonical source-workspace node_modules directory verified by Candy. */
+  readonly trustedDependencyDirectory?: string;
 }
 
 const WINDOWS_GIT_BASH_PATH = "C:\\Program Files\\Git\\bin\\bash.exe";
@@ -885,6 +888,7 @@ export function createCandyBashOperations(
           processExecPath,
           pathImpl,
           options.exists ?? existsSync,
+          options.trustedDependencyDirectory,
         );
         if (controller.signal.aborted) {
           if (
@@ -902,7 +906,11 @@ export function createCandyBashOperations(
           network: false,
           allowProcessExec: true,
           processExecPaths,
-          readOnlyPaths: resolveCandyShellReadOnlyPaths(root, options.trustedGitCommonDirectory),
+          readOnlyPaths: resolveCandyShellReadOnlyPaths(
+            root,
+            options.trustedGitCommonDirectory,
+            options.trustedDependencyDirectory,
+          ),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
@@ -1423,7 +1431,11 @@ export function createCandyNetworkToolDefinition(
           network: true,
           allowProcessExec: false,
           processExecPaths: directCommand.execPaths,
-          readOnlyPaths: resolveCandyShellReadOnlyPaths(root, options.trustedGitCommonDirectory),
+          readOnlyPaths: resolveCandyShellReadOnlyPaths(
+            root,
+            options.trustedGitCommonDirectory,
+            options.trustedDependencyDirectory,
+          ),
           environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
@@ -1834,10 +1846,16 @@ function createCandyShellEnvironment(
 function resolveCandyShellReadOnlyPaths(
   root: string,
   trustedGitCommonDirectory: string | undefined,
+  trustedDependencyDirectory: string | undefined,
 ): readonly string[] {
   const marker = path.join(root, ".git");
   const markerMetadata = trySync(() => lstatSync(marker));
-  if (markerMetadata === undefined) return [];
+  const runtimeRoot = resolveCandyNodeRuntimeRoot();
+  const extraPaths = [
+    ...(runtimeRoot === undefined ? [] : [runtimeRoot]),
+    ...(trustedDependencyDirectory === undefined ? [] : [trustedDependencyDirectory]),
+  ];
+  if (markerMetadata === undefined) return extraPaths;
   if (markerMetadata.isSymbolicLink())
     throw new Error("Trusted Shell Git metadata marker cannot be a symbolic link.");
   const paths = [marker];
@@ -1855,7 +1873,7 @@ function resolveCandyShellReadOnlyPaths(
       );
     }
   }
-  if (gitDirectory === undefined) return paths;
+  if (gitDirectory === undefined) return [...new Set([...paths, ...extraPaths])];
   if (trustedGitCommonDirectory === undefined)
     throw new Error("Trusted Shell Git metadata has no Candy-approved common directory.");
   const trustedCommonDirectory = trySync(() => realpathSync.native(trustedGitCommonDirectory));
@@ -1874,7 +1892,24 @@ function resolveCandyShellReadOnlyPaths(
       throw new Error("Trusted Shell Git common directory changed.");
     paths.push(commonDirectory);
   }
-  return [...new Set(paths)];
+  return [...new Set([...paths, ...extraPaths])];
+}
+
+function resolveCandyNodeRuntimeRoot(): string | undefined {
+  const executable = trySync(() => realpathSync.native(process.execPath));
+  if (executable === undefined) return undefined;
+  const binDirectory = path.dirname(executable);
+  if (path.basename(binDirectory) !== "bin") return undefined;
+  const runtimeRoot = path.dirname(binDirectory);
+  const npmCli = path.join(runtimeRoot, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  return (trySync(() => lstatSync(npmCli))?.isFile() ?? false) ? runtimeRoot : undefined;
+}
+
+function resolveCandyNodeRuntimeNpmBinDirectory(): string | undefined {
+  const runtimeRoot = resolveCandyNodeRuntimeRoot();
+  if (runtimeRoot === undefined) return undefined;
+  const npmCli = path.join(runtimeRoot, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  return trySync(() => realpathSync.native(path.dirname(npmCli)));
 }
 
 function isPathWithin(root: string, candidate: string): boolean {
@@ -1897,6 +1932,7 @@ function resolveCandyShellProcessExecPaths(
   runtimeDirectory: string,
   pathImpl: CandyBashPathSeam,
   exists: (candidate: string) => boolean,
+  trustedDependencyDirectory: string | undefined,
 ): readonly string[] {
   const gitBin = pathImpl.dirname(bashPath);
   const gitRoot = pathImpl.dirname(gitBin);
@@ -1907,8 +1943,16 @@ function resolveCandyShellProcessExecPaths(
     pathImpl.join(gitRoot, "mingw64", "bin"),
     pathImpl.join(gitRoot, "cmd"),
     pathImpl.join(gitRoot, "libexec", "git-core"),
+    resolveCandyNodeRuntimeNpmBinDirectory(),
+    trustedDependencyDirectory,
   ];
-  return [...new Set(candidates.filter((candidate) => exists(candidate)))];
+  return [
+    ...new Set(
+      candidates.filter(
+        (candidate): candidate is string => candidate !== undefined && exists(candidate),
+      ),
+    ),
+  ];
 }
 
 function trySync<T>(operation: () => T): T | undefined {
@@ -2632,6 +2676,7 @@ export function createCandyWorkspaceTools(
     readonly onApproval?: CandyBashOperationsOptions["onApproval"];
     readonly networkApproval?: CandyNetworkOperationsOptions["onApproval"];
     readonly trustedGitCommonDirectory?: string;
+    readonly trustedDependencyDirectory?: string;
   },
   fileDeleteApproval?: FileDeleteApproval,
   activeSecrets: readonly string[] = [],
@@ -2795,6 +2840,9 @@ export function createCandyWorkspaceTools(
           ...(shell.trustedGitCommonDirectory === undefined
             ? {}
             : { trustedGitCommonDirectory: shell.trustedGitCommonDirectory }),
+          ...(shell.trustedDependencyDirectory === undefined
+            ? {}
+            : { trustedDependencyDirectory: shell.trustedDependencyDirectory }),
         }),
         exposeSessionEnvironment: false,
       });
@@ -2814,6 +2862,9 @@ export function createCandyWorkspaceTools(
             ...(shell.trustedGitCommonDirectory === undefined
               ? {}
               : { trustedGitCommonDirectory: shell.trustedGitCommonDirectory }),
+            ...(shell.trustedDependencyDirectory === undefined
+              ? {}
+              : { trustedDependencyDirectory: shell.trustedDependencyDirectory }),
           }),
         );
       }
@@ -3463,6 +3514,8 @@ export interface PiAgentEngineInput {
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
   readonly trustedGitCommonDirectory?: string;
+  /** Canonical source-workspace node_modules directory verified by Candy. */
+  readonly trustedDependencyDirectory?: string;
   /** Validated Git for Windows Bash path supplied by the platform adapter. */
   readonly bashPath?: string;
   /** All Candy-owned provider secrets currently active for Shell redaction. */
@@ -3877,6 +3930,9 @@ export class PiAgentEngine {
               ...(input.trustedGitCommonDirectory === undefined
                 ? {}
                 : { trustedGitCommonDirectory: input.trustedGitCommonDirectory }),
+              ...(input.trustedDependencyDirectory === undefined
+                ? {}
+                : { trustedDependencyDirectory: input.trustedDependencyDirectory }),
             }
           : undefined,
         undefined,

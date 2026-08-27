@@ -13,7 +13,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -39,6 +39,7 @@ import {
   ProviderContractError,
   type PiAgentEngineInput,
 } from "./index.js";
+import { NativeProcessRunner } from "@candy/platform";
 import { createCandyBashOperations, createCandyNetworkToolDefinition } from "./index.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 
@@ -2126,7 +2127,7 @@ test("Candy Bash operations use the fixed Git Bash argv and approved Task Worktr
   }
 });
 
-test("Candy Trusted Shell runs ordinary commands offline without per-command approval", async () => {
+test("Candy Trusted Shell runs npm scripts offline without per-command approval", async () => {
   const calls: unknown[] = [];
   const operations = createCandyBashOperations("C:\\task-worktree", {
     bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
@@ -2139,12 +2140,57 @@ test("Candy Trusted Shell runs ordinary commands offline without per-command app
       },
     },
   });
-  const result = await operations.exec("npm test", "C:\\task-worktree", {
+  const result = await operations.exec("npm run check", "C:\\task-worktree", {
     onData: () => undefined,
   });
   assert.deepEqual(result, { exitCode: 0 });
   assert.equal(calls.length, 1);
   assert.equal((calls[0] as { readonly network?: boolean }).network, false);
+  assert.match(
+    ((calls[0] as { readonly args?: readonly string[] }).args ?? []).join(" "),
+    /npm run check/u,
+  );
+});
+
+test("macOS Trusted Shell runs npm scripts from a Task Worktree without network", async () => {
+  if (process.platform !== "darwin") return;
+  const nativeRunner = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  const dependencies = path.join(process.cwd(), "node_modules");
+  if (!existsSync(nativeRunner) || !existsSync(dependencies)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-trusted-shell-npm-"));
+  const workspace = path.join(root, "task");
+  try {
+    await mkdir(path.join(workspace, ".git"), { recursive: true });
+    await writeFile(
+      path.join(workspace, "package.json"),
+      JSON.stringify({ scripts: { check: "prettier --version" } }),
+    );
+    await symlink(dependencies, path.join(workspace, "node_modules"), "dir");
+    let output = "";
+    const operations = createCandyBashOperations(workspace, {
+      runner: new NativeProcessRunner(nativeRunner),
+      bashPath: "/bin/bash",
+      trustedGitCommonDirectory: path.join(workspace, ".git"),
+      trustedDependencyDirectory: await realpath(dependencies),
+    });
+    const result = await operations.exec("npm run check", workspace, {
+      onData: (chunk) => {
+        output += chunk.toString("utf8");
+      },
+    });
+    assert.equal(result.exitCode, 0);
+    assert.match(output, /prettier --version/u);
+    assert.doesNotMatch(output, /Operation not permitted|network/iu);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("Candy network shell tool requests a bounded one-command elevation and passes network only to that run", async () => {
@@ -2548,10 +2594,12 @@ test("Candy Trusted Shell only grants Candy-approved Git metadata paths", async 
   });
   await operations.exec("git status --short", workspace, { onData: () => undefined });
   assert.equal(runnerCalled, true);
+  const runtimeRoot = path.dirname(path.dirname(realpathSync.native(process.execPath)));
   assert.deepEqual(readOnlyPaths, [
     path.join(workspace, ".git"),
     await realpath(gitDirectory),
     await realpath(commonDirectory),
+    runtimeRoot,
   ]);
 
   await writeFile(path.join(workspace, ".git"), `gitdir: ${path.dirname(common)}\n`);
