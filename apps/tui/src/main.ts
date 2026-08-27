@@ -208,15 +208,18 @@ function isTrustedShellAutoAvailableOnHost(): boolean {
 export type TuiCompositionRootOptions = Omit<InteractiveTuiOptions, "trustedShellAutoAvailable">;
 
 /**
- * Normal TUI composition root. The capability is injected only here after
- * the accepted macOS G2 attestation; InteractiveTui itself remains safe by
- * default for tests and non-TUI embedders.
+ * Normal TUI composition root. New interactive tasks default to isolation so
+ * the common local-development path is ready without a toggle. Callers can
+ * still explicitly opt out for a test seam or a deliberate direct-mode use.
+ * InteractiveTui itself remains safe by default for tests and non-TUI
+ * embedders.
  */
 export function createDefaultInteractiveTui(
   options: TuiCompositionRootOptions = {},
 ): InteractiveTui {
   return new InteractiveTui({
     ...options,
+    worktreeEnabled: options.worktreeEnabled ?? true,
     trustedShellAutoAvailable: isTrustedShellAutoAvailableOnHost(),
   });
 }
@@ -3780,5 +3783,5 @@ function isDirectExecution(): boolean {
 if (isDirectExecution()) {
   if (process.argv.includes("--smoke-task")) console.log(JSON.stringify(await runTuiTaskSmoke()));
   else if (process.argv.includes("--smoke")) console.log(JSON.stringify(await runTuiSmoke()));
-  else await createDefaultInteractiveTui({ worktreeEnabled: true }).run();
+  else await createDefaultInteractiveTui().run();
 }

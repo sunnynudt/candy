@@ -1059,11 +1059,12 @@ test("interactive TUI cancels a turn while compaction is in progress", async () 
   }
 });
 
-test("interactive TUI presents /local as the primary local-command setting", async () => {
+test("default TUI composition root isolates new Auto tasks with local commands ready", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
   try {
     const runPromise = createDefaultInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
@@ -1074,6 +1075,7 @@ test("interactive TUI presents /local as the primary local-command setting", asy
       },
       engine: {
         async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
           yield { type: "turn.started", taskId: input.taskId };
           yield { type: "turn.completed", taskId: input.taskId };
         },
@@ -1082,20 +1084,27 @@ test("interactive TUI presents /local as the primary local-command setting", asy
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
     terminal.emitInput("\r");
-    terminal.emitInput(":local on");
+    terminal.emitInput("inspect the default local commands");
     terminal.emitInput("\r");
-    const output = await waitForOutput(
-      terminal,
-      /Local commands enabled for the next Auto Git Task/u,
+    const output = await waitForOutput(terminal, /本地命令已就绪/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
     );
-    assert.match(terminalText(terminal), /Worktree enabled automatically for new\s+tasks/u);
-    assert.match(output, /Local commands enabled for the next Auto Git Task/u);
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    store.close();
     terminal.emitInput(":trusted-shell off");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /Local commands disabled for new tasks/u);
     terminal.emitInput(":shell on");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /Local commands enabled for the next Auto Git Task/u);
+    assert.match(terminalText(terminal), /隔离/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

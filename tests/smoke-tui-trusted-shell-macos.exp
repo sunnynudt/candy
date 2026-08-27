@@ -27,9 +27,7 @@ send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
 send_command ":profile auto"
 wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
-wait_for {offline local commands off} "default local-command state"
-send_command ":local on"
-wait_for {Local commands enabled for the next Auto Git Task} "local-command enablement"
+wait_for {offline local commands on} "default local-command state"
 send_command ":model deepseek-flash"
 wait_for {model selected: deepseek-v4-flash} "DeepSeek Flash selection"
 send_command ":validator $env(CANDY_JOURNEY_NODE) --test test/value.test.mjs"
@@ -73,8 +71,6 @@ expect {
 # task has been reviewed and applied.
 send_command ":new"
 wait_for {new task ready} "new cancellation task"
-send_command ":local on"
-wait_for {Local commands enabled for the next Auto Git Task} "cancellation local-command enablement"
 send_command "You MUST use candy_bash to run the exact offline command sleep 30 and wait for it; do not edit files or use network."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set cancel_task_id $expect_out(1,string) }
