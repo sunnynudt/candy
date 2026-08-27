@@ -717,25 +717,19 @@ test("interactive TUI exposes sanitized provider recovery actions", async () => 
   }
 });
 
-test("interactive TUI enables file Auto explicitly and confirms each delete", async () => {
+test("interactive TUI enables file Auto without pausing for workspace deletes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-auto-"));
   const terminal: FakeTerminal = new FakeTerminal();
   let observedProfile: "read-only" | "auto" | undefined;
-  let deleteApproved: boolean | undefined;
-  const activeSecret = "fixture-delete-secret";
   const engine: TuiAgentEngine = {
-    async *runTurn(input, signal) {
+    async *runTurn(input) {
       observedProfile = input.approvalProfile;
       yield { type: "turn.started", taskId: input.taskId };
-      deleteApproved = await input.fileDeleteApproval?.(
-        { path: `obsolete-${activeSecret}.ts` },
-        signal,
-      );
       yield {
         type: "tool.completed",
         taskId: input.taskId,
         tool: "candy_delete",
-        ok: deleteApproved === true,
+        ok: true,
       };
       yield { type: "turn.completed", taskId: input.taskId };
     },
@@ -745,7 +739,6 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
       appDataRoot: root,
       engine,
       terminal,
-      activeSecrets: () => [activeSecret],
     }).run();
     await new Promise<void>((resolve: () => void): void => {
       setImmediate(resolve);
@@ -754,41 +747,16 @@ test("interactive TUI enables file Auto explicitly and confirms each delete", as
     terminal.emitInput("\r");
     terminal.emitInput("remove the obsolete file");
     terminal.emitInput("\r");
-    const approvalOutput = await waitForOutput(
-      terminal,
-      /需要你的确认[\s\S]*操作\s+删除文件[\s\S]*文件：obsolete-\[REDACTED\]\.ts[\s\S]*状态：任务已暂停[\s\S]*\/approve delete-[a-z0-9]+[\s\S]*删除此文件并继续任务/u,
-      5_000,
-    );
-    const approvalId = approvalOutput.match(/\/approve (delete-[a-z0-9]+)/u)?.[1];
-    assert.ok(approvalId);
-    const taskId = approvalOutput.match(/任务\s+(task-[a-z0-9]+)/u)?.[1];
+    const completedOutput = await waitForOutput(terminal, /task-(?:[a-z0-9]+) completed/u, 5_000);
+    const taskId = completedOutput.match(/task-[a-z0-9]+/u)?.[0];
     assert.ok(taskId);
-    terminal.emitInput("what needs my attention?");
-    terminal.emitInput("\r");
-    // The wrapped guidance line can be truncated or padded by the renderer
-    // when the approval footer scrolls into the same rows; bridge the wrap
-    // points and anchor on the full approval id where it survives.
-    const waitingGuidance = new RegExp(
-      `is waiting for your[\\s\\S]*?approval;[\\s\\S]*?/approve[\\s\\S]*?${approvalId}[\\s\\S]*?/deny[\\s\\S]*?${approvalId}`,
-      "u",
-    );
-    const guidanceOutput = await waitForOutput(terminal, waitingGuidance, 5_000);
-    assert.match(guidanceOutput, waitingGuidance);
-    terminal.emitInput(`:approve ${approvalId}`);
-    terminal.emitInput("\r");
-    const completedOutput = await waitForOutput(
-      terminal,
-      new RegExp(`${taskId} completed`, "u"),
-      5_000,
-    );
     assert.match(completedOutput, new RegExp(`${taskId} completed`, "u"));
+    assert.doesNotMatch(completedOutput, /需要你的确认|waiting_approval|\/approve delete-/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
     assert.equal(observedProfile, "auto");
-    assert.equal(deleteApproved, true);
     assert.match(completedOutput, /✓[\s\S]*删除文件[\s\S]*完成/u);
-    assert.doesNotMatch(completedOutput, new RegExp(activeSecret, "u"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

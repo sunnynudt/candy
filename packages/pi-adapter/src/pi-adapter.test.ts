@@ -137,7 +137,7 @@ test("Pi tool lifecycle projections classify known read and edit failures withou
   }
 });
 
-test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", async () => {
+test("Candy workspace tools expose file CRUD only in Auto and delete files without approval", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-"));
   const outside = await mkdtemp(path.join(tmpdir(), "candy-workspace-crud-outside-"));
   try {
@@ -157,11 +157,7 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
       ["candy_list", "candy_search", "candy_read"],
     );
 
-    const requested: string[] = [];
-    const auto = createCandyWorkspaceTools(root, "auto", undefined, async ({ path: filePath }) => {
-      requested.push(filePath);
-      return filePath === "obsolete.ts";
-    });
+    const auto = createCandyWorkspaceTools(root, "auto");
     assert.deepEqual(
       auto.map((tool) => tool.name),
       ["candy_list", "candy_search", "candy_read", "candy_edit", "candy_write", "candy_delete"],
@@ -177,11 +173,8 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
       {} as never,
     );
     await assert.rejects(access(path.join(root, "obsolete.ts")), /ENOENT/u);
-    await assert.rejects(
-      deleteTool.execute("delete-denied", { path: "denied.ts" }, signal, undefined, {} as never),
-      /denied/u,
-    );
-    assert.equal(await readFile(path.join(root, "denied.ts"), "utf8"), "keep\n");
+    await deleteTool.execute("delete-auto", { path: "denied.ts" }, signal, undefined, {} as never);
+    await assert.rejects(access(path.join(root, "denied.ts")), /ENOENT/u);
     await assert.rejects(
       deleteTool.execute("delete-symlink", { path: linkedPath }, signal, undefined, {} as never),
       /Symbolic links/u,
@@ -206,24 +199,24 @@ test("Candy workspace tools expose file CRUD only in Auto and confirm deletes", 
       ),
       /control characters/u,
     );
-    assert.deepEqual(requested, ["obsolete.ts", "denied.ts"]);
+    await writeFile(path.join(root, "changed-during-delete.ts"), "original\n");
 
-    const changedDuringApproval = createCandyWorkspaceTools(root, "auto", undefined, async () => {
-      await writeFile(path.join(root, "denied.ts"), "changed\n");
+    const changedDuringDelete = createCandyWorkspaceTools(root, "auto", undefined, async () => {
+      await writeFile(path.join(root, "changed-during-delete.ts"), "changed\n");
       return true;
     }).find((tool) => tool.name === "candy_delete");
-    assert.ok(changedDuringApproval);
+    assert.ok(changedDuringDelete);
     await assert.rejects(
-      changedDuringApproval.execute(
-        "delete-changed",
-        { path: "denied.ts" },
+      changedDuringDelete.execute(
+        "delete-changed-during-operation",
+        { path: "changed-during-delete.ts" },
         signal,
         undefined,
         {} as never,
       ),
-      /changed while deletion approval was pending/u,
+      /changed while the deletion was in progress/u,
     );
-    assert.equal(await readFile(path.join(root, "denied.ts"), "utf8"), "changed\n");
+    assert.equal(await readFile(path.join(root, "changed-during-delete.ts"), "utf8"), "changed\n");
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
@@ -894,7 +887,6 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
         model: "deepseek-v4-flash",
         cwd: process.cwd(),
         approvalProfile: "auto",
-        fileDeleteApproval: async () => false,
       },
       new AbortController().signal,
     )) {

@@ -2717,63 +2717,63 @@ export function createCandyWorkspaceTools(
         promptSnippet: "Create or overwrite files inside the selected workspace",
       } as unknown as piSdk.ToolDefinition,
     );
-    if (fileDeleteApproval !== undefined) {
-      tools.push({
-        name: "candy_delete",
-        label: "Delete workspace file",
-        description:
-          "Delete one regular file inside the selected workspace after explicit user approval. Directories and symbolic links are not supported.",
-        promptSnippet: "Delete an approved regular file inside the selected workspace",
-        promptGuidelines: [
-          "Use candy_delete only when the user asked to remove a file; every deletion requires explicit confirmation.",
-        ],
-        parameters: deleteFileSchema,
-        executionMode: "sequential",
-        execute: async (_toolCallId, { path: requestedPath }, signal) => {
-          if (containsControlCharacter(requestedPath)) {
-            throw new Error("File deletion paths cannot contain control characters.");
-          }
-          const operationSignal = signal ?? new AbortController().signal;
-          const absolutePath = path.resolve(workspaceRoot, requestedPath);
-          const relativePath = normalizeWorkspaceToolPath(
-            path.relative(path.resolve(workspaceRoot), absolutePath),
+    tools.push({
+      name: "candy_delete",
+      label: "Delete workspace file",
+      description:
+        "Delete one regular file inside the selected workspace. Auto tasks execute this without an interactive pause; directories and symbolic links are not supported.",
+      promptSnippet: "Delete a regular file inside the selected workspace",
+      promptGuidelines: [
+        "Use candy_delete only when the user asked to remove a file; the task review shows the resulting change.",
+      ],
+      parameters: deleteFileSchema,
+      executionMode: "sequential",
+      execute: async (_toolCallId, { path: requestedPath }, signal) => {
+        if (containsControlCharacter(requestedPath)) {
+          throw new Error("File deletion paths cannot contain control characters.");
+        }
+        const operationSignal = signal ?? new AbortController().signal;
+        const absolutePath = path.resolve(workspaceRoot, requestedPath);
+        const relativePath = normalizeWorkspaceToolPath(
+          path.relative(path.resolve(workspaceRoot), absolutePath),
+        );
+        return piSdk.withFileMutationQueue(absolutePath, async () => {
+          throwIfToolAborted(operationSignal);
+          await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
+          const directoryBindings = await openWorkspaceDirectoryChain(
+            path.resolve(workspaceRoot),
+            path.dirname(absolutePath),
+            false,
           );
-          return piSdk.withFileMutationQueue(absolutePath, async () => {
+          try {
+            await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+            const before = await lstat(absolutePath);
+            if (!before.isFile()) throw new Error("Only regular workspace files can be deleted.");
             throwIfToolAborted(operationSignal);
-            await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
-            const directoryBindings = await openWorkspaceDirectoryChain(
-              path.resolve(workspaceRoot),
-              path.dirname(absolutePath),
-              false,
-            );
-            try {
-              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
-              const before = await lstat(absolutePath);
-              if (!before.isFile()) throw new Error("Only regular workspace files can be deleted.");
-              throwIfToolAborted(operationSignal);
+            if (fileDeleteApproval !== undefined) {
               const approved = await fileDeleteApproval({ path: relativePath }, operationSignal);
               if (!approved) throw new Error("File deletion was denied by the user.");
-              throwIfToolAborted(operationSignal);
-              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
-              await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
-              const after = await lstat(absolutePath);
-              if (!after.isFile() || !sameFileSnapshot(before, after)) {
-                throw new Error("The file changed while deletion approval was pending.");
-              }
-              await unlink(absolutePath);
-              await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
-            } finally {
-              await closeWorkspaceDirectoryChain(directoryBindings);
             }
             throwIfToolAborted(operationSignal);
-            return {
-              content: [{ type: "text" as const, text: `Deleted ${relativePath}` }],
-              details: undefined,
-            };
-          });
-        },
-      });
-    }
+            await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+            await assertWorkspacePath(path.resolve(workspaceRoot), absolutePath, false);
+            const after = await lstat(absolutePath);
+            if (!after.isFile() || !sameFileSnapshot(before, after)) {
+              throw new Error("The file changed while the deletion was in progress.");
+            }
+            await unlink(absolutePath);
+            await assertWorkspaceDirectoryChainUnchanged(directoryBindings);
+          } finally {
+            await closeWorkspaceDirectoryChain(directoryBindings);
+          }
+          throwIfToolAborted(operationSignal);
+          return {
+            content: [{ type: "text" as const, text: `Deleted ${relativePath}` }],
+            details: undefined,
+          };
+        });
+      },
+    });
     if (shell !== undefined) {
       const bash = piSdk.createBashToolDefinition(workspaceRoot, {
         operations: createCandyBashOperations(workspaceRoot, {
@@ -3465,7 +3465,6 @@ export interface PiAgentEngineInput {
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
   readonly shellNetworkApproval?: CandyNetworkOperationsOptions["onApproval"];
   readonly webFetchApproval?: CandyWebFetchOperationsOptions["onApproval"];
-  readonly fileDeleteApproval?: FileDeleteApproval;
 }
 
 export interface PiImageInput {
@@ -3831,7 +3830,7 @@ export class PiAgentEngine {
                 : { trustedGitCommonDirectory: input.trustedGitCommonDirectory }),
             }
           : undefined,
-        input.fileDeleteApproval,
+        undefined,
         activeSecrets,
         {
           webFetch: {

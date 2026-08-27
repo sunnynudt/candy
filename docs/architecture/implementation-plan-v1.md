@@ -151,7 +151,7 @@ Work packets:
 Exit criteria:
 
 - workspace escape and command network are denied by the sandbox, not only by prompt policy;
-- approval is still required for network, destructive, Git-publish, release, deploy, and other external side effects;
+- approval is still required for network, Git-publish, release, deploy, and other external side effects; containment-checked local workspace mutations run under the selected task profile and remain subject to change review;
 - concurrent writable tasks for one Git repository never share a worktree;
 - dirty target, changed base, secret match, and patch conflict stop Apply Changes safely;
 - cancellation terminates the command process tree on both operating systems.

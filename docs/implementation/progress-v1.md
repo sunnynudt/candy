@@ -2,6 +2,12 @@
 
 Updated: 2026-08-25
 
+## 2026-08-27 Auto 本地删除长任务闭环 checkpoint（待发布）
+
+- **产品修复**：Auto profile 下，路径约束、目录句柄校验、常规文件校验、竞态复核、凭据扫描和取消检查仍全部保留，但 `candy_delete` 不再触发 TUI 的逐文件 `waiting_approval`；本地文件读写删统一由任务级 Git status/diff/测试结果复核。Read-only 仍拒绝变更，网络及 Git 发布、提交、推送、部署等外部副作用仍走审批。
+- **回归覆盖**：适配器新增“无删除审批仍可删除文件”测试，并保留删除过程中的路径/文件身份竞态失败闭环；TUI 回归验证 Auto 删除后直接完成，不出现删除审批帧。适配器定向测试 **19/19** 子测试通过；干净临时 worktree 的完整 `npm test` **343/344**，唯一未通过项是缺少 native runner 二进制的环境阻塞（嵌套凭据回归），与本次 TypeScript/TUI 改动无关。
+- **验证边界**：本工作区的完整构建仍被用户已有、未纳入本 checkpoint 的 vision model 类型改动阻塞；本 checkpoint 自身的定向 Prettier、ESLint、boundary、Pi version 和 lifecycle 检查均通过。用户已有的 vision 改动、实验文件和未跟踪文档未纳入本 checkpoint。
+
 ## 2026-08-25 TUI viewport anchors、Trusted Shell 网络工具修复与 002/005 闭环 checkpoint（`0161be6`）
 
 - **根因修正（此前误判记录）**：a92b748 报告中的两个 BLOCKED 均不是模型/生命周期问题。（1）dogfood "Validator 子进程已完成但 TUI 未输出终态"：validator promise 正常结算，但 transcript 视口只把尾部 ~13 行写入终端字节流，`validator <status>:` 行是长证据（失败测试 ~20 行）的首行，滚出视口后永远不会出现在 PTY 流中——是渲染可见性问题，不是生命周期问题。（2）trusted-shell "DeepSeek 未实际发出网络工具调用"：部分运行确实未调用（模型行为波动），但 harness 同时存在 `:approve`（932d5db slash 对齐后未同步）、`bash network 完成`（fc81f87 改为"读取网络资源"标签后未同步）等过期模式，且审批帧头（`操作：`/`命令：`）同样会被视口吞掉——诊断记录已按此修正。

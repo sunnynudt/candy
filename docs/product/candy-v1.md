@@ -30,7 +30,7 @@ Candy V1 includes the following user journey:
 6. review changes and explicitly apply or discard them where the selected workspace mode supports it;
 7. restart Candy, inspect persisted evidence, and continue only with a new explicit prompt.
 
-The TUI starts in the Auto profile: file read/create/edit are enabled inside the selected workspace and deletes require explicit confirmation. By default, Auto tasks edit the current workspace directly (direct mode), including Git workspaces with existing uncommitted changes; `/worktree on` opts into Candy-owned Task Worktrees under the workspace's `.git/candy-worktrees/` directory (falling back to the Candy application-data directory when `.git` is a file, such as in submodules). Trusted Shell is an opt-in advanced capability; when its platform gate is available, `/trusted-shell on` selects the isolated Task Worktree automatically as part of enabling Shell. Shell and other side-effectful capabilities remain unavailable unless their platform-specific security and approval gates pass; a disabled or unverified capability is not V1 acceptance evidence.
+The TUI starts in the Auto profile: file read/create/edit/delete are enabled inside the selected workspace, and local file mutations do not pause a running task for per-operation confirmation. The resulting Git status, diff, and validation evidence remain available for task-level review. By default, Auto tasks edit the current workspace directly (direct mode), including Git workspaces with existing uncommitted changes; `/worktree on` opts into Candy-owned Task Worktrees under the workspace's `.git/candy-worktrees/` directory (falling back to the Candy application-data directory when `.git` is a file, such as in submodules). Trusted Shell is an opt-in advanced capability; when its platform gate is available, `/trusted-shell on` selects the isolated Task Worktree automatically as part of enabling Shell. Shell and other side-effectful capabilities remain unavailable unless their platform-specific security and approval gates pass; a disabled or unverified capability is not V1 acceptance evidence.
 
 Candy V1 does not include:
 
@@ -85,7 +85,7 @@ V1 reuses Pi's basic file and model tools behind a thin Candy Tool Host. The hos
 
 Tool names are bounded and redacted. Tool arguments, output, provider errors, and credentials are not exposed merely to make a status line informative. Side-effect-free reads and searches may execute in parallel within one task; file mutations and shell commands execute sequentially by default.
 
-The default profile permits only the contracted workspace operations. Read-only rejects mutations. Sensitive actions require explicit approval. Native command containment, process-tree ownership, and network policy are platform adapters; a platform without completed G2 evidence remains fail-closed.
+The default profile permits only the contracted workspace operations. Read-only rejects mutations. In Auto, containment-checked local file mutations, including deletion, execute without pausing the task for per-operation approval and are exposed through task-level change review. Sensitive external actions require explicit approval. Native command containment, process-tree ownership, and network policy are platform adapters; a platform without completed G2 evidence remains fail-closed.
 
 ## Candy-owned instructions and resources
 

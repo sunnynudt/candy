@@ -71,14 +71,14 @@
 | `/resume`            | `/resume <task-id> <continuation>`               | 显式续跑；无 continuation 时只展示已保存证据，不重放任何中断的 turn |
 | `/cancel`            | `/cancel <task-id>`                              | 取消任务                                                            |
 | `/prioritize`        | `/prioritize <task-id>`                          | 将排队任务提前                                                      |
-| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理动作（如文件删除、网络命令）                         |
+| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理外部动作（如受限网络命令）                         |
 | `/quit`              | `/quit`                                          | 退出 Candy                                                          |
 
 ## 模式与资源
 
 | 命令                         | 语法                    | 说明                                       |
 | ---------------------------- | ----------------------- | ------------------------------------------ |
-| `/profile`                   | `/profile read-only     | auto`                                      | 审批模式；`auto` 开放文件读写（删除仍需逐次审批）                                                                                  |
+| `/profile`                   | `/profile read-only     | auto`                                      | 工作区模式；`auto` 自动执行受限文件读写删，结果通过变更审查确认                                                                                  |
 | `/worktree`                  | `/worktree on           | off`                                       | 默认 `off` 直接编辑当前工作区（允许已有未提交修改）；`on` 把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`                   |
 | `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 开启/关闭 Trusted Shell Auto；开启时会自动启用 Worktree，不需要先手动执行 `/worktree on`（平台 G2 通过后可用；macOS arm64 已批准） |
 | `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |

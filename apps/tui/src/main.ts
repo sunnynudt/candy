@@ -4,7 +4,6 @@ import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  type FileDeleteApprovalRequest,
   PI_COMPATIBILITY_VERSION,
   MiniMaxPiAgentEngine,
   PiAgentEngine,
@@ -327,14 +326,6 @@ export class InteractiveTui {
   readonly #taskPhases = new Map<string, string>();
   readonly #workspaceReviews = new Map<string, TuiWorkspaceReview>();
   readonly #requestedStops = new Map<string, "paused" | "cancelled" | "interrupted">();
-  readonly #deleteApprovals = new Map<
-    string,
-    {
-      readonly taskId: string;
-      readonly summary: string;
-      readonly settle: (approved: boolean) => void;
-    }
-  >();
   readonly #networkApprovals = new Map<
     string,
     {
@@ -501,7 +492,6 @@ export class InteractiveTui {
         )
           this.#requestedStops.set(current.taskId, "interrupted");
       }
-      for (const approval of this.#deleteApprovals.values()) approval.settle(false);
       for (const approval of this.#networkApprovals.values()) approval.settle(false);
       for (const controller of this.#abortControllers.values()) controller.abort();
       for (const controller of this.#validatorAbortControllers.values()) controller.abort();
@@ -607,9 +597,9 @@ export class InteractiveTui {
     } else if (trimmed === "/validate") {
       this.validateCurrent();
     } else if (trimmed.startsWith("/approve ")) {
-      this.resolveDeleteApproval(trimmed.slice(9).trim(), true);
+      this.resolveApproval(trimmed.slice(9).trim(), true);
     } else if (trimmed.startsWith("/deny ")) {
-      this.resolveDeleteApproval(trimmed.slice(6).trim(), false);
+      this.resolveApproval(trimmed.slice(6).trim(), false);
     } else if (trimmed.startsWith("/prioritize ")) {
       this.prioritize(trimmed.slice(12).trim());
     } else if (trimmed.startsWith("/pause ")) {
@@ -2004,12 +1994,6 @@ export class InteractiveTui {
             cwd: executionPath,
             approvalProfile: taskSnapshot.approvalProfile,
             activeSecrets,
-            ...(taskSnapshot.approvalProfile === "auto"
-              ? {
-                  fileDeleteApproval: (request: FileDeleteApprovalRequest, signal: AbortSignal) =>
-                    this.requestFileDeleteApproval(taskId, request, signal, activeSecrets),
-                }
-              : {}),
             ...(taskSnapshot.trustedShell
               ? {
                   trustedShell: true,
@@ -2605,9 +2589,6 @@ export class InteractiveTui {
     }
     const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
     const pendingApprovals = [
-      ...[...this.#deleteApprovals.entries()]
-        .filter(([, approval]) => approval.taskId === task.taskId)
-        .map(([id, approval]) => `delete ${id} (${approval.summary})`),
       ...[...this.#networkApprovals.entries()]
         .filter(([, approval]) => approval.taskId === task.taskId)
         .map(([id, approval]) => `network ${id} (${approval.summary})`),
@@ -2744,74 +2725,6 @@ export class InteractiveTui {
     );
   }
 
-  private requestFileDeleteApproval(
-    taskId: string,
-    request: FileDeleteApprovalRequest,
-    signal: AbortSignal,
-    activeSecrets: readonly string[],
-  ): Promise<boolean> {
-    if (signal.aborted) return Promise.resolve(false);
-    const task = this.ensureController(taskId);
-    if (task === undefined) return Promise.resolve(false);
-    const snapshot = task.snapshot();
-    if (snapshot.state !== "running" || snapshot.ownerId !== this.#ownerId)
-      return Promise.resolve(false);
-    const approvalId = `delete-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-    return new Promise<boolean>((resolve) => {
-      let settled = false;
-      const settle = (approved: boolean): void => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", denyOnAbort);
-        this.#deleteApprovals.delete(approvalId);
-        const persisted = this.#store.get(taskId);
-        const ownsWaitingTask =
-          !this.#closing &&
-          persisted?.state === "waiting_approval" &&
-          persisted.ownerId === this.#ownerId;
-        if (ownsWaitingTask) {
-          try {
-            const latest = task.snapshot();
-            if (latest.state === "waiting_approval") task.transition("running", latest.revision);
-            this.#taskPhases.set(taskId, "turn running");
-          } catch {
-            // A concurrent owner fence wins over a pending approval.
-          }
-        }
-        resolve(approved && ownsWaitingTask && !signal.aborted);
-      };
-      const denyOnAbort = (): void => settle(false);
-      const safePath = redactSensitive(request.path, activeSecrets);
-      this.#deleteApprovals.set(approvalId, { taskId, summary: safePath, settle });
-      signal.addEventListener("abort", denyOnAbort, { once: true });
-      const latest = task.snapshot();
-      if (
-        signal.aborted ||
-        this.#closing ||
-        latest.state !== "running" ||
-        latest.ownerId !== this.#ownerId
-      ) {
-        settle(false);
-        return;
-      }
-      try {
-        task.transition("waiting_approval", latest.revision);
-      } catch {
-        settle(false);
-        return;
-      }
-      this.#taskPhases.set(taskId, "waiting for your approval");
-      this.writeApprovalRequest({
-        taskId,
-        approvalId,
-        action: "删除文件",
-        details: [`文件：${safePath}`],
-        approveText: "删除此文件并继续任务",
-        denyText: "保留此文件并继续任务",
-      });
-    });
-  }
-
   private async requestNetworkApproval(
     taskId: string,
     request: CandyNetworkApprovalRequest,
@@ -2909,9 +2822,6 @@ export class InteractiveTui {
 
   private pendingApprovalActions(taskId: string): readonly string[] {
     return [
-      ...[...this.#deleteApprovals.entries()]
-        .filter(([, approval]) => approval.taskId === taskId)
-        .map(([approvalId]) => `/approve ${approvalId} or /deny ${approvalId}`),
       ...[...this.#networkApprovals.entries()]
         .filter(([, approval]) => approval.taskId === taskId)
         .map(([approvalId]) => `/approve ${approvalId} or /deny ${approvalId}`),
@@ -2981,13 +2891,7 @@ export class InteractiveTui {
     return canonicalPath;
   }
 
-  private resolveDeleteApproval(approvalId: string, approved: boolean): void {
-    const approval = this.#deleteApprovals.get(approvalId);
-    if (approval !== undefined) {
-      approval.settle(approved);
-      this.write(`${approval.taskId} deletion ${approved ? "approved" : "denied"}\n`);
-      return;
-    }
+  private resolveApproval(approvalId: string, approved: boolean): void {
     const networkApproval = this.#networkApprovals.get(approvalId);
     if (networkApproval !== undefined) {
       networkApproval.settle(approved);
