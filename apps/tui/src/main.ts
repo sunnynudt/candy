@@ -1874,7 +1874,7 @@ export class InteractiveTui {
       return;
     }
     this.write(
-      "Candy skills (model-visible; SKILL.md and references readable via candy_read; scripts runnable via Trusted Shell):\n",
+      "Candy skills (model-visible; SKILL.md and references readable via candy_read; scripts runnable via local commands):\n",
     );
     for (const skill of result.skills) {
       this.write(

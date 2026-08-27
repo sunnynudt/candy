@@ -42,34 +42,18 @@ expect {
 send_command ":validator /usr/bin/true"
 wait_for {validator configured for new tasks: /usr/bin/true} "validator configuration"
 
-send_command "Fix the fixture in this exact order and do not skip any step: (1) candy_list to inspect the workspace; (2) candy_search with the literal query value = 1; (3) candy_read README.md, src/value.ts, and test/value.test.ts; (4) candy_edit src/value.ts so the failing test passes; (5) candy_write to create src/created.ts; (6) candy_delete remove-deny.txt (a deletion approval will be requested; deny it) and leave remove-approve.txt for the next turn. Do not modify anything else, do not commit, and do not push."
+send_command "Fix the fixture in this exact order and do not skip any step: (1) candy_list to inspect the workspace; (2) candy_search with the literal query value = 1; (3) candy_read README.md, src/value.ts, and test/value.test.ts; (4) candy_edit src/value.ts so the failing test passes; (5) candy_write to create src/created.ts; (6) candy_delete remove-first.txt and leave remove-second.txt for the next turn. Do not modify anything else, do not commit, and do not push."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for task creation" }
   eof { fail "TUI exited while waiting for task creation" }
 }
-wait_for {操作[[:space:]]+删除文件} "denial approval action"
-wait_for {文件：remove-deny\.txt} "denial approval target"
-expect {
-  -re {/approve (delete-[a-z0-9]+)} { set deny_id $expect_out(1,string) }
-  timeout { fail "timed out waiting for denial approval id" }
-  eof { fail "TUI exited while waiting for denial approval id" }
-}
-send_command ":deny $deny_id"
-wait_for {deletion denied} "delete denial"
+wait_for {删除文件 · candy_delete · 完成} "first automatic deletion"
 wait_for "${task_id} completed" "first turn completion"
 
-send_command "Now delete remove-approve.txt (a deletion approval will be requested; approve it). Do not modify anything else, do not commit, and do not push."
+send_command "Now delete remove-second.txt without modifying anything else, committing, or pushing."
 wait_for "continuing ${task_id}" "same-task continuation"
-wait_for {操作[[:space:]]+删除文件} "approval action"
-wait_for {文件：remove-approve\.txt} "approval target"
-expect {
-  -re {/approve (delete-[a-z0-9]+)} { set approve_id $expect_out(1,string) }
-  timeout { fail "timed out waiting for approval id" }
-  eof { fail "TUI exited while waiting for approval id" }
-}
-send_command ":approve $approve_id"
-wait_for {deletion approved} "delete approval"
+wait_for {删除文件 · candy_delete · 完成} "second automatic deletion"
 wait_for "${task_id} completed" "second turn completion"
 
 send_command ":changes"

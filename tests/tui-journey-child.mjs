@@ -44,17 +44,17 @@ class TuiJourneyFixtureEngine {
         edits: [{ oldText: "= 1", newText: "= 2" }],
       });
       yield { type: "tool.completed", taskId: input.taskId, tool: "candy_edit", ok: editOk };
-      const approved = await execute("candy_delete", { path: "remove-deny.txt" });
+      const deleted = await execute("candy_delete", { path: "remove-first.txt" });
       yield {
         type: "tool.completed",
         taskId: input.taskId,
         tool: "candy_delete",
-        ok: approved,
+        ok: deleted,
       };
       yield {
         type: "assistant.delta",
         taskId: input.taskId,
-        text: "fixture turn 1: listed, searched, read, created src/created.ts, edited src/value.ts, and denied the requested deletion.\n",
+        text: "fixture turn 1: listed, searched, read, created src/created.ts, edited src/value.ts, and deleted the requested file.\n",
       };
     } else {
       const createdReadOk = await execute("candy_read", { path: "src/created.ts" });
@@ -64,17 +64,17 @@ class TuiJourneyFixtureEngine {
         edits: [{ oldText: "= 2", newText: "= 3" }],
       });
       yield { type: "tool.completed", taskId: input.taskId, tool: "candy_edit", ok: editOk };
-      const approved = await execute("candy_delete", { path: "remove-approve.txt" });
+      const deleted = await execute("candy_delete", { path: "remove-second.txt" });
       yield {
         type: "tool.completed",
         taskId: input.taskId,
         tool: "candy_delete",
-        ok: approved,
+        ok: deleted,
       };
       yield {
         type: "assistant.delta",
         taskId: input.taskId,
-        text: "fixture turn 2: reopened the created file, repaired src/value.ts, and approved the requested deletion.\n",
+        text: "fixture turn 2: reopened the created file, repaired src/value.ts, and deleted the requested file.\n",
       };
     }
 

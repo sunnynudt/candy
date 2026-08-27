@@ -67,8 +67,8 @@ const outsideBefore = "outside fixture remains unchanged\n";
 await mkdir(path.join(workspace, "src"), { recursive: true });
 await mkdir(temporaryRoot, { recursive: true });
 await writeFile(path.join(workspace, "src", "value.ts"), initialValue, "utf8");
-await writeFile(path.join(workspace, "remove-deny.txt"), "keep after denial\n", "utf8");
-await writeFile(path.join(workspace, "remove-approve.txt"), "delete after approval\n", "utf8");
+await writeFile(path.join(workspace, "remove-first.txt"), "delete in first turn\n", "utf8");
+await writeFile(path.join(workspace, "remove-second.txt"), "delete in second turn\n", "utf8");
 await writeFile(imagePath, imageBytes);
 await writeFile(outsideSentinel, outsideBefore, "utf8");
 execFileSync("git", ["init", "-q", workspace], { env: environment });
@@ -80,7 +80,7 @@ execFileSync("git", ["-C", workspace, "config", "user.name", "Candy TUI Fixture"
 });
 execFileSync(
   "git",
-  ["-C", workspace, "add", "src/value.ts", "remove-deny.txt", "remove-approve.txt"],
+  ["-C", workspace, "add", "src/value.ts", "remove-first.txt", "remove-second.txt"],
   {
     env: environment,
   },
@@ -114,9 +114,8 @@ try {
     "export const created = true;\n"
   )
     throw new Error("Created file was not persisted.");
-  if ((await readFile(path.join(workspace, "remove-deny.txt"), "utf8")) !== "keep after denial\n")
-    throw new Error("Denied deletion did not preserve its target.");
-  await assertMissing(path.join(workspace, "remove-approve.txt"));
+  await assertMissing(path.join(workspace, "remove-first.txt"));
+  await assertMissing(path.join(workspace, "remove-second.txt"));
 
   const afterHead = gitCapture(["-C", workspace, "rev-parse", "HEAD"]);
   const afterTree = gitCapture(["-C", workspace, "write-tree"]);
@@ -154,9 +153,7 @@ try {
     !transcript?.some(
       (entry) =>
         entry.role === "user" &&
-        entry.text.startsWith(
-          "Now delete remove-approve.txt (a deletion approval will be requested",
-        ),
+        entry.text.startsWith("Now delete remove-second.txt without modifying anything else"),
     )
   )
     throw new Error("The second prompt was not restored.");
@@ -175,10 +172,11 @@ try {
     if (!transcript?.some((entry) => entry.text.includes(marker)))
       throw new Error(`The journey transcript lacks ${marker} tool evidence.`);
   }
-  if (!transcript?.some((entry) => entry.text.includes("删除文件 · candy_delete 失败")))
-    throw new Error("The denied delete result was not persisted.");
-  if (!transcript?.some((entry) => entry.text.includes("删除文件 · candy_delete 完成")))
-    throw new Error("The approved delete result was not persisted.");
+  if (
+    (transcript?.filter((entry) => entry.text.includes("删除文件 · candy_delete 完成")).length ??
+      0) !== 2
+  )
+    throw new Error("Both automatic delete results were not persisted.");
   if (validatorStatus === "pass" && run?.stopReason !== "validator_succeeded")
     throw new Error("The validator pass was not persisted.");
   store.close();

@@ -145,7 +145,7 @@ class CandyChrome implements Component {
         : "";
     const profile = (this.#options.profile?.() ?? "auto") === "auto" ? "Auto" : "Read-only";
     const worktree = this.#options.worktreeEnabled?.() === true ? "隔离" : "Direct";
-    const shell = this.#options.trustedShellEnabled?.() === true ? "Shell 开启" : "Shell 关闭";
+    const shell = this.#options.trustedShellEnabled?.() === true ? "命令就绪" : "命令关闭";
     const taskTitle =
       this.#options.taskTitle?.() ??
       (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");

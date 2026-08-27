@@ -235,6 +235,34 @@ test("Candy workspace tools expose file CRUD only in Auto and delete files witho
   }
 });
 
+test("Candy local command tool makes offline npm scripts the common path", () => {
+  const tools = createCandyWorkspaceTools("/tmp/candy-local-command-metadata", "auto", {
+    bashPath: "/bin/bash",
+    networkApproval: async () => true,
+    runner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+  });
+  const localCommand = tools.find((tool) => tool.name === "candy_bash");
+  const networkCommand = tools.find((tool) => tool.name === "candy_bash_network");
+
+  assert.ok(localCommand);
+  assert.equal(localCommand.label, "Local command");
+  assert.match(localCommand.promptSnippet ?? "", /offline local development/u);
+  assert.ok(
+    localCommand.promptGuidelines?.some((guideline) =>
+      /npm run check, test, build, or format/u.test(guideline),
+    ),
+  );
+  assert.ok(
+    localCommand.promptGuidelines?.some((guideline) => /without asking the user/u.test(guideline)),
+  );
+
+  assert.ok(networkCommand);
+  assert.equal(networkCommand.label, "Network command (approval)");
+  assert.match(networkCommand.promptSnippet ?? "", /approved read-only network command/u);
+});
+
 test("Candy read-only tools expose a default web fetch and bound untrusted page text", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-web-fetch-tools-"));
   try {

@@ -1342,10 +1342,10 @@ export function createCandyNetworkToolDefinition(
     options.bashPath ?? (process.platform === "win32" ? WINDOWS_GIT_BASH_PATH : "/bin/bash");
   return {
     name: "candy_bash_network",
-    label: "Trusted Shell network elevation",
+    label: "Network command (approval)",
     description:
       "Request one-time read-only outbound network access for a direct tool command (git ls-remote, curl GET/HEAD, or wget GET) in the current Task Worktree. The command runs without a shell, so it cannot create publication-capable descendants. The user must approve each request.",
-    promptSnippet: "Request one-command read-only network access for a direct tool",
+    promptSnippet: "Request one approved read-only network command",
     promptGuidelines: [
       "Use candy_bash_network only when the command genuinely needs outbound network access.",
       "Only read-only direct tools are accepted: git ls-remote, curl GET/HEAD, or wget GET. Shell commands, interpreters, package managers, and uploads are rejected.",
@@ -2849,8 +2849,13 @@ export function createCandyWorkspaceTools(
       tools.push({
         ...bash,
         name: "candy_bash",
-        label: "Trusted Shell",
-        promptSnippet: "Run an approved command in the selected Task Worktree",
+        label: "Local command",
+        promptSnippet: "Run an offline local development command in the selected Task Worktree",
+        promptGuidelines: [
+          "Use candy_bash for ordinary local development commands such as npm run check, test, build, or format.",
+          "Local commands run offline in the Task Worktree without asking the user for each command.",
+          "Use candy_bash_network only when the command genuinely requires outbound network access.",
+        ],
       } as unknown as piSdk.ToolDefinition);
       if (shell.networkApproval !== undefined) {
         tools.push(
