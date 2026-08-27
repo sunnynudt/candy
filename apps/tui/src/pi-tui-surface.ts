@@ -141,7 +141,7 @@ class CandyChrome implements Component {
     const status = phaseStatus(phase);
     const recovery =
       recoveryTaskCount > 0
-        ? ` ${dim("·")} ${tint(`↻ ${recoveryTaskCount} 待恢复`, ANSI_WARNING)}`
+        ? ` ${dim("·")} ${tint(`↻ ${recoveryTaskCount} 个可恢复任务 · /tasks`, ANSI_WARNING)}`
         : "";
     const profile = (this.#options.profile?.() ?? "auto") === "auto" ? "Auto" : "Read-only";
     const worktree = this.#options.worktreeEnabled?.() === true ? "隔离" : "Direct";

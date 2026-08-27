@@ -1115,7 +1115,15 @@ export class InteractiveTui {
       return;
     }
     if (this.#selectedAttachmentIds.length > 0 && model !== "MiniMax-M3" && current === undefined) {
-      this.write("model rejected: image attachments require explicit /model minimax-m3\n");
+      // Staged image attachments would conflict with the next task's payload
+      // because non-M3 models do not accept images. Clear them as part of
+      // the explicit model switch; their binaries stay in the AttachmentStore
+      // for cleanupBefore.
+      const detachedCount = this.#selectedAttachmentIds.length;
+      this.#selectedAttachmentIds = [];
+      this.#selectedModel = model;
+      this.write(`model selected: ${model}\n`);
+      this.write(`image attachments detached: ${detachedCount}; only MiniMax M3 accepts images\n`);
       return;
     }
     if (current === undefined) {
@@ -1137,18 +1145,28 @@ export class InteractiveTui {
       this.write(`model switch rejected: task ${snapshot.taskId} is queued\n`);
       return;
     }
-    if (metadata.attachmentIds.length > 0 && model !== "MiniMax-M3") {
-      this.write("model rejected: image attachments require explicit /model minimax-m3\n");
-      return;
-    }
+    // Stored image attachments would collide with a non-M3 model on the next
+    // `/resume` because the runtime re-feeds them every turn. Persist both
+    // changes together so a stale fence cannot leave the task half-switched.
+    const detachedCount =
+      metadata.attachmentIds.length > 0 && model !== "MiniMax-M3"
+        ? metadata.attachmentIds.length
+        : 0;
     try {
-      const updated = this.#store.updateModel(snapshot.taskId, snapshot.revision, model);
+      const updated =
+        detachedCount > 0
+          ? this.#store.updateModelAndDetachAttachments(snapshot.taskId, metadata.revision, model)
+          : this.#store.updateModel(snapshot.taskId, metadata.revision, model);
       this.#controllers.set(
         snapshot.taskId,
         new TaskController(snapshot.taskId, updated.approvalProfile, this.#store),
       );
       this.#selectedModel = model;
       this.write(`model selected: ${model} for ${snapshot.taskId}\n`);
+      if (detachedCount > 0)
+        this.write(
+          `image attachments detached: ${detachedCount}; only MiniMax M3 accepts images\n`,
+        );
     } catch (error) {
       this.write(`model switch rejected: ${safeError(error)}\n`);
     }

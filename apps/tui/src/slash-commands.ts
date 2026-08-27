@@ -51,6 +51,16 @@ function completeModels(argumentPrefix: string): AutocompleteItem[] {
   );
 }
 
+/**
+ * The default completion for a bare `/model` preserves its documented query
+ * behavior. A concrete model still requires an explicit selection.
+ */
+const BARE_MODEL_QUERY_ITEM: AutocompleteItem = {
+  value: "",
+  label: "查看当前模型",
+  description: "显示当前模型与全部可选项",
+};
+
 export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "help",
@@ -274,6 +284,29 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
 ];
 
 /**
+ * Commands that own a `getArgumentCompletions` callback are indexed by name so
+ * the autocomplete provider can surface their argument list the moment the user
+ * finishes typing the bare command name (for example `/model`), without forcing
+ * an extra space keystroke before the choice list appears.
+ */
+function buildArgumentCompletionIndex(
+  commands: readonly CandySlashCommand[],
+): Map<string, CandySlashCommand> {
+  const index = new Map<string, CandySlashCommand>();
+  for (const command of commands) {
+    if (typeof command.getArgumentCompletions === "function") {
+      index.set(command.name, command);
+    }
+  }
+  return index;
+}
+
+/** True when the provider should redirect a bare `/<cmd>` input to its arguments. */
+function isBareCommandPrefix(prefix: string): boolean {
+  return prefix.startsWith("/") && !prefix.includes(" ") && !prefix.slice(1).includes("/");
+}
+
+/**
  * Provides Candy-owned commands and loaded skill aliases. File completion would
  * add an unneeded filesystem discovery surface to the editor, so non-command
  * input returns no suggestions before Pi's combined provider can inspect a path.
@@ -294,6 +327,10 @@ export function createCandySlashCommandAutocompleteProvider(
     ".",
   );
   const mentions = createWorkspaceMentionAutocompleteProvider(workspacePath);
+  const argumentCompletionCommands = buildArgumentCompletionIndex([
+    ...CANDY_SLASH_COMMANDS,
+    ...skillCommands,
+  ]);
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const currentLine = lines[cursorLine] ?? "";
@@ -306,11 +343,47 @@ export function createCandySlashCommandAutocompleteProvider(
       );
       if (mentionSuggestions !== null) return mentionSuggestions;
       if (!beforeCursor.trimStart().startsWith("/")) return null;
+      // Surface the argument list as soon as the user finishes typing a known
+      // command name (e.g. `/model`) so the model chooser appears without an
+      // extra space. The combined provider only enters the argument path
+      // after it sees a space delimiter.
+      const trimmed = beforeCursor.trimStart();
+      if (!trimmed.includes(" ")) {
+        const commandName = trimmed.slice(1);
+        const command = argumentCompletionCommands.get(commandName);
+        if (command?.getArgumentCompletions) {
+          const items = await command.getArgumentCompletions("");
+          if (Array.isArray(items) && items.length > 0) {
+            // The full `/<cmd>` is the prefix so `applyCompletion` preserves the
+            // command name and inserts a space before the chosen argument.
+            return {
+              items: commandName === "model" ? [BARE_MODEL_QUERY_ITEM, ...items] : items,
+              prefix: trimmed,
+            };
+          }
+        }
+      }
       return commands.getSuggestions(lines, cursorLine, cursorCol, options);
     },
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
       if (prefix.startsWith("@"))
         return mentions.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+      // Only handle the bare-command completion when the prefix names a command
+      // that owns argument completions; otherwise the combined provider still
+      // owns the slash command-name completion path (e.g. "/mo" → "model").
+      if (isBareCommandPrefix(prefix) && argumentCompletionCommands.has(prefix.slice(1))) {
+        const currentLine = lines[cursorLine] ?? "";
+        const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+        const afterCursor = currentLine.slice(cursorCol);
+        const newLine = `${beforePrefix}${prefix} ${item.value}${afterCursor}`;
+        const newLines = [...lines];
+        newLines[cursorLine] = newLine;
+        return {
+          lines: newLines,
+          cursorLine,
+          cursorCol: beforePrefix.length + prefix.length + 1 + item.value.length,
+        };
+      }
       return commands.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
     shouldTriggerFileCompletion(lines, cursorLine, cursorCol): boolean {

@@ -211,6 +211,43 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
   }
 });
 
+test("sqlite atomically switches model and detaches attachments", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-model-attachments-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  const attachmentId = `att_${"a".repeat(64)}`;
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    const created = store.create("task-model-attachments", "auto", undefined, "MiniMax-M3", [
+      attachmentId,
+    ]);
+    const revised = store.updateApprovalProfile(created.taskId, created.revision, "read-only");
+
+    assert.throws(
+      () =>
+        store.updateModelAndDetachAttachments(
+          created.taskId,
+          created.revision,
+          "deepseek-v4-flash",
+        ),
+      /stale or missing/u,
+    );
+    assert.deepEqual(store.get(created.taskId)?.attachmentIds, [attachmentId]);
+    assert.equal(store.get(created.taskId)?.model, "MiniMax-M3");
+
+    const switched = store.updateModelAndDetachAttachments(
+      created.taskId,
+      revised.revision,
+      "deepseek-v4-flash",
+    );
+    assert.equal(switched.model, "deepseek-v4-flash");
+    assert.deepEqual(switched.attachmentIds, []);
+    assert.equal(switched.revision, revised.revision + 1);
+    store.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task run persists a bounded final evidence summary", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-task-evidence-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");

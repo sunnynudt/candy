@@ -103,7 +103,7 @@ test("Candy TUI surface keeps five core states clear at 80, 120, and 200 columns
 
       surface.appendTranscript("diff --git a/src/value.ts b/src/value.ts\n+const value = 42;\n");
       const output = await waitForOutput(terminal, /diff --git a\/src\/value\.ts/u);
-      assert.match(output, /↻ 2 待恢复/u);
+      assert.match(output, /↻ 2 个可恢复任务 · \/tasks/u);
       assert.doesNotMatch(output, /⌘K|local coding studio|recoverable/u);
     } finally {
       await surface.stop();
@@ -186,6 +186,91 @@ test("Candy TUI surface completes a command name and its model argument", async 
     terminal.emitInput("\r");
     terminal.emitInput("\r");
     assert.deepEqual(submitted, ["/model", "/model minimax-m3"]);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy slash autocomplete keeps bare /model as an explicit query before model choices", async () => {
+  const provider = createCandySlashCommandAutocompleteProvider();
+  const suggestions = await provider.getSuggestions(["/model"], 0, 6, {
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(suggestions?.items, [
+    { value: "", label: "查看当前模型", description: "显示当前模型与全部可选项" },
+    { value: "deepseek-flash", label: "deepseek-flash", description: "DeepSeek V4 Flash" },
+    { value: "deepseek-pro", label: "deepseek-pro", description: "DeepSeek V4 Pro" },
+    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3 (native image)" },
+  ]);
+  assert.equal(suggestions?.prefix, "/model");
+});
+
+test("Candy slash autocomplete preserves a bare /model query completion", async () => {
+  const provider = createCandySlashCommandAutocompleteProvider();
+  const result = provider.applyCompletion(
+    ["/model"],
+    0,
+    6,
+    {
+      value: "",
+      label: "查看当前模型",
+      description: "显示当前模型与全部可选项",
+    },
+    "/model",
+  );
+  assert.deepEqual(result.lines, ["/model "]);
+  assert.equal(result.cursorLine, 0);
+  assert.equal(result.cursorCol, "/model ".length);
+});
+
+test("Candy TUI surface shows the model popup and submits a bare /model as a query", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-model-popup-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const submitted: string[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (text: string): void => {
+      submitted.push(text);
+    },
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    terminal.emitInput("/model");
+    // Wait for the model chooser to render with all three options visible so
+    // we know the autocomplete popup is open before we drive Enter.
+    await waitForOutput(terminal, /minimax-m3/u);
+    terminal.emitInput("\r");
+    assert.deepEqual(submitted, ["/model"]);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface lets arrow keys select a model inside a bare /model popup", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-model-popup-arrows-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const submitted: string[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (text: string): void => {
+      submitted.push(text);
+    },
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    terminal.emitInput("/model");
+    await waitForOutput(terminal, /minimax-m3/u);
+    terminal.emitInput("\x1b[B"); // Down to deepseek-flash
+    terminal.emitInput("\x1b[B"); // Down to deepseek-pro
+    terminal.emitInput("\x1b[B"); // Down to minimax-m3
+    terminal.emitInput("\r");
+    assert.deepEqual(submitted, ["/model minimax-m3"]);
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });

@@ -462,6 +462,30 @@ export class SQLiteTaskStore {
   }
 
   /**
+   * Atomically change the model and detach persisted image attachments while
+   * no turn is active. A failed revision fence leaves both fields unchanged.
+   */
+  public updateModelAndDetachAttachments(
+    taskId: string,
+    expectedRevision: number,
+    model: CandyModelId,
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    assertModelId(model);
+    const current = this.require(taskId);
+    if (current.state === "running" || current.state === "waiting_approval")
+      throw new Error("Task model cannot change during an active turn.");
+    const result = this.#database
+      .prepare(
+        "UPDATE task_metadata SET revision = revision + 1, model_id = ?, attachment_ids = '[]', updated_at = ? WHERE task_id = ? AND revision = ? AND state NOT IN ('running', 'waiting_approval')",
+      )
+      .run(model, Date.now(), taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /**
    * Change a task's approval profile only while no turn is active, then
    * advance its fence. `/build` uses this to promote a reviewed read-only
    * plan task to the current TUI profile before its implementation turn.
