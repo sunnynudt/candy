@@ -15,7 +15,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { ProviderContractError } from "@candy/pi-adapter";
-import { InMemoryCredentialStore, resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
+import {
+  InMemoryCredentialStore,
+  NativeProcessRunner,
+  resolveAppPaths,
+  SQLiteTaskStore,
+} from "@candy/platform";
 import type {
   CommandValidatorCommand,
   ValidatorResult,
@@ -1109,6 +1114,140 @@ test("default TUI composition root isolates new Auto tasks with local commands r
     terminal.emitInput("\r");
     await runPromise;
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("default TUI runs an offline npm script in its Task Worktree without a local approval", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const nativeRunner = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(nativeRunner)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-default-local-command-"));
+  const repository = await createTuiGitFixture(root);
+  const appDataRoot = path.join(root, "app-data");
+  const terminal = new FakeTerminal();
+  const fixtureSecret = "candy-local-command-fixture-secret-40a7d1b9";
+  const originalFetch = globalThis.fetch;
+  const fetchUrls: string[] = [];
+  let runPromise: Promise<void> | undefined;
+  try {
+    await mkdir(path.join(repository, "node_modules"));
+    await writeFile(
+      path.join(repository, "package.json"),
+      JSON.stringify({ scripts: { check: "node --version" } }),
+    );
+    runGit(repository, ["add", "package.json"]);
+    runGit(repository, [
+      "-c",
+      "user.name=Candy Fixture",
+      "-c",
+      "user.email=candy-fixture@example.invalid",
+      "commit",
+      "-qm",
+      "add local check",
+    ]);
+    globalThis.fetch = async (input) => {
+      fetchUrls.push(String(input));
+      const response =
+        fetchUrls.length === 1
+          ? [
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call_local_npm_check",
+                          type: "function",
+                          function: {
+                            name: "candy_bash",
+                            arguments: JSON.stringify({ command: "npm run check" }),
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+            ]
+          : [
+              {
+                choices: [
+                  {
+                    delta: { content: "Offline local npm check completed." },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              { choices: [{ delta: {}, finish_reason: "stop" }] },
+            ];
+      return new Response(
+        `${response.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    };
+    const shellRunner = new NativeProcessRunner(nativeRunner);
+    const credentialStore = new InMemoryCredentialStore();
+    credentialStore.set("deepseek", fixtureSecret);
+    runPromise = createDefaultInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      credentialStore,
+      credentialEnvironment: {},
+      shellRunner,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run the local check");
+    terminal.emitInput("\r");
+    const completed = await waitForOutput(
+      terminal,
+      /Offline local npm check completed\.[\s\S]*completed/u,
+      4_000,
+    );
+    const taskId = completed.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    assert.match(terminalText(terminal), /运行命令 · candy_bash · 完成/u);
+    assert.doesNotMatch(
+      terminalText(terminal),
+      /waiting for your approval|Local commands enabled/u,
+    );
+    assert.deepEqual(fetchUrls, [
+      "https://api.deepseek.com/chat/completions",
+      "https://api.deepseek.com/chat/completions",
+    ]);
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(
+      await realpath(path.join(task.worktreePath, "node_modules")),
+      await realpath(path.join(repository, "node_modules")),
+    );
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    runPromise = undefined;
+  } finally {
+    if (runPromise !== undefined) {
+      terminal.emitInput(":quit");
+      terminal.emitInput("\r");
+      await runPromise.catch(() => undefined);
+    }
+    globalThis.fetch = originalFetch;
     await rm(root, { recursive: true, force: true });
   }
 });
