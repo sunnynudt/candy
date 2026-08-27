@@ -80,7 +80,7 @@
 | ---------------------------- | ----------------------- | ------------------------------------------ |
 | `/profile`                   | `/profile read-only     | auto`                                      | 工作区模式；`auto` 自动执行受限文件读写删，结果通过变更审查确认                                                                                  |
 | `/worktree`                  | `/worktree on           | off`                                       | 默认 `on`，把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`；`off` 直接编辑当前工作区（允许已有未提交修改），作为显式覆盖                   |
-| `/trusted-shell`（`/shell`） | `/trusted-shell on      | off`                                       | 默认在已批准 macOS 的隔离 Auto Git 任务中启用离线本地命令；`off` 显式关闭后续任务的该能力，`on` 恢复默认（网络仍逐条确认） |
+| `/local`                    | `/local on              | off`                                       | 默认在已批准 macOS 的隔离 Auto Git 任务中启用离线本地命令；`off` 显式关闭后续任务的该能力，`on` 恢复默认（网络仍逐条确认）。`/trusted-shell`、`/shell` 是兼容别名 |
 | `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
 | `/prompts`                   | `/prompts`              | 列出提示词模板                             |
 | `/skills`                    | `/skills`               | 列出 Candy 自有技能（名称/描述/来源/目录） |
@@ -117,7 +117,7 @@
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
 - 默认 Auto 任务运行在隔离 Task Worktree（`/worktree on`），结束时用 `/apply` 合入；`/worktree off` 显式切回直接模式，允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成。
 - 普通开发无需配置：启动后默认就是 Auto + 隔离 Task Worktree；已批准 macOS 主机上的本地 `npm run` 等命令离线可用，复用已有依赖而不自动下载。
-- `/trusted-shell off` 会关闭后续任务的本地命令能力；如果平台能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
+- `/local off` 会关闭后续任务的本地命令能力；如果平台能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
 - `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/Shell 工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用 Trusted Shell，`/build` 只对 plan 任务生效。

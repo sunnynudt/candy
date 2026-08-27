@@ -27,7 +27,7 @@ send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
 wait_for {workspace selected:} "workspace selection"
 
 send_command ":profile auto"
-wait_for {profile auto: file read/create/edit enabled;} "Auto profile"
+wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
 send_command ":worktree on"
 wait_for {worktree on: Auto Git tasks run in an isolated Task Worktree} "Task Worktree mode"
 send_command ":model minimax-m3"

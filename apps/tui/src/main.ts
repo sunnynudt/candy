@@ -577,10 +577,12 @@ export class InteractiveTui {
       this.setProfile(trimmed.slice(9).trim());
     } else if (trimmed === "/worktree" || trimmed.startsWith("/worktree ")) {
       this.setWorktree(trimmed.slice(9).trim());
+    } else if (trimmed === "/local" || trimmed.startsWith("/local ")) {
+      this.setLocalCommands(trimmed.slice(6).trim());
     } else if (trimmed === "/trusted-shell" || trimmed.startsWith("/trusted-shell ")) {
-      this.setTrustedShell(trimmed.slice(14).trim());
+      this.setLocalCommands(trimmed.slice(14).trim());
     } else if (trimmed === "/shell" || trimmed.startsWith("/shell ")) {
-      this.setTrustedShell(trimmed.slice(6).trim());
+      this.setLocalCommands(trimmed.slice(6).trim());
     } else if (trimmed === "/validator" || trimmed.startsWith("/validator ")) {
       this.configureValidator(trimmed.slice(10).trim());
     } else if (trimmed === "/changes") {
@@ -829,7 +831,7 @@ export class InteractiveTui {
       this.#trustedShellEnabled = false;
       if (explicitlyEnabled)
         this.write(
-          "Trusted Shell Auto enabled for this task: offline commands run automatically; network requires one-command approval\n",
+          "Local commands enabled for this task: offline commands run automatically; network requires one-command approval\n",
         );
       this.write(
         dependencyDirectory === undefined
@@ -2711,7 +2713,7 @@ export class InteractiveTui {
     if (value === "read-only") this.#trustedShellEnabled = false;
     this.write(
       value === "auto"
-        ? `profile auto: file read/create/edit enabled; delete requires confirmation; offline local commands ${this.localCommandsEnabled() ? "on" : "off"}\n`
+        ? `profile auto: file read/create/edit/delete enabled; offline local commands ${this.localCommandsEnabled() ? "on" : "off"}\n`
         : "profile read-only: file mutation disabled\n",
     );
   }
@@ -2741,55 +2743,53 @@ export class InteractiveTui {
     );
   }
 
-  private setTrustedShell(value: string): void {
+  private setLocalCommands(value: string): void {
     if (value === "") {
       this.write(`Offline local commands: ${this.localCommandsEnabled() ? "on" : "off"}\n`);
       return;
     }
     if (value !== "on" && value !== "off" && value !== "auto") {
-      this.write("trusted-shell must be on, off, or auto\n");
+      this.write("local must be on, off, or auto\n");
       return;
     }
     if (value === "off") {
       this.#trustedShellEnabled = false;
       this.#trustedShellDisabled = true;
-      this.write("Trusted Shell Auto disabled for new tasks\n");
+      this.write("Local commands disabled for new tasks\n");
       return;
     }
     if (process.platform !== "darwin" && process.platform !== "win32") {
-      this.write("Trusted Shell Auto rejected: Personal Preview is unavailable on this platform\n");
+      this.write("Local commands unavailable: this platform is not supported\n");
       return;
     }
     if (this.#approvalProfile !== "auto") {
-      this.write("Trusted Shell Auto rejected: select /profile auto first\n");
+      this.write("Local commands require /profile auto\n");
       return;
     }
     if (this.#shellRunner === undefined) {
       this.write(
-        "Trusted Shell Auto rejected: Native Sandbox Runner is unavailable on this installation\n",
+        "Local commands unavailable: Native Sandbox Runner is unavailable on this installation\n",
       );
       return;
     }
     if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost()) {
       if (process.platform === "win32") {
         this.write(
-          `Trusted Shell Auto rejected: ${getWindowsTrustedShellCapabilityStatus().reason}\n`,
+          `Local commands unavailable: ${getWindowsTrustedShellCapabilityStatus().reason}\n`,
         );
       } else {
-        this.write("Trusted Shell Auto rejected: the macOS G2 gate has not enabled this build\n");
+        this.write("Local commands unavailable: the macOS gate has not enabled this build\n");
       }
       return;
     }
     if (!this.#worktreeEnabled) {
       this.#worktreeEnabled = true;
-      this.write(
-        "Trusted Shell Auto requires isolation; Worktree enabled automatically for new tasks\n",
-      );
+      this.write("Local commands use isolation; Worktree enabled automatically for new tasks\n");
     }
     this.#trustedShellDisabled = false;
     this.#trustedShellEnabled = true;
     this.write(
-      "Trusted Shell Auto enabled for the next Auto Git Task; offline commands run automatically\n",
+      "Local commands enabled for the next Auto Git Task; offline commands run automatically\n",
     );
   }
 

@@ -182,14 +182,9 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "List selected attachments",
   },
   {
-    name: "trusted-shell",
+    name: "local",
     argumentHint: "on|off",
-    description: "Toggle offline local commands for future isolated Auto Git tasks",
-  },
-  {
-    name: "shell",
-    argumentHint: "on|off",
-    description: "Alias for offline local command setting",
+    description: "Toggle offline local commands for future isolated Auto Git tasks (default on)",
   },
   {
     name: "validator",

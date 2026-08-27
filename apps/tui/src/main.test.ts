@@ -1059,7 +1059,7 @@ test("interactive TUI cancels a turn while compaction is in progress", async () 
   }
 });
 
-test("interactive TUI enables Trusted Shell Auto in the accepted macOS composition root", async () => {
+test("interactive TUI presents /local as the primary local-command setting", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
   const repository = await createTuiGitFixture(root);
@@ -1082,14 +1082,20 @@ test("interactive TUI enables Trusted Shell Auto in the accepted macOS compositi
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput(":profile auto");
     terminal.emitInput("\r");
-    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput(":local on");
     terminal.emitInput("\r");
     const output = await waitForOutput(
       terminal,
-      /Trusted Shell Auto enabled for the next Auto Git Task/u,
+      /Local commands enabled for the next Auto Git Task/u,
     );
     assert.match(terminalText(terminal), /Worktree enabled automatically for new\s+tasks/u);
-    assert.match(output, /Trusted Shell Auto enabled for the next Auto Git Task/u);
+    assert.match(output, /Local commands enabled for the next Auto Git Task/u);
+    terminal.emitInput(":trusted-shell off");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands disabled for new tasks/u);
+    terminal.emitInput(":shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled for the next Auto Git Task/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
@@ -1192,7 +1198,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("inspect with shell enabled");
     terminal.emitInput("\r");
     const output = await waitForOutput(terminal, /shell-ready/u);
@@ -1205,7 +1211,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
     assert.equal(task.approvalProfile, "auto");
     assert.ok(task.worktreePath);
     assert.equal(observedTrustedShell, true);
-    assert.match(output, /Trusted Shell Auto enabled/u);
+    assert.match(output, /Local commands enabled/u);
     terminal.emitInput(":discard");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /discarded task-/u);
@@ -1248,7 +1254,7 @@ test("interactive TUI passes all active provider secrets to Trusted Shell redact
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("run with complete credential redaction");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /completed/u);
@@ -1346,7 +1352,7 @@ test("interactive TUI presents one-command network elevation and leaves the task
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("fetch metadata");
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
@@ -1414,7 +1420,7 @@ test("approval anchors stay visible in a long transcript", async () => {
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("fetch metadata");
     terminal.emitInput("\r");
     const output = await waitForOutput(
@@ -1488,7 +1494,7 @@ test("interactive TUI settles network approval on exit and rejects stale approva
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("inspect remote");
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
@@ -1581,7 +1587,7 @@ test("interactive TUI aborts a pending network request when its owner is fenced"
     terminal.emitInput("\r");
     terminal.emitInput(":trusted-shell on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Trusted Shell Auto enabled/u);
+    await waitForOutput(terminal, /Local commands enabled/u);
     terminal.emitInput("inspect remote");
     terminal.emitInput("\r");
     const waiting = await waitForOutput(
@@ -3073,6 +3079,8 @@ test("interactive TUI /help lists the full command reference", async () => {
     terminal.emitInput("\r");
     const output = await waitForOutput(terminal, /Candy commands/u);
     assert.match(output, /\/model/u);
+    assert.match(output, /\/local/u);
+    assert.doesNotMatch(output, /\/trusted-shell/u);
     assert.match(output, /\/resume/u);
     assert.match(output, /\/apply/u);
     assert.match(output, /\/quit/u);
