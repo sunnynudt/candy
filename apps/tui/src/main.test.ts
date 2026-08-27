@@ -2955,6 +2955,7 @@ test("interactive TUI identifies tasks and supports one-shot /new validator conf
       /title=Repair task list display[\s\S]*created=[^\t]+\tupdated=/u,
     );
     assert.match(tasks, /workspace=local/u);
+    assert.match(tasks, /local-commands=off/u);
     assert.match(tasks, /validator=configured/u);
 
     terminal.emitInput(":status");
@@ -2964,6 +2965,7 @@ test("interactive TUI identifies tasks and supports one-shot /new validator conf
       new RegExp(`status ${taskId}[\\s\\S]*phase: completed`, "u"),
     );
     assert.match(status, /profile: auto/u);
+    assert.match(status, /local commands: off/u);
     assert.match(status, /approval: none/u);
     assert.match(status, /run: none/u);
 

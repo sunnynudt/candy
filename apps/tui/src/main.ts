@@ -2628,7 +2628,7 @@ export class InteractiveTui {
       const validator = this.validatorStatus(task);
       const workspaceState = task.worktreePath === undefined ? "local" : "worktree";
       this.write(
-        `${current}${task.taskId}\ttitle=${task.title ?? task.taskId}\t${task.state}\tcreated=${formatTaskTimestamp(task.createdAt)}\tupdated=${formatTaskTimestamp(task.updatedAt)}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\tmode=${task.taskMode ?? "build"}\ttrusted-shell=${task.trustedShell ? "on" : "off"}\tplan=${task.approvalProfile === "read-only" ? "on" : "off"}\tvalidator=${validator}\n`,
+        `${current}${task.taskId}\ttitle=${task.title ?? task.taskId}\t${task.state}\tcreated=${formatTaskTimestamp(task.createdAt)}\tupdated=${formatTaskTimestamp(task.updatedAt)}\t${task.model}\t${task.workspacePath}\tr${task.revision}\tq${task.queueOrder ?? "-"}\tworkspace=${workspaceState}\tmode=${task.taskMode ?? "build"}\tlocal-commands=${task.trustedShell ? "on" : "off"}\tplan=${task.approvalProfile === "read-only" ? "on" : "off"}\tvalidator=${validator}\n`,
       );
     }
   }
@@ -2662,6 +2662,7 @@ export class InteractiveTui {
       }`,
       `mode: ${task.taskMode ?? "build"}`,
       `workspace: ${workspaceState} ${task.worktreePath ?? task.workspacePath}`,
+      `local commands: ${task.trustedShell ? "offline ready" : "off"}`,
       `model: ${task.model}`,
       `revision: r${task.revision}`,
       `created: ${formatTaskTimestamp(task.createdAt)}`,
