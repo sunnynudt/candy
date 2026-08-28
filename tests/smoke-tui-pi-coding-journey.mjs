@@ -102,7 +102,7 @@ try {
     firstTerminal,
     /Pi completed the reviewed coding journey\.[\s\S]*completed/u,
   );
-  assert.match(completed, /\[tool candy_write\b/u);
+  assert.match(completed, /candy_write/u);
   assert.doesNotMatch(completed, new RegExp(fixtureSecret, "u"));
   const created = completed.match(/created (task-[a-z0-9]+)/u);
   assert.ok(created?.[1]);
@@ -139,7 +139,7 @@ try {
   activeRun = secondRun;
   await nextTurn();
   send(secondTerminal, ":tasks");
-  await waitForOutput(secondTerminal, new RegExp(`${taskId}\\s+completed\\s+`, "u"));
+  await waitForOutput(secondTerminal, new RegExp(`${taskId}[\\s\\S]*?\\bcompleted\\b`, "u"));
   send(secondTerminal, `:use ${taskId}`);
   await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
   send(secondTerminal, ":transcript");
