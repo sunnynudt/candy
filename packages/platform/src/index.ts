@@ -446,6 +446,16 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
       `);
     }
+    // A historical schema can carry an accepted version without this column.
+    // Check the durable table instead of trusting the version alone.
+    const pushPolicyColumn = this.#database
+      .prepare("SELECT 1 FROM pragma_table_info('task_metadata') WHERE name = 'push_policy'")
+      .get();
+    if (pushPolicyColumn === undefined) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN push_policy TEXT NOT NULL DEFAULT 'deny';
+      `);
+    }
     this.#database.exec(`PRAGMA user_version = 17;`);
   }
 

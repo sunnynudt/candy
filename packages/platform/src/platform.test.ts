@@ -497,6 +497,85 @@ test("sqlite task store persists the macOS Full access default independently fro
   }
 });
 
+test("sqlite task store repairs an accepted schema that is missing push policy", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-missing-push-policy-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    mkdirSync(path.dirname(databasePath), { recursive: true });
+    const raw = new DatabaseSync(databasePath);
+    raw.exec(`
+      CREATE TABLE task_metadata (
+        task_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        approval_profile TEXT NOT NULL,
+        queue_order INTEGER,
+        owner_id TEXT,
+        model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+        attachment_ids TEXT NOT NULL DEFAULT '[]',
+        workspace_path TEXT NOT NULL DEFAULT '',
+        validator_json TEXT,
+        workspace_baseline TEXT,
+        worktree_path TEXT,
+        trusted_shell INTEGER NOT NULL DEFAULT 0,
+        full_access INTEGER NOT NULL DEFAULT 0,
+        task_mode TEXT NOT NULL DEFAULT 'build',
+        title TEXT,
+        created_at INTEGER,
+        updated_at INTEGER
+      );
+      INSERT INTO task_metadata (
+        task_id,
+        revision,
+        state,
+        approval_profile,
+        queue_order,
+        model_id,
+        attachment_ids,
+        workspace_path,
+        trusted_shell,
+        full_access,
+        task_mode
+      ) VALUES (
+        'task-missing-push-policy',
+        0,
+        'queued',
+        'read-only',
+        1,
+        'deepseek-v4-flash',
+        '[]',
+        '',
+        0,
+        0,
+        'build'
+      );
+      PRAGMA user_version = 17;
+    `);
+    raw.close();
+
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.get("task-missing-push-policy")?.pushPolicy, "deny");
+    assert.deepEqual(
+      store.list().map((task) => task.taskId),
+      ["task-missing-push-policy"],
+    );
+    store.close();
+
+    const verified = new DatabaseSync(databasePath);
+    const column = verified
+      .prepare("SELECT name FROM pragma_table_info('task_metadata') WHERE name = 'push_policy'")
+      .get() as { name: string } | undefined;
+    assert.equal(column?.name, "push_policy");
+    assert.equal(
+      (verified.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+      17,
+    );
+    verified.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task store rejects unknown future schema", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-future-schema-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");
