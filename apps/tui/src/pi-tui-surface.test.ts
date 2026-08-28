@@ -107,7 +107,7 @@ test("Candy TUI surface keeps five core states clear at 80, 120, and 200 columns
       const output = await waitForOutput(terminal, /diff --git a\/src\/value\.ts/u);
       assert.match(output, /↻ 2 个可恢复任务 · \/tasks/u);
       assert.doesNotMatch(output, /Shell 开启/u);
-      if (columns >= 120) assert.match(output, /隔离[\s\S]*命令就绪/u);
+      if (columns >= 120) assert.match(output, /安全工作区[\s\S]*本地检查就绪/u);
       assert.doesNotMatch(output, /⌘K|local coding studio|recoverable/u);
     } finally {
       await surface.stop();

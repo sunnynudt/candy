@@ -48,6 +48,7 @@ import {
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeDependencyDirectory,
+  resolveWorkspaceDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "./v1.js";
 
@@ -794,6 +795,26 @@ test("Task Worktree reuses only its source workspace node_modules", async () => 
     await rm(path.join(worktree, "node_modules"));
     await mkdir(path.join(worktree, "node_modules"));
     assert.equal(await resolveTaskWorktreeDependencyDirectory(workspace, worktree), undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("current workspace local checks use only its real node_modules directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-workspace-dependencies-"));
+  const workspace = path.join(root, "workspace");
+  const dependencies = path.join(workspace, "node_modules");
+  try {
+    await mkdir(dependencies, { recursive: true });
+    assert.equal(
+      await resolveWorkspaceDependencyDirectory(workspace),
+      await realpath(dependencies),
+    );
+
+    await rm(dependencies, { recursive: true });
+    await mkdir(path.join(root, "outside"));
+    await symlink(path.join(root, "outside"), dependencies, "dir");
+    assert.equal(await resolveWorkspaceDependencyDirectory(workspace), undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -108,18 +108,10 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "Show or select the workspace",
   },
   {
-    name: "profile",
-    argumentHint: "read-only|auto",
-    description: "Choose the approval profile",
-    requiredArgument: true,
-    usage: "/profile read-only|auto",
-  },
-  {
-    name: "worktree",
-    argumentHint: "on|off",
-    description: "Isolated Task Worktree for Auto Git tasks (default on; use off to edit directly)",
-    requiredArgument: true,
-    usage: "/worktree on|off",
+    name: "access",
+    argumentHint: "[review|safe|current]",
+    description: "Choose how Candy works: review only, a safe workspace, or the current workspace",
+    usage: "/access [review|safe|current]",
   },
   {
     name: "tasks",
@@ -180,11 +172,6 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
     name: "attachments",
     description: "List selected attachments",
-  },
-  {
-    name: "local",
-    argumentHint: "on|off",
-    description: "Toggle offline local commands for future isolated Auto Git tasks (default on)",
   },
   {
     name: "validator",

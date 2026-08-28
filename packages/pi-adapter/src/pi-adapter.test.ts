@@ -2190,7 +2190,7 @@ test("Candy Trusted Shell runs npm scripts offline without per-command approval"
   );
 });
 
-test("macOS Trusted Shell runs npm scripts from a Task Worktree without network", async () => {
+test("macOS local commands run npm scripts from the current workspace without network", async () => {
   if (process.platform !== "darwin") return;
   const nativeRunner = path.join(
     process.cwd(),

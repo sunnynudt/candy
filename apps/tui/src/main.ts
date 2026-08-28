@@ -80,6 +80,7 @@ import {
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeDependencyDirectory,
+  resolveWorkspaceDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "@candy/runtime";
 import { CandyTuiSurface, type CandyTuiTerminal } from "./pi-tui-surface.js";
@@ -525,7 +526,7 @@ export class InteractiveTui {
     } else if (trimmed === "/status" || trimmed.startsWith("/status ")) {
       this.showStatus(trimmed.slice(7).trim());
     } else if (this.#creatingTask) {
-      this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
+      this.write("task creation in progress; wait for the queued-task result\n");
     } else if (trimmed === "/new" || trimmed.startsWith("/new ")) {
       this.newTask(trimmed.slice(4).trim());
     } else if (trimmed === "/plan" || trimmed.startsWith("/plan ")) {
@@ -575,6 +576,8 @@ export class InteractiveTui {
       });
     } else if (trimmed === "/tasks") {
       this.printTasks();
+    } else if (trimmed === "/access" || trimmed.startsWith("/access ")) {
+      this.setAccess(trimmed.slice(7).trim());
     } else if (trimmed === "/profile") {
       this.write(`profile: ${this.#approvalProfile}\n`);
     } else if (trimmed.startsWith("/profile ")) {
@@ -669,7 +672,7 @@ export class InteractiveTui {
     taskMode: "build" | "debug" = "build",
   ): void {
     if (this.#creatingTask) {
-      this.write("task creation in progress; wait for the Task Worktree or queued-task result\n");
+      this.write("task creation in progress; wait for the queued-task result\n");
       return;
     }
     const effectivePlanMode = planMode || this.#planPending;
@@ -743,7 +746,6 @@ export class InteractiveTui {
       !planMode &&
       approvalProfile === "auto" &&
       workspaceBaseline !== undefined &&
-      this.#worktreeEnabled &&
       this.localCommandsEnabled();
     if (trustedShell) {
       if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
@@ -751,10 +753,8 @@ export class InteractiveTui {
       if (approvalProfile !== "auto") throw new Error("Local commands require the Auto profile.");
       if (this.#shellRunner === undefined)
         throw new Error("Local commands are unavailable in this installation.");
-      if (!this.#worktreeEnabled)
-        throw new Error("Local commands require an isolated Task Worktree.");
       if (workspaceBaseline === undefined)
-        throw new Error("Local commands require a Git-backed Task Worktree.");
+        throw new Error("Local commands require a Git workspace.");
     }
     if (approvalProfile === "auto" && workspaceBaseline !== undefined && !this.#worktreeEnabled) {
       const directTaskActive = this.#store
@@ -789,6 +789,8 @@ export class InteractiveTui {
       }
       worktreePath = plan.worktreePath;
     }
+    if (trustedShell && worktreePath === undefined)
+      dependencyDirectory = await resolveWorkspaceDependencyDirectory(workspacePath);
     let metadata: TaskMetadata;
     try {
       metadata = this.#store.create(
@@ -835,10 +837,9 @@ export class InteractiveTui {
     }
     if (sourceWorkspaceDirty) {
       this.write(
-        "本地工作区有未提交修改：此隔离任务从最新提交开始，不包含这些修改；如需基于它们工作，请取消或丢弃本任务后使用 /worktree off 新建任务\n",
+        "本地工作区有未提交修改：此安全任务从最新提交开始，不包含这些修改；如需基于它们工作，请取消或丢弃本任务后使用 /access current 新建任务\n",
       );
     }
-    if (worktreePath !== undefined) this.write(`Task Worktree: ${worktreePath}\n`);
     if (trustedShell) {
       const explicitlyEnabled = this.#trustedShellEnabled;
       this.#trustedShellEnabled = false;
@@ -848,8 +849,8 @@ export class InteractiveTui {
         );
       this.write(
         dependencyDirectory === undefined
-          ? "本地命令已就绪：隔离工作树 · 无网络；未检测到可复用的 node_modules，不会自动下载\n"
-          : "本地命令已就绪：隔离工作树 · 复用本地依赖 · 无网络；网络操作仍需逐条确认\n",
+          ? `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 无网络；未检测到可复用的 node_modules，不会自动下载\n`
+          : `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 复用本地依赖 · 无网络；网络操作仍需逐条确认\n`,
       );
     }
     if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
@@ -1992,13 +1993,13 @@ export class InteractiveTui {
           ? await resolveGitCommonDirectory(taskSnapshot.workspacePath)
           : undefined;
       const trustedDependencyDirectory =
-        taskSnapshot.trustedShell &&
-        taskSnapshot.worktreePath !== undefined &&
-        this.#engine instanceof TuiModelRouter
-          ? await resolveTaskWorktreeDependencyDirectory(
-              taskSnapshot.workspacePath,
-              taskSnapshot.worktreePath,
-            )
+        taskSnapshot.trustedShell && this.#engine instanceof TuiModelRouter
+          ? taskSnapshot.worktreePath === undefined
+            ? await resolveWorkspaceDependencyDirectory(taskSnapshot.workspacePath)
+            : await resolveTaskWorktreeDependencyDirectory(
+                taskSnapshot.workspacePath,
+                taskSnapshot.worktreePath,
+              )
           : undefined;
       const prompt = explicitPrompt;
       if (prompt === undefined)
@@ -2065,10 +2066,14 @@ export class InteractiveTui {
                     ? {}
                     : { bashPath: this.#shellRunner.bashPath }),
                   shellActiveSecrets: activeSecrets,
-                  shellNetworkApproval: (
-                    request: CandyNetworkApprovalRequest,
-                    signal: AbortSignal,
-                  ) => this.requestNetworkApproval(taskId, request, signal),
+                  ...(taskSnapshot.worktreePath === undefined
+                    ? {}
+                    : {
+                        shellNetworkApproval: (
+                          request: CandyNetworkApprovalRequest,
+                          signal: AbortSignal,
+                        ) => this.requestNetworkApproval(taskId, request, signal),
+                      }),
                 }
               : {}),
             ...(attachments === undefined
@@ -2379,7 +2384,7 @@ export class InteractiveTui {
     }
     if (metadata.worktreePath === undefined) {
       this.write(
-        `task ${snapshot.taskId} is not isolated; /undo requires /worktree on. In direct mode review with /changes and /diff, then use git restore/clean\n`,
+        `task ${snapshot.taskId} is in the current workspace; /undo is available in /access safe. Review with /changes and /diff, then use git restore/clean\n`,
       );
       return;
     }
@@ -2735,7 +2740,6 @@ export class InteractiveTui {
   private localCommandsEnabled(): boolean {
     return (
       this.#approvalProfile === "auto" &&
-      this.#worktreeEnabled &&
       this.#shellRunner !== undefined &&
       this.#trustedShellAutoAvailable &&
       isTrustedShellAutoAvailableOnHost() &&
@@ -2749,11 +2753,10 @@ export class InteractiveTui {
       return;
     }
     this.#worktreeEnabled = value === "on";
-    if (value === "off") this.#trustedShellEnabled = false;
     this.write(
       value === "on"
-        ? "worktree on: Auto Git tasks run in an isolated Task Worktree (default)\n"
-        : "worktree off: Auto tasks edit the current workspace directly (override); commit with git after review\n",
+        ? "访问模式：安全工作区（默认）；新任务在隔离副本中完成，变更可审阅后应用\n"
+        : "访问模式：当前工作区；新任务直接编辑当前工作区，请在提交前审阅变更\n",
     );
   }
 
@@ -2796,14 +2799,52 @@ export class InteractiveTui {
       }
       return;
     }
-    if (!this.#worktreeEnabled) {
-      this.#worktreeEnabled = true;
-      this.write("Local commands use isolation; Worktree enabled automatically for new tasks\n");
-    }
+    // Compatibility for the formerly public `/local on` command: it retains
+    // the old safe-workspace behavior, including bounded network approvals.
+    // `/access current` deliberately does not take this path.
+    if (!this.#worktreeEnabled) this.#worktreeEnabled = true;
     this.#trustedShellDisabled = false;
     this.#trustedShellEnabled = true;
     this.write(
       "Local commands enabled for the next Auto Git Task; offline commands run automatically\n",
+    );
+  }
+
+  private setAccess(value: string): void {
+    if (value === "") {
+      const mode =
+        this.#approvalProfile === "read-only"
+          ? "只读审阅"
+          : this.#worktreeEnabled
+            ? "安全工作区（默认）"
+            : "当前工作区";
+      this.write(
+        `访问模式：${mode}\n` +
+          "  /access review   只读分析，不修改文件或运行本地检查\n" +
+          "  /access safe     默认；在安全副本中工作，本地检查自动离线运行\n" +
+          "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
+          "  网络仍需逐条确认；凭据、提交、推送、发布和部署仍受保护\n",
+      );
+      return;
+    }
+    if (value === "review") {
+      this.#approvalProfile = "read-only";
+      this.#trustedShellEnabled = false;
+      this.write("访问模式：只读审阅；Candy 只分析，不修改文件或运行本地检查\n");
+      return;
+    }
+    if (value !== "safe" && value !== "current") {
+      this.write("access must be review, safe, or current\n");
+      return;
+    }
+    this.#approvalProfile = "auto";
+    this.#worktreeEnabled = value === "safe";
+    this.#trustedShellDisabled = false;
+    this.#trustedShellEnabled = false;
+    this.write(
+      value === "safe"
+        ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行\n"
+        : "访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行\n",
     );
   }
 
@@ -2962,14 +3003,12 @@ export class InteractiveTui {
   private async resolveExecutionPath(metadata: TaskMetadata): Promise<string> {
     const executionPath = metadata.worktreePath ?? metadata.workspacePath;
     if (!metadata.trustedShell) return executionPath;
-    if (metadata.worktreePath === undefined)
-      throw new Error("Local commands require a Git Task Worktree.");
     const [canonicalPath, root] = await Promise.all([
-      realpath(metadata.worktreePath).catch(() => undefined),
-      lstat(metadata.worktreePath).catch(() => undefined),
+      realpath(executionPath).catch(() => undefined),
+      lstat(executionPath).catch(() => undefined),
     ]);
     if (canonicalPath === undefined || root?.isSymbolicLink() === true)
-      throw new Error("The Task Worktree for local commands is unavailable or symlinked.");
+      throw new Error("The local-command workspace is unavailable or symlinked.");
     return canonicalPath;
   }
 

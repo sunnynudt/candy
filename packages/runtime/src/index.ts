@@ -475,6 +475,7 @@ export {
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeDependencyDirectory,
+  resolveWorkspaceDependencyDirectory,
   resolveTaskWorktreeRoot,
 } from "./v1.js";
 export type {

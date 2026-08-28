@@ -55,9 +55,9 @@
 | `/changes`     | `/changes`                       | 显示当前任务变更                                                                    |
 | `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                                          |
 | `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                                |
-| `/undo`        | `/undo [task-id]`                | 恢复隔离任务（`/worktree on`）最新一轮的变更快照；direct 模式请用 git restore/clean |
+| `/undo`        | `/undo [task-id]`                | 恢复安全工作区任务最新一轮的变更快照；当前工作区请用 git restore/clean |
 | `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                                            |
-| `/discard`     | `/discard`                       | 丢弃 Candy 自有的 Task Worktree                                                     |
+| `/discard`     | `/discard`                       | 丢弃 Candy 安全工作区任务                                                           |
 | `/validate`    | `/validate`                      | 运行已配置的 validator                                                              |
 | `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                                    |
 
@@ -78,9 +78,7 @@
 
 | 命令                         | 语法                    | 说明                                       |
 | ---------------------------- | ----------------------- | ------------------------------------------ |
-| `/profile`                   | `/profile read-only     | auto`                                      | 工作区模式；`auto` 自动执行受限文件读写删，结果通过变更审查确认                                                                                  |
-| `/worktree`                  | `/worktree on           | off`                                       | 默认 `on`，把 Auto 任务隔离到 `<workspace>/.git/candy-worktrees/`；`off` 直接编辑当前工作区（允许已有未提交修改），作为显式覆盖                   |
-| `/local`                    | `/local on              | off`                                       | 默认在已批准 macOS 的隔离 Auto Git 任务中启用离线本地命令；`off` 显式关闭后续任务的该能力，`on` 恢复默认（网络仍逐条确认）。`/trusted-shell`、`/shell` 是兼容别名 |
+| `/access`                    | `/access [review\|safe\|current]` | 选择 Candy 如何工作：`review` 只读分析；`safe` 默认在安全副本中工作；`current` 直接在当前工作区工作。两个可写模式均可离线运行已有本地检查，网络仍逐条确认 |
 | `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
 | `/prompts`                   | `/prompts`              | 列出提示词模板                             |
 | `/skills`                    | `/skills`               | 列出 Candy 自有技能（名称/描述/来源/目录） |
@@ -90,7 +88,7 @@
 
 ## TUI 界面
 
-- 顶部两行固定信息区优先显示人类可读的任务标题和当前交互状态；第二行显示工作区、Auto/Read-only、Direct/隔离、Shell、模型及待恢复任务数。`上轮完成` 表示本轮模型执行结束，仍可在底部继续当前任务。
+- 顶部两行固定信息区优先显示人类可读的任务标题和当前交互状态；第二行显示工作区、Auto/Read-only、安全工作区/当前工作区、本地检查、模型及待恢复任务数。`上轮完成` 表示本轮模型执行结束，仍可在底部继续当前任务。
 - `↻ N 个可恢复任务 · /tasks` 表示已持久化的 paused/interrupted 任务数，不是本轮重试次数；先运行 `/tasks` 找到任务，再用 `/resume <task-id> <continuation>` 显式继续，Candy 不会自动重放。
 - 用户消息与模型回复分别以 `你`、`Candy` 标识。模型回复（assistant 流式输出）以 markdown 渲染（标题加粗、引用/链接/分割线暗色、代码块保留原文）；transcript 使用终端当前可用宽度，并在终端 resize 时重新排版。
 - 同一次工具调用在实时 transcript 中只占一条活动记录：开始、更新和完成会就地更新；工具行同时显示人类可读语义和实际事件工具名，完成后保留有界、脱敏的最终工具证据。等待审批使用独立的警示层级和可复制命令，不与普通工具活动混排。
@@ -115,14 +113,13 @@
 ## 安全边界
 
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
-- 默认 Auto 任务运行在隔离 Task Worktree（`/worktree on`），结束时用 `/apply` 合入；`/worktree off` 显式切回直接模式，允许在已有未提交修改的本地工作区继续编辑，提交由用户用 git 完成。
-- 如果本地 Git 工作区已有未提交修改，隔离任务会在创建时明确说明：它从最新提交开始，不包含这些修改。需要让任务基于它们工作时，取消或丢弃该任务后使用 `/worktree off` 新建任务。
-- 普通开发无需配置：启动后默认就是 Auto + 隔离 Task Worktree；已批准 macOS 主机上的本地 `npm run` 等命令离线可用，复用已有依赖而不自动下载。依赖不可用时，任务会明确提示先在源工作区安装依赖后新建任务，Candy 不会自行下载。
-- `/local off` 会关闭后续任务的本地命令能力；如果平台能力未通过 G2，Candy 会保留关闭状态并显示具体原因。
+- 普通开发无需配置：启动后默认是 `/access safe`，Candy 在安全副本中工作，结束时用 `/apply` 合入；`/access current` 显式在当前工作区继续编辑，提交由用户用 git 完成。
+- 如果本地 Git 工作区已有未提交修改，安全工作区任务会在创建时明确说明：它从最新提交开始，不包含这些修改。需要让任务基于它们工作时，取消或丢弃该任务后使用 `/access current` 新建任务。
+- 已批准 macOS 主机上的本地 `npm run` 等命令在两个可写访问模式下离线可用，复用已有依赖而不自动下载。依赖不可用时，任务会明确提示先在源工作区安装依赖后新建任务，Candy 不会自行下载；如果平台能力未通过 G2，Candy 会显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
-- `/plan` 创建只读规划任务：规划 turn 以 read-only profile 运行（不注册写入/删除/本地命令工具），模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前 `/profile` 并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建 Task Worktree、不启用本地命令，`/build` 只对 plan 任务生效。
+- `/plan` 创建只读规划任务：规划 turn 不注册写入、删除或本地检查工具，模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前访问模式并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建安全工作区、不启用本地检查，`/build` 只对 plan 任务生效。
 - `/debug` 创建 Auto Debug 任务（`mode=debug`，要求已配置 validator）：每轮先跑模型回合，再自动运行 validator；失败时把有界、脱敏的验证证据追加到下一轮 prompt 继续修复，直到验证通过、连续两轮证据相同（stall）或达到预算（默认最多 6 轮）。中途可用 `/cancel` 停止；非通过停止会把任务置为 interrupted，只能通过显式 `/resume` 继续。进度写入任务 run 记录（`/status` 可查）。
-- `/undo` 只作用于隔离任务（`/worktree on`）：每个会变动的模型回合开始前，Candy 会把当前 changed-file 内容以有界、脱敏快照存入内存 undo 历史（每任务最多 8 轮）；`/undo` 恢复最新一轮快照（凭据形内容永不快照/恢复），并清除过期的 review 状态，之后需重新 `/changes`+`/diff` 审查。direct 模式下 Candy 不重置本地修改，请用 git restore/clean。undo 历史不跨重启持久化，重启后仍需显式 `/resume`。
+- `/undo` 只作用于安全工作区任务：每个会变动的模型回合开始前，Candy 会把当前 changed-file 内容以有界、脱敏快照存入内存 undo 历史（每任务最多 8 轮）；`/undo` 恢复最新一轮快照（凭据形内容永不快照/恢复），并清除过期的 review 状态，之后需重新 `/changes`+`/diff` 审查。当前工作区模式下 Candy 不重置本地修改，请用 git restore/clean。undo 历史不跨重启持久化，重启后仍需显式 `/resume`。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。
 - Shell 仅在平台 G2 通过后可用；未启用时显示为不可用能力而非隐藏。

@@ -1519,6 +1519,26 @@ export async function linkTaskWorktreeDependencies(
 }
 
 /**
+ * Return the workspace dependency directory only when it is a real directory
+ * owned by the selected workspace. Direct-workspace tasks use this narrow
+ * seam to run existing local checks without granting an external dependency
+ * root or downloading anything.
+ */
+export async function resolveWorkspaceDependencyDirectory(
+  workspacePath: string,
+): Promise<string | undefined> {
+  const source = path.resolve(workspacePath, "node_modules");
+  const sourceMetadata = await lstat(source).catch(() => undefined);
+  if (
+    sourceMetadata === undefined ||
+    sourceMetadata.isSymbolicLink() ||
+    !sourceMetadata.isDirectory()
+  )
+    return undefined;
+  return realpath(source).catch(() => undefined);
+}
+
+/**
  * Return the source dependency directory only when the task-side link still
  * points at the expected source workspace. This stops a task from replacing
  * `node_modules` with an arbitrary symlink and gaining a new read-only root.

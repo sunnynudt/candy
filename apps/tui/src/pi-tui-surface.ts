@@ -144,8 +144,8 @@ class CandyChrome implements Component {
         ? ` ${dim("·")} ${tint(`↻ ${recoveryTaskCount} 个可恢复任务 · /tasks`, ANSI_WARNING)}`
         : "";
     const profile = (this.#options.profile?.() ?? "auto") === "auto" ? "Auto" : "Read-only";
-    const worktree = this.#options.worktreeEnabled?.() === true ? "隔离" : "Direct";
-    const shell = this.#options.trustedShellEnabled?.() === true ? "命令就绪" : "命令关闭";
+    const worktree = this.#options.worktreeEnabled?.() === true ? "安全工作区" : "当前工作区";
+    const shell = this.#options.trustedShellEnabled?.() === true ? "本地检查就绪" : "本地检查关闭";
     const taskTitle =
       this.#options.taskTitle?.() ??
       (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");

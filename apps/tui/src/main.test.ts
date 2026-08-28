@@ -1157,7 +1157,7 @@ test("default TUI composition root isolates new Auto tasks with local commands r
     terminal.emitInput(":shell on");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /Local commands enabled for the next Auto Git Task/u);
-    assert.match(terminalText(terminal), /隔离/u);
+    assert.match(terminalText(terminal), /安全工作区/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
@@ -1411,6 +1411,59 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
     terminal.emitInput(":discard");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /discarded task-/u);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI runs local checks in the current-workspace access mode", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-current-workspace-local-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
+  let observedNetworkApproval = true;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          observedNetworkApproval = input.shellNetworkApproval !== undefined;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /访问模式：当前工作区/u);
+    terminal.emitInput("run the local check here");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /本地检查已就绪：当前工作区/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.equal(task?.worktreePath, undefined);
+    assert.equal(task?.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    assert.equal(observedNetworkApproval, false);
     store.close();
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
@@ -2541,7 +2594,7 @@ test("interactive TUI reviews non-Git changed files and bounded diff without mut
   }
 });
 
-test("interactive TUI supports the explicit direct-mode override for Git workspace edits", async () => {
+test("interactive TUI supports the current-workspace access mode for Git workspace edits", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-"));
   const appDataRoot = path.join(root, "app-data");
   const repository = await createTuiGitFixture(root);
@@ -2564,6 +2617,9 @@ test("interactive TUI supports the explicit direct-mode override for Git workspa
       worktreeEnabled: false,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /访问模式：当前工作区/u);
     terminal.emitInput("edit directly");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /completed/u);
@@ -2650,7 +2706,7 @@ test("interactive TUI explains that isolated tasks exclude existing uncommitted 
       terminal,
       /本地工作区有未提交修改：此隔离任务从最新提交开始，不包含这些修改/u,
     );
-    assert.match(output, /使用 \/worktree off 新建任务/u);
+    assert.match(output, /使用 \/access current 新建任务/u);
     const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
@@ -2694,10 +2750,10 @@ test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed App
     terminal.emitInput("\r");
     terminal.emitInput(":worktree on");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /worktree on:/u);
+    await waitForOutput(terminal, /访问模式：安全工作区/u);
     terminal.emitInput("edit in isolation");
     terminal.emitInput("\r");
-    const created = await waitForOutput(terminal, /Task Worktree:/u);
+    const created = await waitForOutput(terminal, /created task-/u);
     const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
@@ -3321,7 +3377,8 @@ test("interactive TUI /help lists the full command reference", async () => {
     terminal.emitInput("\r");
     const output = await waitForOutput(terminal, /Candy commands/u);
     assert.match(output, /\/model/u);
-    assert.match(output, /\/local/u);
+    assert.match(output, /\/access/u);
+    assert.doesNotMatch(output, /\/local|\/worktree|\/profile/u);
     assert.doesNotMatch(output, /\/trusted-shell/u);
     assert.match(output, /\/resume/u);
     assert.match(output, /\/apply/u);
