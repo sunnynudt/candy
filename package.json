@@ -27,6 +27,7 @@
     "check:windows-toolchain": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-toolchain.ps1",
     "check:native": "node scripts/check-native.mjs",
     "smoke:sandbox:macos": "npm run build && node tests/smoke-sandbox-macos.mjs",
+    "smoke:full-access:macos": "npm run build && node tests/smoke-full-access-macos.mjs",
     "smoke:credential-manager:windows": "npm run build && node tests/smoke-credential-manager-windows.mjs",
     "smoke:credential-manager:packaged:windows": "node tests/smoke-credential-manager-packaged-windows.mjs",
     "smoke:native:windows": "npm run build && node tests/smoke-native-windows.mjs",

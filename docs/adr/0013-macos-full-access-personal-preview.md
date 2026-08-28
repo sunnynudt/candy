@@ -71,3 +71,16 @@ fixtures and no credential values in evidence:
 Failure of any credential, process-tree, cancellation, or output-redaction
 check disables the macOS Full access composition root rather than falling back
 to an unsandboxed child.
+
+## Reverification and remaining evidence
+
+`npm run smoke:full-access:macos` is the repeatable, temporary-directory-only
+macOS evidence for broad external filesystem access, loopback networking,
+credential-environment removal, cancellation of detached descendants, and
+parent-loss cleanup on the Full access runner path.
+
+It intentionally does not create a Keychain item. The disposable Keychain
+canary remains a separate required check: before running it, an operator must
+explicitly approve the exact temporary-keychain create, host-side readback,
+Full-access denial, and deletion/readback-cleanup sequence. Its command must
+never print the canary value, a full Keychain listing, or a process environment.
