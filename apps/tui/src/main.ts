@@ -494,6 +494,7 @@ export class InteractiveTui {
       trustedShellEnabled: () => this.localCommandsEnabled(),
       fullAccessEnabled: () => this.fullAccessEnabled(),
       fullAccessAvailable: () => this.fullAccessAvailable(),
+      fullAccessConfirmationPending: () => this.#fullAccessConfirmationPending,
       taskId: () => this.#currentTaskId,
       taskTitle: () =>
         this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
@@ -516,6 +517,7 @@ export class InteractiveTui {
       onInterrupt: (): void => this.requestExit(),
       onCopyLastAssistant: (): void => this.copyLastAssistant(),
       onOpenFullAccess: (): void => this.setAccess("full"),
+      onConfirmFullAccess: (): void => this.setAccess("full confirm"),
       onPasteImage: (): void => this.pasteImageFromClipboard(),
       onCycleModel: (direction: 1 | -1): void => this.cycleModel(direction),
     });

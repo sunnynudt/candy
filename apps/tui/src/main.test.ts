@@ -1450,6 +1450,68 @@ test("interactive TUI persists macOS Full access as the default until switched b
   }
 });
 
+test("interactive TUI enables macOS Full access through the two-click status entry", async () => {
+  if (!isMacosFullAccessAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-entry-"));
+  const appDataRoot = path.join(root, "app-data");
+  const terminal = new FakeTerminal({ columns: 120, rows: 32 });
+  const runPromise = new TestInteractiveTui({
+    appDataRoot,
+    terminal,
+    fullAccessAvailable: true,
+    shellRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+    engine: {
+      async *runTurn(input) {
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    },
+  }).run();
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForOutput(terminal, /开启 Full access/u);
+    terminal.emitInput("\x1b[<0;3;2M");
+    terminal.emitInput("\x1b[<0;3;2m");
+    await waitForOutput(terminal, /Full access warning/u);
+    await waitForOutput(terminal, /确认开启 Full access/u);
+    terminal.emitInput("\x1b[<0;3;2M");
+    terminal.emitInput("\x1b[<0;3;2m");
+    await waitForOutput(terminal, /Full access is now the macOS default/u);
+    await waitForOutput(terminal, /⚠ FULL ACCESS/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    const afterRestart = new FakeTerminal({ columns: 120, rows: 32 });
+    const afterRestartRun = new TestInteractiveTui({
+      appDataRoot,
+      terminal: afterRestart,
+      fullAccessAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await waitForOutput(afterRestart, /⚠ FULL ACCESS/u);
+    } finally {
+      afterRestart.emitInput(":quit");
+      afterRestart.emitInput("\r");
+      await afterRestartRun.catch(() => undefined);
+    }
+  } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise.catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI defaults Auto Git tasks to offline local commands with reused dependencies", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-default-"));

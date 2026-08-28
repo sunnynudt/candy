@@ -27,8 +27,9 @@ safe` (or the `review` or `current` access choices) turns it off. Each task
 persists its own `full_access` decision, independent of later preference
 changes. The status chrome continuously shows an amber `⚠ FULL ACCESS` badge
 and the `/access safe` escape route. Before activation, the macOS Safe chrome
-exposes a clickable `⚠ 开启 Full access` entry that reveals the warning but
-cannot itself enable the mode.
+exposes a clickable `⚠ 开启 Full access` entry that reveals the warning, then a
+separate clickable `⚠ 确认开启 Full access` acknowledgement. Neither one-click
+action alone can enable the mode.
 
 For that task the Native Sandbox Runner receives `fullAccess: true` and
 `network: true`. Its macOS Seatbelt profile grants broad filesystem read/write,

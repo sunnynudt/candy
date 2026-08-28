@@ -173,6 +173,36 @@ test("Candy TUI surface exposes a clickable Full access warning entry when avail
   }
 });
 
+test("Candy TUI surface exposes a second clickable confirmation after the warning", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-confirm-"));
+  const terminal = new FakeTerminal({ columns: 120, rows: 32 });
+  let confirmations = 0;
+  const surface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    fullAccessAvailable: () => true,
+    fullAccessConfirmationPending: () => true,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+    onConfirmFullAccess: (): void => {
+      confirmations += 1;
+    },
+  });
+  try {
+    surface.start();
+    await waitForOutput(terminal, /确认开启 Full access/u);
+    terminal.emitInput("\x1b[<0;3;2M");
+    terminal.emitInput("\x1b[<0;3;2m");
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 30);
+    });
+    assert.equal(confirmations, 1);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface uses an explicit Candy app-data log directory", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-log-path-"));
   const terminal: FakeTerminal = new FakeTerminal();

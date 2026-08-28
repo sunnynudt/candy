@@ -46,6 +46,7 @@ const ANSI_FULL_ACCESS_BACKGROUND = "\x1b[48;5;130m";
 const ANSI_FULL_ACCESS_TEXT = "\x1b[38;5;231m";
 const COPY_LAST_ASSISTANT_URL = "candy://copy-last-assistant";
 const OPEN_FULL_ACCESS_URL = "candy://open-full-access";
+const CONFIRM_FULL_ACCESS_URL = "candy://confirm-full-access";
 
 function tint(value: string, color: string): string {
   return `${color}${value}${ANSI_RESET}`;
@@ -121,6 +122,7 @@ interface CandyChromeOptions {
   readonly trustedShellEnabled: (() => boolean) | undefined;
   readonly fullAccessEnabled: (() => boolean) | undefined;
   readonly fullAccessAvailable: (() => boolean) | undefined;
+  readonly fullAccessConfirmationPending: (() => boolean) | undefined;
   readonly taskId: (() => string | undefined) | undefined;
   readonly taskTitle: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
@@ -157,6 +159,7 @@ class CandyChrome implements Component {
     const shell = this.#options.trustedShellEnabled?.() === true ? "本地检查就绪" : "本地检查关闭";
     const fullAccess = this.#options.fullAccessEnabled?.() === true;
     const fullAccessAvailable = this.#options.fullAccessAvailable?.() === true;
+    const fullAccessConfirmationPending = this.#options.fullAccessConfirmationPending?.() === true;
     const taskTitle =
       this.#options.taskTitle?.() ??
       (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");
@@ -172,7 +175,7 @@ class CandyChrome implements Component {
         fullAccess
           ? ` ${fullAccessBadge()} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(`${worktree} · 广域文件与网络 · /access safe`, ANSI_WARNING)}`
           : fullAccessAvailable
-            ? ` ${localActionLink(OPEN_FULL_ACCESS_URL, tint("⚠ 开启 Full access", ANSI_WARNING))} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`
+            ? ` ${localActionLink(fullAccessConfirmationPending ? CONFIRM_FULL_ACCESS_URL : OPEN_FULL_ACCESS_URL, tint(fullAccessConfirmationPending ? "⚠ 确认开启 Full access" : "⚠ 开启 Full access", ANSI_WARNING))} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`
             : ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
         `${tint(model, ANSI_SOFT)}${recovery}`,
         safeWidth,
@@ -313,6 +316,8 @@ export interface CandyTuiSurfaceOptions {
   readonly fullAccessEnabled?: () => boolean;
   /** Whether this installation can show the macOS Full access entry point. */
   readonly fullAccessAvailable?: () => boolean;
+  /** The user has viewed the warning and may now explicitly confirm Full access. */
+  readonly fullAccessConfirmationPending?: () => boolean;
   readonly taskId?: () => string | undefined;
   readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
@@ -328,6 +333,8 @@ export interface CandyTuiSurfaceOptions {
   readonly onCopyLastAssistant?: () => void;
   /** Reveal the warning before a user may explicitly confirm Full access. */
   readonly onOpenFullAccess?: () => void;
+  /** Explicitly confirm Full access after its warning has been revealed. */
+  readonly onConfirmFullAccess?: () => void;
   /** Paste a raster image from the system clipboard after an explicit Ctrl+V gesture. */
   readonly onPasteImage?: () => void;
   /** Cycle the selected model; 1 forward, -1 backward. */
@@ -347,6 +354,7 @@ export class CandyTuiSurface {
   readonly #onInterrupt: () => void;
   readonly #onCopyLastAssistant: (() => void) | undefined;
   readonly #onOpenFullAccess: (() => void) | undefined;
+  readonly #onConfirmFullAccess: (() => void) | undefined;
   readonly #onPasteImage: (() => void) | undefined;
   readonly #onCycleModel: ((direction: 1 | -1) => void) | undefined;
   readonly #environment: NodeJS.ProcessEnv;
@@ -363,6 +371,7 @@ export class CandyTuiSurface {
     this.#onInterrupt = options.onInterrupt;
     this.#onCopyLastAssistant = options.onCopyLastAssistant;
     this.#onOpenFullAccess = options.onOpenFullAccess;
+    this.#onConfirmFullAccess = options.onConfirmFullAccess;
     this.#onPasteImage = options.onPasteImage;
     this.#onCycleModel = options.onCycleModel;
     this.#environment = options.environment ?? process.env;
@@ -375,6 +384,7 @@ export class CandyTuiSurface {
       openUrl: (url: string): void => {
         if (url === COPY_LAST_ASSISTANT_URL) this.#onCopyLastAssistant?.();
         if (url === OPEN_FULL_ACCESS_URL) this.#onOpenFullAccess?.();
+        if (url === CONFIRM_FULL_ACCESS_URL) this.#onConfirmFullAccess?.();
       },
     });
     this.#transcript = new CandyTranscript();
@@ -398,6 +408,7 @@ export class CandyTuiSurface {
       trustedShellEnabled: options.trustedShellEnabled,
       fullAccessEnabled: options.fullAccessEnabled,
       fullAccessAvailable: options.fullAccessAvailable,
+      fullAccessConfirmationPending: options.fullAccessConfirmationPending,
       taskId: options.taskId,
       taskTitle: options.taskTitle,
       taskPhase: options.taskPhase,
