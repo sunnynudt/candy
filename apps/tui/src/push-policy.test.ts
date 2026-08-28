@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,6 +54,53 @@ test("TUI /push allow persists the push policy on new tasks", async () => {
     const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     const task = store.get(taskId);
     assert.equal(task?.pushPolicy, "allow");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(testWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("TUI lists and selects user-configured models and accepts their credential names", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-configured-model-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await mkdir(testWorkspace, { recursive: true });
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      path.join(root, "models.json"),
+      JSON.stringify({
+        models: [
+          {
+            id: "glm-4.6",
+            label: "GLM-4.6",
+            model: "glm-4.6",
+            baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+            credentialName: "glm",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const runPromise = new HarnessTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/model");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /glm-4\.6.*user-configured/u);
+    terminal.emitInput("/model glm-4.6");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /model selected: glm-4\.6/u);
+    terminal.emitInput("/credential set glm");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /glm credential unavailable: set CANDY_GLM_API_KEY/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;

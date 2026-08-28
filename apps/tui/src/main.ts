@@ -5,16 +5,19 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   PI_COMPATIBILITY_VERSION,
+  CustomPiAgentEngine,
   MiniMaxPiAgentEngine,
   PiAgentEngine,
   ProviderContractError,
   type CandyNetworkApprovalRequest,
   type CandyPromptTemplateInfo,
+  loadCandyModelConfigSync,
   loadCandyResourceDiagnostics,
   loadCandyPromptTemplates,
   loadCandySkillContent,
   loadCandySkillInfos,
   resolveCandySkillRoots,
+  type ConfiguredModelEntry,
   type PiAgentEngineInput,
   type PiAgentObservation,
   type PiToolFailure,
@@ -27,8 +30,8 @@ import {
   copyToClipboard,
   type CredentialName,
   type CredentialStore,
-  CANDY_CREDENTIAL_ENV_KEYS,
   DEFAULT_CANDY_MODEL,
+  isValidCredentialName,
   KeyringCredentialStore,
   NativeProcessRunner,
   type NativeProcessRequest,
@@ -36,6 +39,7 @@ import {
   resolveAppPaths,
   readClipboardImage,
   resolveCredential,
+  resolveCredentialEnvKey,
   resolveDefaultAppDataRoot,
   resolveNativeProcessRunnerPath,
   redactCredentialMaterial,
@@ -394,6 +398,9 @@ export class InteractiveTui {
   #fullAccessConfirmationPending = false;
   /** Git push authorization for new tasks; 'allow' must be set by the user. */
   #pushPolicy: "deny" | "allow" = "deny";
+  /** User-configured OpenAI-compatible models from the Candy-owned models.json. */
+  #configuredModels: readonly ConfiguredModelEntry[] = [];
+  #modelConfigDiagnostics: readonly string[] = [];
   #validatorCommand: CommandValidatorCommand | undefined;
   /** Contiguous assistant text of the current stream; flushed into the last reply on plain writes. */
   #assistantBuffer = "";
@@ -444,6 +451,9 @@ export class InteractiveTui {
       );
     }
     this.#scheduler = new TaskScheduler(3, 5, this.#store);
+    const modelConfig = loadCandyModelConfigSync(paths.root);
+    this.#configuredModels = modelConfig.entries;
+    this.#modelConfigDiagnostics = modelConfig.diagnostics.map((diagnostic) => diagnostic.message);
     if (options.engine !== undefined) {
       this.#engine = options.engine;
     } else {
@@ -476,7 +486,26 @@ export class InteractiveTui {
         },
         this.#shellRunner,
       );
-      this.#engine = new TuiModelRouter(deepseek, minimax);
+      const customEngines = new Map<string, TuiAgentEngine>();
+      for (const entry of this.#configuredModels) {
+        const engine = new CustomPiAgentEngine(
+          paths.sessions,
+          async () => {
+            const lease = resolveCredential(
+              entry.credentialName,
+              this.#credentialEnvironment,
+              this.#credentialStore,
+            );
+            if (lease === undefined) return undefined;
+            const value = lease.value;
+            return { secret: value, release: lease.release };
+          },
+          entry,
+          this.#shellRunner,
+        );
+        customEngines.set(entry.id, engine);
+      }
+      this.#engine = new TuiModelRouter(deepseek, minimax, customEngines);
     }
     this.#skillRoots = options.skillRoots ?? resolveCandySkillRoots(process.env);
   }
@@ -508,6 +537,14 @@ export class InteractiveTui {
         this.#store.list().filter((task) => task.state === "paused" || task.state === "interrupted")
           .length,
       skills,
+      modelChoices: [
+        ...CANDY_MODEL_CHOICES,
+        ...this.#configuredModels.map((entry) => ({
+          value: entry.id,
+          label: entry.id,
+          description: `${entry.label} (user-configured)`,
+        })),
+      ],
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -526,6 +563,9 @@ export class InteractiveTui {
     const exitPromise: Promise<void> = new Promise<void>((resolve: () => void): void => {
       this.#resolveExit = resolve;
     });
+    for (const diagnostic of this.#modelConfigDiagnostics) {
+      this.write(`models.json warning: ${diagnostic}\n`);
+    }
     try {
       this.#surface.start();
       await exitPromise;
@@ -1138,7 +1178,13 @@ export class InteractiveTui {
   }
 
   private showCredentials(): void {
-    const lines = (["deepseek", "minimax-cn"] as const).map((name) => {
+    const names = [
+      "deepseek",
+      "minimax-cn",
+      ...this.#configuredModels.map((entry) => entry.credentialName),
+    ];
+    const uniqueNames = [...new Set(names)];
+    const lines = uniqueNames.map((name) => {
       try {
         return `${name}: ${this.#credentialStore.has(name)}`;
       } catch {
@@ -1156,9 +1202,16 @@ export class InteractiveTui {
       );
       return;
     }
-    const name = parseCredentialName(requestedName);
+    const name = parseCredentialName(
+      requestedName,
+      this.#configuredModels.map((entry) => entry.credentialName),
+    );
     if ((action !== "set" && action !== "replace" && action !== "delete") || name === undefined) {
-      this.write("credential usage: /credential set|replace|delete <deepseek|minimax-cn>\n");
+      this.write(
+        `credential usage: /credential set|replace|delete <deepseek|minimax-cn${this.#configuredModels
+          .map((entry) => `|${entry.credentialName}`)
+          .join("")}>\n`,
+      );
       return;
     }
     try {
@@ -1167,7 +1220,7 @@ export class InteractiveTui {
         this.write(`${name} credential deleted\n`);
         return;
       }
-      const environmentName = CANDY_CREDENTIAL_ENV_KEYS[name];
+      const environmentName = resolveCredentialEnvKey(name);
       const temporary = this.#credentialEnvironment[environmentName];
       if (temporary === undefined) {
         this.write(`${name} credential unavailable: set ${environmentName} for this operation\n`);
@@ -1190,15 +1243,27 @@ export class InteractiveTui {
       for (const choice of CANDY_MODEL_CHOICES) {
         this.write(`  ${choice.value}  ${choice.description ?? ""}\n`);
       }
+      for (const entry of this.#configuredModels) {
+        this.write(`  ${entry.id}  ${entry.label} (user-configured)\n`);
+      }
       return;
     }
     const model = parseModelId(value);
-    if (model === undefined) {
+    const configuredId =
+      model === undefined && this.#configuredModels.some((entry) => entry.id === value)
+        ? value
+        : undefined;
+    if (model === undefined && configuredId === undefined) {
       this.write(
-        "model rejected: choose deepseek-flash, deepseek-pro, deepseek-flash-vision, or minimax-m3\n",
+        "model rejected: choose deepseek-flash, deepseek-pro, deepseek-flash-vision, minimax-m3, or a configured model id\n",
       );
       return;
     }
+    this.selectModel(model ?? configuredId!);
+  }
+
+  private selectModel(model: CandyModelId): void {
+    const current = this.currentTask();
     if (
       this.#selectedAttachmentIds.length > 0 &&
       !isVisionCapableModel(model) &&
@@ -3234,7 +3299,10 @@ export class InteractiveTui {
   /** Cycle the selected model through the Candy model choices (Ctrl+P). */
   private cycleModel(direction: 1 | -1): void {
     const current = this.currentTask()?.snapshot().model ?? this.#selectedModel;
-    const order = CANDY_MODEL_CHOICES.map((choice) => choice.value);
+    const order = [
+      ...CANDY_MODEL_CHOICES.map((choice) => choice.value),
+      ...this.#configuredModels.map((entry) => entry.id),
+    ];
     const index = order.findIndex((value) => parseModelId(value) === current);
     const base = index === -1 ? 0 : index;
     const next = order[(base + direction + order.length) % order.length];
@@ -3288,13 +3356,17 @@ class TuiModelRouter implements TuiAgentEngine {
   public constructor(
     private readonly deepseek: TuiAgentEngine,
     private readonly minimax: TuiAgentEngine,
+    private readonly customEngines: ReadonlyMap<string, TuiAgentEngine> = new Map(),
   ) {}
 
   public async *runTurn(
     input: PiAgentEngineInput,
     signal: AbortSignal,
   ): AsyncIterable<PiAgentObservation> {
-    const engine = input.model === "MiniMax-M3" ? this.minimax : this.deepseek;
+    const engine =
+      input.model === "MiniMax-M3"
+        ? this.minimax
+        : (this.customEngines.get(input.model) ?? this.deepseek);
     this.#activeEngines.set(input.taskId, engine);
     try {
       yield* engine.runTurn(input, signal);
@@ -3847,9 +3919,14 @@ function safeProviderError(error: ProviderContractError): string {
   }
 }
 
-function parseCredentialName(value: string | undefined): CredentialName | undefined {
+function parseCredentialName(
+  value: string | undefined,
+  configuredNames: readonly string[] = [],
+): CredentialName | undefined {
   if (value === "deepseek") return "deepseek";
   if (value === "minimax" || value === "minimax-cn") return "minimax-cn";
+  if (value !== undefined && isValidCredentialName(value) && configuredNames.includes(value))
+    return value;
   return undefined;
 }
 

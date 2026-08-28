@@ -3,6 +3,12 @@
 更新日期：2026-08-28
 基线分支：`codex/candy-v1-foundation`
 
+## 2026-08-28 多模型配置 checkpoint（models.json）
+
+- **用户配置模型（3A 切片）**：Candy 应用数据目录 `models.json` 可配置额外 OpenAI 兼容模型（GLM/Kimi/Qwen/Doubao 等）。`baseUrl` 为 API 根地址（客户端追加 `/chat/completions`），`credentialName` 对应 OS 凭据库 `candy-v1/<name>` 或环境变量 `CANDY_<NAME>_API_KEY`；配置有界、校验、拒绝完整端点/非 https/多模态/重复 id，非法条目输出 `models.json warning` 诊断且不影响内置模型。
+- **通用 OpenAI 兼容 provider**：`CustomPiAgentEngine`（继承 PiAgentEngine）用配置的 baseUrl/model/凭据名注册 Pi provider（`api: openai-completions`），非多模态（拒绝图片）。`CandyModelId`/`CredentialName`/协议类型放宽为内建联合 + `(string & {})`；`resolveCredentialEnvKey` 支持任意合法凭据名；`/model` 列出并选择配置模型（标注 user-configured），`/credential set` 接受配置凭据名。配置模型由用户自行 BYOK 验证，不进入 V1 live-gate 证据。
+- **验证**：构建通过；全量 `npm test` **386/387**（唯一失败为 worktree 无 Rust native runner 二进制的环境阻塞项）；新增 model-config 测试 6/6、CustomPiAgentEngine 2/2（mock fetch 断言请求发往配置端点）、TUI 配置模型/凭据测试 1/1；prettier/eslint 全绿。
+
 ## 2026-08-28 输入排队与 Codex 式自动提交 checkpoint
 
 - **输入排队（Codex 风格）**：任务运行中直接输入普通文本默认排队为下一轮 follow-up（`[follow-up] ... queued`），不再拒绝；`/steer` 保留为显式插入当前轮。回归测试改为断言排队成功且引擎只跑一轮。已推送 `2164213` + `bf3e2dd`。

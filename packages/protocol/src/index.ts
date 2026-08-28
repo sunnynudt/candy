@@ -13,7 +13,11 @@ export function isSafeTaskId(value: unknown): value is string {
 }
 
 export type CandyModelId =
-  "deepseek-v4-flash" | "deepseek-v4-pro" | "deepseek-v4-flash-vision-exp" | "MiniMax-M3";
+  | "deepseek-v4-flash"
+  | "deepseek-v4-pro"
+  | "deepseek-v4-flash-vision-exp"
+  | "MiniMax-M3"
+  | (string & {});
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
 
 export type TaskState =

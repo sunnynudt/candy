@@ -44,7 +44,11 @@ export interface AppPaths {
 }
 
 export type CandyModelId =
-  "deepseek-v4-flash" | "deepseek-v4-pro" | "deepseek-v4-flash-vision-exp" | "MiniMax-M3";
+  | "deepseek-v4-flash"
+  | "deepseek-v4-pro"
+  | "deepseek-v4-flash-vision-exp"
+  | "MiniMax-M3"
+  | (string & {});
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
 
 /**
@@ -1083,13 +1087,27 @@ function parseAttachmentIds(value: unknown): readonly string[] {
   }
 }
 
-export type CredentialName = "deepseek" | "minimax-cn";
+export type CredentialName = "deepseek" | "minimax-cn" | (string & {});
 export type CredentialPresence = "present" | "absent";
+
+const CREDENTIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+
+/** Validate a Candy credential name (built-in or user-configured provider). */
+export function isValidCredentialName(name: string): boolean {
+  return CREDENTIAL_NAME_PATTERN.test(name);
+}
+
+/** Resolve the Candy-owned temporary environment key for a credential name. */
+export function resolveCredentialEnvKey(name: CredentialName): string {
+  const builtIn = CANDY_CREDENTIAL_ENV_KEYS[name as "deepseek" | "minimax-cn"];
+  if (builtIn !== undefined) return builtIn;
+  return `CANDY_${name.toUpperCase().replaceAll(/[^A-Za-z0-9]/gu, "_")}_API_KEY`;
+}
 
 export const CANDY_CREDENTIAL_ENV_KEYS = {
   deepseek: "CANDY_DEEPSEEK_API_KEY",
   "minimax-cn": "CANDY_MINIMAX_TOKEN_PLAN_KEY",
-} as const satisfies Record<CredentialName, string>;
+} as const satisfies Record<"deepseek" | "minimax-cn", string>;
 
 /**
  * Parse only the explicitly selected OpenCode DeepSeek API entry for the
@@ -1117,7 +1135,16 @@ const KEYRING_SERVICE = "candy-v1";
 const KEYRING_ACCOUNTS = {
   deepseek: "deepseek",
   "minimax-cn": "minimax-token-plan",
-} as const satisfies Record<CredentialName, string>;
+} as const satisfies Record<"deepseek" | "minimax-cn", string>;
+
+/** Map a credential name to its Keychain/Credential Manager account. */
+function resolveKeyringAccount(name: CredentialName): string {
+  const builtIn = KEYRING_ACCOUNTS[name as "deepseek" | "minimax-cn"];
+  if (builtIn !== undefined) return builtIn;
+  if (!isValidCredentialName(name))
+    throw new CredentialStoreUnavailableError(`Credential name ${name} is invalid.`);
+  return name;
+}
 
 export class CredentialStoreUnavailableError extends Error {
   public constructor(message = "Candy OS credential store is unavailable.") {
@@ -1222,7 +1249,7 @@ export class KeyringCredentialStore implements CredentialStore {
   }
 
   private entry(name: CredentialName): Entry {
-    return new Entry(KEYRING_SERVICE, KEYRING_ACCOUNTS[name]);
+    return new Entry(KEYRING_SERVICE, resolveKeyringAccount(name));
   }
 }
 
@@ -1232,7 +1259,7 @@ export function resolveCredential(
   environment: NodeJS.ProcessEnv = process.env,
   store: CredentialStore = new KeyringCredentialStore(),
 ): SecretLease | undefined {
-  const temporary = environment[CANDY_CREDENTIAL_ENV_KEYS[name]];
+  const temporary = environment[resolveCredentialEnvKey(name)];
   if (temporary !== undefined) {
     assertCredentialValue(temporary);
     return { value: temporary, release: () => undefined };

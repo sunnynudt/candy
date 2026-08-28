@@ -26,11 +26,32 @@
 
 ## 模型与附件
 
-| 命令           | 语法                                                    | 说明                                                                                                                                                                             |
-| -------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/model`       | `/model <deepseek-flash \| deepseek-pro \| minimax-m3>` | 选择主模型；键入裸 `/model` 会先显示“查看当前模型”和模型候选，直接 Enter 仍只列出当前模型与可选模型；从 M3 切到非 M3 会原子地解绑当前任务残留的图附件，避免后续 `/resume` 报错。 |
-| `/attach`      | `/attach <absolute-path>`                               | 为下一个任务附加图片（仅 MiniMax M3）；也可复制图片后按 `Ctrl+V`                                                                                                                 |
-| `/attachments` | `/attachments`                                          | 列出已选择附件                                                                                                                                                                   |
+| 命令           | 语法                                                                   | 说明                                                                                                                                                                                                                |
+| -------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/model`       | `/model <deepseek-flash \| deepseek-pro \| minimax-m3 \| 配置模型 id>` | 选择主模型；键入裸 `/model` 会先显示“查看当前模型”和模型候选（含 `models.json` 配置的用户模型），直接 Enter 仍只列出当前模型与可选模型；从 M3 切到非 M3 会原子地解绑当前任务残留的图附件，避免后续 `/resume` 报错。 |
+| `/attach`      | `/attach <absolute-path>`                                              | 为下一个任务附加图片（仅多模态模型，如 MiniMax M3）；也可复制图片后按 `Ctrl+V`                                                                                                                                      |
+| `/attachments` | `/attachments`                                                         | 列出已选择附件                                                                                                                                                                                                      |
+
+## 用户配置模型（models.json）
+
+- 在 Candy 应用数据目录（macOS：`~/Library/Application Support/Candy/`）放置 `models.json` 可配置额外的 OpenAI 兼容模型（如 GLM、Kimi、Qwen、Doubao 等），结构：
+  ```json
+  {
+    "models": [
+      {
+        "id": "glm-4.6",
+        "label": "GLM-4.6",
+        "model": "glm-4.6",
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "credentialName": "glm",
+        "apiFormat": "openai"
+      }
+    ]
+  }
+  ```
+- `baseUrl` 是 OpenAI 兼容 API 根地址（客户端会自动追加 `/chat/completions`），不要带完整端点；`credentialName` 是凭据名（OS 凭据库 `candy-v1/<name>` 或临时环境变量 `CANDY_<NAME>_API_KEY`，如 `CANDY_GLM_API_KEY`）；`apiFormat` 目前仅支持 `openai`。
+- 配置模型默认非多模态（不接收图片）；配置无效、超限、重复或含完整端点时会输出 `models.json warning` 诊断并忽略对应条目，不影响内置模型。
+- `/model` 会列出配置模型（标注 `user-configured`）；`/credential set <name>` 接受配置的凭据名。配置模型由用户自行用其 API key 验证（BYOK），不进入 Candy V1 的 live-gate 验收证据。
 
 ## 工作区上下文
 

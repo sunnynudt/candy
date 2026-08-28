@@ -49,9 +49,12 @@ export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
   },
 ];
 
-function completeModels(argumentPrefix: string): AutocompleteItem[] {
+function completeModels(
+  argumentPrefix: string,
+  choices: readonly AutocompleteItem[] = CANDY_MODEL_CHOICES,
+): AutocompleteItem[] {
   const prefix = argumentPrefix.trim().toLowerCase();
-  return CANDY_MODEL_CHOICES.filter((item: AutocompleteItem): boolean =>
+  return choices.filter((item: AutocompleteItem): boolean =>
     item.value.toLowerCase().startsWith(prefix),
   );
 }
@@ -308,6 +311,7 @@ function isBareCommandPrefix(prefix: string): boolean {
 export function createCandySlashCommandAutocompleteProvider(
   workspacePath: () => string = () => process.cwd(),
   skills: readonly CandySkillSlashCommand[] = [],
+  modelChoices: readonly AutocompleteItem[] = CANDY_MODEL_CHOICES,
 ): AutocompleteProvider {
   const builtInNames = new Set(CANDY_SLASH_COMMANDS.map((command) => command.name));
   const skillCommands: CandySlashCommand[] = skills
@@ -346,7 +350,7 @@ export function createCandySlashCommandAutocompleteProvider(
         const commandName = trimmed.slice(1);
         const command = argumentCompletionCommands.get(commandName);
         if (command?.getArgumentCompletions) {
-          const items = await command.getArgumentCompletions("");
+          const items = completeModels("", modelChoices);
           if (Array.isArray(items) && items.length > 0) {
             // The full `/<cmd>` is the prefix so `applyCompletion` preserves the
             // command name and inserts a space before the chosen argument.

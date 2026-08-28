@@ -20,8 +20,17 @@ import {
   type NativeProcessResult,
 } from "@candy/platform";
 import { Type } from "typebox";
+import { type ConfiguredModelEntry } from "./model-config.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 export { resolveCandySkillRoots } from "./restricted-resource-loader.js";
+export {
+  loadCandyModelConfig,
+  loadCandyModelConfigSync,
+  validateConfiguredModels,
+  type CandyModelConfigDiagnostic,
+  type CandyModelConfigResult,
+  type ConfiguredModelEntry,
+} from "./model-config.js";
 
 export const PI_COMPATIBILITY_VERSION = "0.84.1" as const;
 export const MAX_WORKSPACE_FILE_BYTES = 16 * 1024 * 1024;
@@ -187,7 +196,7 @@ export function loadCandyResourceDiagnostics(
   return [...skills, ...prompts];
 }
 
-export type CandyProvider = "deepseek" | "minimax-cn";
+export type CandyProvider = "deepseek" | "minimax-cn" | (string & {});
 
 export interface ModelCatalogEntry {
   readonly label: string;
@@ -196,7 +205,7 @@ export interface ModelCatalogEntry {
   readonly endpoint: string;
   readonly multimodal: boolean;
   readonly enabled: boolean;
-  readonly gate: "live-provider" | "static-contract";
+  readonly gate: "live-provider" | "static-contract" | "user-configured";
 }
 
 export type ProviderErrorReason =
@@ -240,6 +249,24 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     gate: "live-provider",
   },
 ];
+
+/** Built-in catalog plus user-configured OpenAI-compatible model entries. */
+export function resolveModelCatalog(
+  configured: readonly ConfiguredModelEntry[] = [],
+): readonly ModelCatalogEntry[] {
+  return [
+    ...MODEL_CATALOG,
+    ...configured.map((entry) => ({
+      label: entry.label,
+      provider: entry.credentialName as CandyProvider,
+      modelId: entry.id,
+      endpoint: entry.baseUrl,
+      multimodal: false,
+      enabled: false,
+      gate: "user-configured" as const,
+    })),
+  ];
+}
 
 export class ProviderContractError extends Error {
   public constructor(
@@ -3765,6 +3792,25 @@ export interface PiImageInput {
  * in-memory model overlay only for the requested turn, retaining Pi's pinned
  * DeepSeek provider and existing Flash/Pro definitions.
  */
+/** Register a user-configured OpenAI-compatible model in the Pi runtime. */
+function registerCustomModel(runtime: piSdk.ModelRuntime, entry: ConfiguredModelEntry): void {
+  runtime.registerProvider(entry.credentialName, {
+    models: [
+      {
+        id: entry.id,
+        name: entry.label,
+        api: "openai-completions",
+        baseUrl: entry.baseUrl,
+        reasoning: false,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128_000,
+        maxTokens: 8_192,
+        input: ["text"],
+      },
+    ],
+  });
+}
+
 function registerDeepSeekVisionModel(runtime: piSdk.ModelRuntime): void {
   const existing = runtime.getModels("deepseek");
   const flash = existing.find((model) => model.id === "deepseek-v4-flash");
@@ -3980,6 +4026,7 @@ export class PiAgentEngine {
     private readonly acquireSecret: SecretLeaseProvider,
     private readonly provider: CandyProvider = "deepseek",
     private readonly bashRunner?: CandyBashOperationsOptions["runner"],
+    private readonly customModel?: ConfiguredModelEntry,
   ) {}
 
   public async recoverPrompt(taskId: string, cwd: string): Promise<string | undefined> {
@@ -4108,6 +4155,21 @@ export class PiAgentEngine {
       if (this.provider === "deepseek" && input.model === DEEPSEEK_VISION_MODEL_ID) {
         registerDeepSeekVisionModel(modelRuntime);
       }
+      if (this.customModel !== undefined) {
+        if (input.images?.length) {
+          throw new ProviderContractError(
+            "User-configured models do not accept image attachments.",
+            "provider_error",
+          );
+        }
+        if (input.model !== this.customModel.id) {
+          throw new ProviderContractError(
+            "Requested model does not match the configured model.",
+            "provider_error",
+          );
+        }
+        registerCustomModel(modelRuntime, this.customModel);
+      }
       const model = modelRuntime.getModel(this.provider, input.model);
       if (!model)
         throw new ProviderContractError("Requested model is not available.", "provider_error");
@@ -4118,6 +4180,12 @@ export class PiAgentEngine {
         throw new ProviderContractError(
           "MiniMax domestic endpoint is not available.",
           "provider_error",
+        );
+      }
+      if (this.customModel !== undefined && model.baseUrl !== this.customModel.baseUrl) {
+        throw new ProviderContractError(
+          "Configured model endpoint is not available.",
+          "unapproved_endpoint",
         );
       }
       const listBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
@@ -4328,6 +4396,24 @@ export class MiniMaxPiAgentEngine extends PiAgentEngine {
     bashRunner?: CandyBashOperationsOptions["runner"],
   ) {
     super(sessionRoot, acquireSecret, "minimax-cn", bashRunner);
+  }
+}
+
+/** Pi-backed user-configured OpenAI-compatible model path (non-vision). */
+export class CustomPiAgentEngine extends PiAgentEngine {
+  public constructor(
+    sessionRoot: string,
+    leaseProvider: SecretLeaseProvider,
+    customModel: ConfiguredModelEntry,
+    bashRunner?: CandyBashOperationsOptions["runner"],
+  ) {
+    super(
+      sessionRoot,
+      leaseProvider,
+      customModel.credentialName as CandyProvider,
+      bashRunner,
+      customModel,
+    );
   }
 }
 

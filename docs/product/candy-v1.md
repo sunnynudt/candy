@@ -103,7 +103,9 @@ Loaded skill directories become read-only roots for Candy's file tools: `candy_r
 
 DeepSeek is the default provider path. MiniMax domestic Token Plan is supported only through its approved domestic endpoint, `https://api.minimaxi.com`; Candy must not fail over to the global MiniMax endpoint. Provider model contracts, live entitlement, multimodal behavior, and cancellation are accepted only with the evidence described by the live-provider procedure.
 
-Users may set, replace, query presence, and delete DeepSeek and MiniMax credentials. Credentials may come only from a temporary provider-specific process environment or the operating system's local credential store. The TUI may report presence but never reads back a complete credential.
+In addition to the built-in DeepSeek and MiniMax paths, users may configure additional OpenAI-compatible models through the Candy-owned `models.json` in the application-data directory (bounded, validated, credential-free). Each entry declares an id, label, model name, OpenAI-compatible API root `baseUrl`, and a `credentialName`; the client appends `/chat/completions`. Configured models are non-vision and are verified by the user with their own API key (BYOK); they do not constitute V1 live-gate acceptance evidence. The model id, label, and credential name are also surfaced by `/model`, `/credentials`, and `/credential`.
+
+Users may set, replace, query presence, and delete DeepSeek, MiniMax, and configured-provider credentials. Credentials may come only from a temporary provider-specific process environment or the operating system's local credential store. The TUI may report presence but never reads back a complete credential.
 
 Provider credentials must never appear in repositories, sessions, prompts, model-visible context, logs, diagnostics, analytics, crash reports, JSONL messages, tool arguments, browser data, or tool subprocess environments. A Candy-managed write, commit, or push containing an active credential is blocked.
 

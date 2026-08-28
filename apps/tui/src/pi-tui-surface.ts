@@ -12,6 +12,7 @@ import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  type AutocompleteItem,
   type Component,
   type EditorTheme,
   Key,
@@ -325,6 +326,8 @@ export interface CandyTuiSurfaceOptions {
   readonly assistantReplyAvailable?: () => boolean;
   readonly recoveryTaskCount?: () => number;
   readonly skills?: readonly CandySkillSlashCommand[];
+  /** Model autocomplete entries (built-in plus user-configured). */
+  readonly modelChoices?: readonly AutocompleteItem[];
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -393,6 +396,7 @@ export class CandyTuiSurface {
       createCandySlashCommandAutocompleteProvider(
         options.workspacePath ?? (() => process.cwd()),
         options.skills,
+        options.modelChoices,
       ),
     );
     this.#editor.onSubmit = (text: string): void => {
