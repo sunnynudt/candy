@@ -116,6 +116,32 @@ test("Candy TUI surface keeps five core states clear at 80, 120, and 200 columns
   }
 });
 
+test("Candy TUI surface keeps the Full access danger badge visible at every supported width", async () => {
+  for (const columns of [80, 120, 200]) {
+    const root = await mkdtemp(path.join(tmpdir(), `candy-tui-full-access-status-${columns}-`));
+    const terminal = new FakeTerminal({ columns, rows: 32 });
+    const surface = new CandyTuiSurface({
+      appDataRoot: root,
+      terminal,
+      workspacePath: () => "/Users/example/project",
+      profile: () => "auto",
+      worktreeEnabled: () => true,
+      fullAccessEnabled: () => true,
+      onSubmit: (): void => undefined,
+      onInterrupt: (): void => undefined,
+    });
+    try {
+      surface.start();
+      const output = await waitForOutput(terminal, /⚠ FULL ACCESS/u);
+      assert.match(output, /⚠ FULL ACCESS/u);
+      if (columns >= 120) assert.match(output, /access safe/u);
+    } finally {
+      await surface.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Candy TUI surface uses an explicit Candy app-data log directory", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-log-path-"));
   const terminal: FakeTerminal = new FakeTerminal();

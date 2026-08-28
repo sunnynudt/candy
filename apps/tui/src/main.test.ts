@@ -65,6 +65,22 @@ async function waitForOutput(
   return terminal.writes.join("");
 }
 
+async function waitForNewOutput(
+  terminal: FakeTerminal,
+  firstWriteIndex: number,
+  pattern: RegExp,
+  maxAttempts: number = 500,
+): Promise<string> {
+  for (let attempt: number = 0; attempt < maxAttempts; attempt += 1) {
+    const output: string = terminal.writes.slice(firstWriteIndex).join("");
+    if (pattern.test(output)) return output;
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 1);
+    });
+  }
+  return terminal.writes.slice(firstWriteIndex).join("");
+}
+
 function terminalText(terminal: FakeTerminal): string {
   const escape = String.fromCharCode(0x1b);
   const bell = String.fromCharCode(0x07);
@@ -1306,58 +1322,130 @@ test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () 
   assert.equal(isMacosTrustedShellAutoAvailable(), expected);
 });
 
-test("interactive TUI requires confirmation and persists macOS Full access for one task", async () => {
+test("interactive TUI persists macOS Full access as the default until switched back to Safe", async () => {
   if (!isMacosFullAccessAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
-  let observedFullAccess = false;
-  let observedNetworkApproval = true;
+  const appDataRoot = path.join(root, "app-data");
+  const observedFullAccess: boolean[] = [];
+  const observedNetworkApproval: boolean[] = [];
+  let firstRun: Promise<void> | undefined;
+  let secondRun: Promise<void> | undefined;
+  let afterRestart: FakeTerminal | undefined;
+  const shellRunner = {
+    run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+  };
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      observedFullAccess.push(input.fullAccess === true);
+      observedNetworkApproval.push(input.shellNetworkApproval !== undefined);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
   try {
-    const runPromise = new TestInteractiveTui({
-      appDataRoot: path.join(root, "app-data"),
+    firstRun = new TestInteractiveTui({
+      appDataRoot,
       workspacePath: repository,
       terminal,
       worktreeEnabled: true,
       fullAccessAvailable: true,
-      shellRunner: {
-        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
-      },
-      engine: {
-        async *runTurn(input) {
-          observedFullAccess = input.fullAccess === true;
-          observedNetworkApproval = input.shellNetworkApproval !== undefined;
-          yield { type: "turn.started", taskId: input.taskId };
-          yield { type: "turn.completed", taskId: input.taskId };
-        },
-      },
+      shellRunner,
+      engine,
     }).run();
     await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access full confirm");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /requires reviewing \/access full warning first/u);
     terminal.emitInput("/access full");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /Full access warning/u);
     terminal.emitInput("/access full confirm");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Full access armed/u);
+    await waitForOutput(terminal, /Full access is now the macOS default/u);
     terminal.emitInput("run with broad local access");
     terminal.emitInput("\r");
-    const output = await waitForOutput(terminal, /Full access enabled for this macOS task/u);
+    const output = await waitForOutput(
+      terminal,
+      /Full access enabled by default for this macOS task/u,
+    );
     const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
-    const store = new SQLiteTaskStore(
-      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
-    );
-    const task = store.get(taskId);
-    assert.equal(task?.fullAccess, true);
-    assert.equal(task?.trustedShell, true);
-    assert.equal(observedFullAccess, true);
-    assert.equal(observedNetworkApproval, false);
-    store.close();
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
-    await runPromise;
+    await firstRun;
+    firstRun = undefined;
+
+    afterRestart = new FakeTerminal();
+    secondRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal: afterRestart,
+      worktreeEnabled: true,
+      fullAccessAvailable: true,
+      shellRunner,
+      engine,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForOutput(afterRestart, /⚠ FULL ACCESS/u);
+    afterRestart.emitInput("run after restart");
+    afterRestart.emitInput("\r");
+    const restartOutput = await waitForOutput(
+      afterRestart,
+      /Full access enabled by default for this macOS task/u,
+    );
+    const restartTaskId = restartOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(restartTaskId);
+    await waitForOutput(afterRestart, new RegExp(`${restartTaskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    const restartedTask = store.get(restartTaskId);
+    assert.equal(task?.fullAccess, true);
+    assert.equal(task?.trustedShell, true);
+    assert.equal(restartedTask?.fullAccess, true);
+    assert.deepEqual(observedFullAccess, [true, true]);
+    assert.deepEqual(observedNetworkApproval, [false, false]);
+    afterRestart.emitInput("/access safe");
+    afterRestart.emitInput("\r");
+    await waitForOutput(afterRestart, /访问模式：安全工作区/u);
+    assert.equal(store.fullAccessDefaultEnabled(), false);
+    afterRestart.emitInput("/new");
+    afterRestart.emitInput("\r");
+    await waitForOutput(afterRestart, /new task ready; enter a prompt/u);
+    const safeOutputStart = afterRestart.writes.length;
+    afterRestart.emitInput("run after safe reset");
+    afterRestart.emitInput("\r");
+    const safeOutput = await waitForNewOutput(
+      afterRestart,
+      safeOutputStart,
+      /created task-[a-z0-9]+/u,
+    );
+    const safeTaskId = safeOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(safeTaskId);
+    await waitForOutput(afterRestart, new RegExp(`${safeTaskId} completed`, "u"));
+    assert.equal(store.get(safeTaskId)?.fullAccess, false);
+    assert.deepEqual(observedFullAccess, [true, true, false]);
+    assert.deepEqual(observedNetworkApproval, [false, false, false]);
+    store.close();
+    afterRestart.emitInput(":quit");
+    afterRestart.emitInput("\r");
+    await secondRun;
+    secondRun = undefined;
   } finally {
+    if (firstRun !== undefined) {
+      terminal.emitInput(":quit");
+      terminal.emitInput("\r");
+      await firstRun.catch(() => undefined);
+    }
+    if (secondRun !== undefined && afterRestart !== undefined) {
+      afterRestart.emitInput(":quit");
+      afterRestart.emitInput("\r");
+      await secondRun.catch(() => undefined);
+    }
     await rm(root, { recursive: true, force: true });
   }
 });

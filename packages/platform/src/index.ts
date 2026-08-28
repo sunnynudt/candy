@@ -374,7 +374,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 12 &&
       schemaVersion !== 13 &&
       schemaVersion !== 15 &&
-      schemaVersion !== 16
+      schemaVersion !== 16 &&
+      schemaVersion !== 17
     ) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
@@ -383,6 +384,10 @@ export class SQLiteTaskStore {
       CREATE TABLE IF NOT EXISTS task_reviews (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
         review_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS tui_preferences (
+        preference_key TEXT PRIMARY KEY NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
       );
     `);
     // Schema 13 adds the short task title and created/updated timestamps.
@@ -393,7 +398,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 0 &&
       schemaVersion !== 13 &&
       schemaVersion !== 15 &&
-      schemaVersion !== 16
+      schemaVersion !== 16 &&
+      schemaVersion !== 17
     ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN title TEXT;
@@ -406,19 +412,40 @@ export class SQLiteTaskStore {
     // 'build' so pre-existing tasks are never auto-promoted to a debug loop.
     // Schema 14 is intentionally unknown: the platform test asserts that a
     // never-shipped future version is rejected with a clear error.
-    if (schemaVersion !== 0 && schemaVersion !== 15 && schemaVersion !== 16) {
+    if (
+      schemaVersion !== 0 &&
+      schemaVersion !== 15 &&
+      schemaVersion !== 16 &&
+      schemaVersion !== 17
+    ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'build';
       `);
     }
     // Schema 16 records the task-bound macOS Full access decision. Older
     // tasks are deliberately never promoted and therefore retain `0`.
-    if (schemaVersion !== 0 && schemaVersion !== 16) {
+    if (schemaVersion !== 0 && schemaVersion !== 16 && schemaVersion !== 17) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
       `);
     }
-    this.#database.exec(`PRAGMA user_version = 16;`);
+    this.#database.exec(`PRAGMA user_version = 17;`);
+  }
+
+  /** Persisted local-only default for macOS Full access TUI tasks. */
+  public fullAccessDefaultEnabled(): boolean {
+    const row = this.#database
+      .prepare("SELECT enabled FROM tui_preferences WHERE preference_key = 'full_access_default'")
+      .get() as { enabled: number } | undefined;
+    return row?.enabled === 1;
+  }
+
+  public setFullAccessDefaultEnabled(enabled: boolean): void {
+    this.#database
+      .prepare(
+        "INSERT INTO tui_preferences (preference_key, enabled) VALUES ('full_access_default', ?) ON CONFLICT(preference_key) DO UPDATE SET enabled = excluded.enabled",
+      )
+      .run(enabled ? 1 : 0);
   }
 
   public create(

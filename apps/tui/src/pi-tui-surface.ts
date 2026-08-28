@@ -42,6 +42,8 @@ const ANSI_MINT = "\x1b[38;5;78m";
 const ANSI_TEXT = "\x1b[38;5;252m";
 const ANSI_SOFT = "\x1b[38;5;117m";
 const ANSI_WARNING = "\x1b[38;5;221m";
+const ANSI_FULL_ACCESS_BACKGROUND = "\x1b[48;5;130m";
+const ANSI_FULL_ACCESS_TEXT = "\x1b[38;5;231m";
 const COPY_LAST_ASSISTANT_URL = "candy://copy-last-assistant";
 
 function tint(value: string, color: string): string {
@@ -54,6 +56,10 @@ function bold(value: string): string {
 
 function dim(value: string): string {
   return `${ANSI_DIM}${value}${ANSI_RESET}`;
+}
+
+function fullAccessBadge(): string {
+  return `${ANSI_FULL_ACCESS_BACKGROUND}${ANSI_FULL_ACCESS_TEXT}${ANSI_BOLD} ⚠ FULL ACCESS ${ANSI_RESET}`;
 }
 
 /** A TUI-local OSC 8 action handled without invoking an external URL opener. */
@@ -112,6 +118,7 @@ interface CandyChromeOptions {
   readonly profile: (() => string) | undefined;
   readonly worktreeEnabled: (() => boolean) | undefined;
   readonly trustedShellEnabled: (() => boolean) | undefined;
+  readonly fullAccessEnabled: (() => boolean) | undefined;
   readonly taskId: (() => string | undefined) | undefined;
   readonly taskTitle: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
@@ -146,6 +153,7 @@ class CandyChrome implements Component {
     const profile = (this.#options.profile?.() ?? "auto") === "auto" ? "Auto" : "Read-only";
     const worktree = this.#options.worktreeEnabled?.() === true ? "安全工作区" : "当前工作区";
     const shell = this.#options.trustedShellEnabled?.() === true ? "本地检查就绪" : "本地检查关闭";
+    const fullAccess = this.#options.fullAccessEnabled?.() === true;
     const taskTitle =
       this.#options.taskTitle?.() ??
       (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");
@@ -158,7 +166,9 @@ class CandyChrome implements Component {
         safeWidth,
       ),
       composeChromeLine(
-        ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
+        fullAccess
+          ? ` ${fullAccessBadge()} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(`${worktree} · 广域文件与网络 · /access safe`, ANSI_WARNING)}`
+          : ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
         `${tint(model, ANSI_SOFT)}${recovery}`,
         safeWidth,
       ),
@@ -294,6 +304,8 @@ export interface CandyTuiSurfaceOptions {
   readonly profile?: () => string;
   readonly worktreeEnabled?: () => boolean;
   readonly trustedShellEnabled?: () => boolean;
+  /** Persistent macOS Full access mode; always rendered as a warning badge. */
+  readonly fullAccessEnabled?: () => boolean;
   readonly taskId?: () => string | undefined;
   readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
@@ -372,6 +384,7 @@ export class CandyTuiSurface {
       profile: options.profile,
       worktreeEnabled: options.worktreeEnabled,
       trustedShellEnabled: options.trustedShellEnabled,
+      fullAccessEnabled: options.fullAccessEnabled,
       taskId: options.taskId,
       taskTitle: options.taskTitle,
       taskPhase: options.taskPhase,

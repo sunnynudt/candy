@@ -21,9 +21,12 @@ provider-credential boundary remains an invariant in every permission mode.
 
 Candy exposes `/access full` only on the source-attested macOS Tahoe arm64
 Personal Preview host. The TUI displays a prominent warning; the user must
-then enter `/access full confirm`. The confirmation applies to one subsequent
-Auto Git task, is persisted on that task as `full_access`, is visible in task
-status, and does not carry forward to later tasks.
+then enter `/access full confirm`. That acknowledgement becomes a local
+default for future Auto Git tasks and survives a TUI restart, until `/access
+safe` (or the `review` or `current` access choices) turns it off. Each task
+persists its own `full_access` decision, independent of later preference
+changes. The status chrome continuously shows an amber `⚠ FULL ACCESS` badge
+and the `/access safe` escape route.
 
 For that task the Native Sandbox Runner receives `fullAccess: true` and
 `network: true`. Its macOS Seatbelt profile grants broad filesystem read/write,
@@ -52,6 +55,8 @@ unavailable; no macOS evidence enables it there.
   not a promise to expose every macOS service to an agent-generated process.
 - A task still starts in a Task Worktree by default. That task location is
   independent from its broader command filesystem/network authority.
+- The persistent preference is local application state, never a task prompt,
+  credential, session payload, or model-visible setting.
 - Full access is a Personal Preview capability, not V1 release or Windows
   acceptance evidence.
 

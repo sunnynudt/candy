@@ -476,6 +476,26 @@ test("sqlite task metadata persists an explicit Full access decision", () => {
   }
 });
 
+test("sqlite task store persists the macOS Full access default independently from tasks", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-full-access-preference-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.fullAccessDefaultEnabled(), false);
+    store.setFullAccessDefaultEnabled(true);
+    assert.equal(store.fullAccessDefaultEnabled(), true);
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.fullAccessDefaultEnabled(), true);
+    reopened.setFullAccessDefaultEnabled(false);
+    assert.equal(reopened.fullAccessDefaultEnabled(), false);
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task store rejects unknown future schema", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "candy-future-schema-"));
   const databasePath = path.join(directory, "state", "tasks.sqlite");

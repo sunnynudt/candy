@@ -388,8 +388,10 @@ export class InteractiveTui {
   #trustedShellEnabled = false;
   /** An explicit opt-out overrides the macOS default for subsequent tasks. */
   #trustedShellDisabled = false;
-  /** Explicit Full access applies only to the next writable task. */
+  /** Persisted macOS Full access default, selected after one explicit warning. */
   #fullAccessEnabled = false;
+  /** The warning must be viewed in this TUI process before a confirmation takes effect. */
+  #fullAccessConfirmationPending = false;
   #validatorCommand: CommandValidatorCommand | undefined;
   /** Contiguous assistant text of the current stream; flushed into the last reply on plain writes. */
   #assistantBuffer = "";
@@ -429,6 +431,7 @@ export class InteractiveTui {
     this.#shellRunner = options.shellRunner ?? createNativeTuiShellRunner();
     this.#trustedShellAutoAvailable = options.trustedShellAutoAvailable ?? false;
     this.#fullAccessAvailable = options.fullAccessAvailable ?? false;
+    this.#fullAccessEnabled = this.fullAccessAvailable() && this.#store.fullAccessDefaultEnabled();
     this.#validatorCommand = options.validatorCommand;
     this.recoverStaleTuiOwners();
     activeTuiOwners.add(this.#ownerId);
@@ -489,6 +492,7 @@ export class InteractiveTui {
       profile: () => this.#approvalProfile,
       worktreeEnabled: () => this.#worktreeEnabled,
       trustedShellEnabled: () => this.localCommandsEnabled(),
+      fullAccessEnabled: () => this.fullAccessEnabled(),
       taskId: () => this.#currentTaskId,
       taskTitle: () =>
         this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
@@ -769,7 +773,7 @@ export class InteractiveTui {
       approvalProfile === "auto" && workspaceBaseline !== undefined && this.#worktreeEnabled
         ? !(await isGitWorkspaceClean(workspacePath))
         : false;
-    const fullAccess = !planMode && approvalProfile === "auto" && this.#fullAccessEnabled;
+    const fullAccess = !planMode && approvalProfile === "auto" && this.fullAccessEnabled();
     const trustedShell =
       !planMode &&
       approvalProfile === "auto" &&
@@ -890,9 +894,8 @@ export class InteractiveTui {
       );
     }
     if (fullAccess) {
-      this.#fullAccessEnabled = false;
       this.write(
-        "Full access enabled for this macOS task: local commands run with broad filesystem and network access; provider credentials are removed from the child environment, and commit, push, publish, release, and deploy remain protected\n",
+        "Full access enabled by default for this macOS task: local commands run with broad filesystem and network access; provider credentials are removed from the child environment, and commit, push, publish, release, and deploy remain protected. Use /access safe to return to the default sandbox\n",
       );
     }
     if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
@@ -2780,7 +2783,7 @@ export class InteractiveTui {
     this.#approvalProfile = value;
     if (value === "read-only") {
       this.#trustedShellEnabled = false;
-      this.#fullAccessEnabled = false;
+      this.setFullAccessDefault(false);
     }
     this.write(
       value === "auto"
@@ -2803,6 +2806,16 @@ export class InteractiveTui {
     return (
       this.#fullAccessAvailable && isMacosFullAccessAvailable() && this.#shellRunner !== undefined
     );
+  }
+
+  private fullAccessEnabled(): boolean {
+    return this.#fullAccessEnabled && this.fullAccessAvailable();
+  }
+
+  private setFullAccessDefault(enabled: boolean): void {
+    this.#fullAccessEnabled = enabled;
+    this.#fullAccessConfirmationPending = false;
+    this.#store.setFullAccessDefaultEnabled(enabled);
   }
 
   private setWorktree(value: string): void {
@@ -2870,8 +2883,9 @@ export class InteractiveTui {
 
   private setAccess(value: string): void {
     if (value === "") {
-      const mode =
-        this.#approvalProfile === "read-only"
+      const mode = this.fullAccessEnabled()
+        ? "⚠ Full access（macOS 默认）"
+        : this.#approvalProfile === "read-only"
           ? "只读审阅"
           : this.#worktreeEnabled
             ? "安全工作区（默认）"
@@ -2881,7 +2895,7 @@ export class InteractiveTui {
           "  /access review   只读分析，不修改文件或运行本地检查\n" +
           "  /access safe     默认；在安全副本中工作，本地检查自动离线运行\n" +
           "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
-          "  /access full     macOS 预览；须再次确认，下一任务获得广泛文件与网络访问\n" +
+          "  /access full     macOS 预览；首次确认后成为默认模式，直到 /access safe\n" +
           "  安全工作区的网络逐条确认；当前工作区不开放网络命令；Full access 也不授予凭据、提交、推送、发布或部署\n",
       );
       return;
@@ -2889,7 +2903,7 @@ export class InteractiveTui {
     if (value === "review") {
       this.#approvalProfile = "read-only";
       this.#trustedShellEnabled = false;
-      this.#fullAccessEnabled = false;
+      this.setFullAccessDefault(false);
       this.write("访问模式：只读审阅；Candy 只分析，不修改文件或运行本地检查\n");
       return;
     }
@@ -2898,8 +2912,15 @@ export class InteractiveTui {
         this.write("Full access unavailable: requires the macOS arm64 Personal Preview runner\n");
         return;
       }
+      if (this.fullAccessEnabled()) {
+        this.write(
+          "Full access is already the macOS default; use /access safe to return to the default sandbox\n",
+        );
+        return;
+      }
+      this.#fullAccessConfirmationPending = true;
       this.write(
-        "Full access warning: the next Auto Git task may read/write local files and use the network outside Candy's normal sandbox. Provider credentials are removed from child environments and Keychain credential IPC remains denied; Candy still blocks automatic commit, push, publishing, release, and deployment. Confirm with /access full confirm\n",
+        "Full access warning: future Auto Git tasks may read/write local files and use the network outside Candy's normal sandbox until you run /access safe. Provider credentials are removed from child environments and Keychain credential IPC remains denied; Candy still blocks automatic commit, push, publishing, release, and deployment. Confirm with /access full confirm\n",
       );
       return;
     }
@@ -2908,12 +2929,17 @@ export class InteractiveTui {
         this.write("Full access unavailable: requires the macOS arm64 Personal Preview runner\n");
         return;
       }
+      if (!this.#fullAccessConfirmationPending) {
+        this.write("Full access confirmation requires reviewing /access full warning first\n");
+        return;
+      }
       this.#approvalProfile = "auto";
-      this.#fullAccessEnabled = true;
+      this.#worktreeEnabled = true;
+      this.setFullAccessDefault(true);
       this.#trustedShellDisabled = false;
       this.#trustedShellEnabled = false;
       this.write(
-        "Full access armed for the next Auto Git task; it will remain visible in task status and will not carry over to later tasks\n",
+        "Full access is now the macOS default for future Auto Git tasks; ⚠ FULL ACCESS remains visible in the status bar. Use /access safe to return to the default sandbox\n",
       );
       return;
     }
@@ -2925,7 +2951,7 @@ export class InteractiveTui {
     this.#worktreeEnabled = value === "safe";
     this.#trustedShellDisabled = false;
     this.#trustedShellEnabled = false;
-    this.#fullAccessEnabled = false;
+    this.setFullAccessDefault(false);
     this.write(
       value === "safe"
         ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行；网络仍逐条确认\n"
