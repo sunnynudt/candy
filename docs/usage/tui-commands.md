@@ -50,41 +50,41 @@
 
 ## 审查与变更
 
-| 命令           | 语法                             | 说明                                                                                |
-| -------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
-| `/changes`     | `/changes`                       | 显示当前任务变更                                                                    |
-| `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                                          |
-| `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                                |
+| 命令           | 语法                             | 说明                                                                   |
+| -------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| `/changes`     | `/changes`                       | 显示当前任务变更                                                       |
+| `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                             |
+| `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                   |
 | `/undo`        | `/undo [task-id]`                | 恢复安全工作区任务最新一轮的变更快照；当前工作区请用 git restore/clean |
-| `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                                            |
-| `/discard`     | `/discard`                       | 丢弃 Candy 安全工作区任务                                                           |
-| `/validate`    | `/validate`                      | 运行已配置的 validator                                                              |
-| `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                                    |
+| `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                               |
+| `/discard`     | `/discard`                       | 丢弃 Candy 安全工作区任务                                              |
+| `/validate`    | `/validate`                      | 运行已配置的 validator                                                 |
+| `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                       |
 
 ## 控制
 
-| 命令                 | 语法                                             | 说明                                                                |
-| -------------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
-| `/steer`             | `/steer <text>`                                  | 向当前活动 turn 排队一条引导                                        |
-| `/follow-up`         | `/follow-up <text>`                              | 排队一条追问                                                        |
-| `/pause`             | `/pause <task-id>`                               | 暂停任务                                                            |
+| 命令                 | 语法                                             | 说明                                                                                                                                    |
+| -------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `/steer`             | `/steer <text>`                                  | 向当前活动 turn 排队一条引导                                                                                                            |
+| `/follow-up`         | `/follow-up <text>`                              | 排队一条追问                                                                                                                            |
+| `/pause`             | `/pause <task-id>`                               | 暂停任务                                                                                                                                |
 | `/resume`            | `/resume <task-id> <continuation>`               | 显式续跑；无 continuation 时列出 paused/interrupted 任务（编号、任务标题、状态、模型、停止时长，最近更新的在前），不重放任何中断的 turn |
-| `/cancel`            | `/cancel <task-id>`                              | 取消任务                                                            |
-| `/prioritize`        | `/prioritize <task-id>`                          | 将排队任务提前                                                      |
-| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理外部动作（如受限网络命令）                         |
-| `/quit`              | `/quit`                                          | 退出 Candy                                                          |
+| `/cancel`            | `/cancel <task-id>`                              | 取消任务                                                                                                                                |
+| `/prioritize`        | `/prioritize <task-id>`                          | 将排队任务提前                                                                                                                          |
+| `/approve` / `/deny` | `/approve <approval-id>` / `/deny <approval-id>` | 审批/拒绝待处理外部动作（如受限网络命令）                                                                                               |
+| `/quit`              | `/quit`                                          | 退出 Candy                                                                                                                              |
 
 ## 模式与资源
 
-| 命令                         | 语法                    | 说明                                       |
-| ---------------------------- | ----------------------- | ------------------------------------------ |
-| `/access`                    | `/access [review\|safe\|current]` | 选择 Candy 如何工作：`review` 只读分析；`safe` 默认在安全副本中工作；`current` 直接在当前工作区工作。两个可写模式均可离线运行已有本地检查，网络仍逐条确认 |
-| `/prompt`                    | `/prompt <name> [args]` | 运行 Candy 自有提示词模板                  |
-| `/prompts`                   | `/prompts`              | 列出提示词模板                             |
-| `/skills`                    | `/skills`               | 列出 Candy 自有技能（名称/描述/来源/目录） |
-| `/skill`                     | `/skill <name> [goal]`  | 显式加载技能正文并提交任务（无参列出技能） |
-| `/resources`                 | `/resources`            | 显示 Candy 资源诊断                        |
-| `/help`                      | `/help`                 | 显示完整命令参考                           |
+| 命令         | 语法                              | 说明                                                                                                                                                                    |
+| ------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/access`    | `/access [review\|safe\|current]` | 选择 Candy 如何工作：`review` 只读分析；`safe` 默认在安全副本中工作且网络逐条确认；`current` 直接在当前工作区工作且不开放网络命令。两个可写模式均可离线运行已有本地检查 |
+| `/prompt`    | `/prompt <name> [args]`           | 运行 Candy 自有提示词模板                                                                                                                                               |
+| `/prompts`   | `/prompts`                        | 列出提示词模板                                                                                                                                                          |
+| `/skills`    | `/skills`                         | 列出 Candy 自有技能（名称/描述/来源/目录）                                                                                                                              |
+| `/skill`     | `/skill <name> [goal]`            | 显式加载技能正文并提交任务（无参列出技能）                                                                                                                              |
+| `/resources` | `/resources`                      | 显示 Candy 资源诊断                                                                                                                                                     |
+| `/help`      | `/help`                           | 显示完整命令参考                                                                                                                                                        |
 
 ## TUI 界面
 
@@ -115,7 +115,7 @@
 - `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
 - 普通开发无需配置：启动后默认是 `/access safe`，Candy 在安全副本中工作，结束时用 `/apply` 合入；`/access current` 显式在当前工作区继续编辑，提交由用户用 git 完成。
 - 如果本地 Git 工作区已有未提交修改，安全工作区任务会在创建时明确说明：它从最新提交开始，不包含这些修改。需要让任务基于它们工作时，取消或丢弃该任务后使用 `/access current` 新建任务。
-- 已批准 macOS 主机上的本地 `npm run` 等命令在两个可写访问模式下离线可用，复用已有依赖而不自动下载。依赖不可用时，任务会明确提示先在源工作区安装依赖后新建任务，Candy 不会自行下载；如果平台能力未通过 G2，Candy 会显示具体原因。
+- 已批准 macOS 主机上的本地 `npm run` 等命令在两个可写访问模式下离线可用，复用已有依赖而不自动下载。安全工作区的网络操作仍逐条确认；当前工作区不开放网络命令。依赖不可用时，任务会明确提示先在源工作区安装依赖后新建任务，Candy 不会自行下载；如果平台能力未通过 G2，Candy 会显示具体原因。
 - `@file` / `@directory` 上下文仅作用于当前 turn，不会修改工作区文件；目录上下文最多读取 100 个文件、总计 256 KiB，单文件最多 64 KiB。
 - `/resume` 必须带显式 continuation；重启后不自动续跑、不重放不确定的 turn。
 - `/plan` 创建只读规划任务：规划 turn 不注册写入、删除或本地检查工具，模型只输出实施方案；审阅后用 `/build [task-id]` 把任务提升为当前访问模式并提交一段显式实施 continuation（同一 Pi 会话保留方案上下文，不重放目标）。plan 任务不创建安全工作区、不启用本地检查，`/build` 只对 plan 任务生效。

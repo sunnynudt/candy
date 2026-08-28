@@ -96,7 +96,7 @@ Required outcomes:
 - Read-only mode rejects mutations and shell execution.
 - Auto mode exposes only the contracted, containment-checked workspace tools.
 - `/access` presents three user-facing choices: `review` is read-only, `safe` is the default Candy-owned Task Worktree workflow, and `current` explicitly works in the current workspace and allows existing uncommitted changes.
-- On an approved macOS host, both writable access modes run ordinary local `npm run` commands offline without a per-command prompt, using only an already-installed selected-workspace `node_modules`; Candy never downloads dependencies implicitly, and network remains a one-command approval.
+- On an approved macOS host, both writable access modes run ordinary local `npm run` commands offline without a per-command prompt, using only an already-installed selected-workspace `node_modules`; Candy never downloads dependencies implicitly. Safe-workspace network is a one-command approval, while current-workspace tasks do not expose network commands.
 - Tool names and output are bounded; control characters, credential-shaped values, arguments, and unbounded output do not leak into the TUI evidence.
 - Workspace escape, traversal, symlink/reparse-point, invalid-path, and race fixtures fail closed.
 - Git Task Worktrees, when used, are Candy-owned, task-bound, and isolated for concurrent writable tasks.

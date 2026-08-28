@@ -850,7 +850,7 @@ export class InteractiveTui {
       this.write(
         dependencyDirectory === undefined
           ? `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 无网络；未检测到可复用的 node_modules，不会自动下载\n`
-          : `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 复用本地依赖 · 无网络；网络操作仍需逐条确认\n`,
+          : `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 复用本地依赖 · 无网络${worktreePath === undefined ? "；网络命令不开放" : "；网络操作仍需逐条确认"}\n`,
       );
     }
     if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
@@ -2823,7 +2823,7 @@ export class InteractiveTui {
           "  /access review   只读分析，不修改文件或运行本地检查\n" +
           "  /access safe     默认；在安全副本中工作，本地检查自动离线运行\n" +
           "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
-          "  网络仍需逐条确认；凭据、提交、推送、发布和部署仍受保护\n",
+          "  安全工作区的网络逐条确认；当前工作区不开放网络命令；凭据、提交、推送、发布和部署仍受保护\n",
       );
       return;
     }
@@ -2843,8 +2843,8 @@ export class InteractiveTui {
     this.#trustedShellEnabled = false;
     this.write(
       value === "safe"
-        ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行\n"
-        : "访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行\n",
+        ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行；网络仍逐条确认\n"
+        : "访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络命令不开放\n",
     );
   }
 
