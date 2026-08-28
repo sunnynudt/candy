@@ -1070,11 +1070,12 @@ export class InteractiveTui {
     if (snapshot.state === "running") {
       if (snapshot.ownerId !== undefined && snapshot.ownerId !== this.#ownerId) {
         this.write(`task ${currentTaskId} is read-only: owned by ${snapshot.ownerId}\n`);
-      } else {
-        this.write(
-          `task ${currentTaskId} is already running; use /steer <text>, /follow-up <text>, or /cancel ${currentTaskId}\n`,
-        );
+        return;
       }
+      // Codex-style default queueing: ordinary input while the turn runs is
+      // queued as a follow-up for the next turn instead of being rejected.
+      // /steer <text> remains the explicit way to inject into the active turn.
+      void this.queueActiveTurnMessage("followUp", prompt);
       return;
     }
     if (snapshot.state === "queued") {

@@ -2681,7 +2681,7 @@ test("interactive TUI accepts a fresh direct task after an interrupted task", as
   }
 });
 
-test("interactive TUI rejects a second input while the current turn owns execution", async () => {
+test("interactive TUI queues ordinary input while the current turn owns execution", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-active-owner-"));
   const terminal: FakeTerminal = new FakeTerminal();
   let started: (() => void) | undefined;
@@ -2692,6 +2692,7 @@ test("interactive TUI rejects a second input while the current turn owns executi
   const releasePromise = new Promise<void>((resolve) => {
     release = resolve;
   });
+  const queuedFollowUps: string[] = [];
   let calls = 0;
   const engine: TuiAgentEngine = {
     async *runTurn(input) {
@@ -2700,6 +2701,9 @@ test("interactive TUI rejects a second input while the current turn owns executi
       started?.();
       await releasePromise;
       yield { type: "turn.completed", taskId: input.taskId };
+    },
+    async followUp(_taskId, text) {
+      queuedFollowUps.push(text);
     },
   };
   try {
@@ -2710,13 +2714,14 @@ test("interactive TUI rejects a second input while the current turn owns executi
     await startedPromise;
     terminal.emitInput("do not overlap");
     terminal.emitInput("\r");
-    const output = await waitForOutput(terminal, /already running/u);
+    const output = await waitForOutput(terminal, /follow-up queued/u);
     assert.equal(calls, 1);
     release?.();
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
-    assert.match(output, /already running/u);
+    assert.deepEqual(queuedFollowUps, ["do not overlap"]);
+    assert.match(output, /\[follow-up\] do not overlap/u);
   } finally {
     release?.();
     await rm(root, { recursive: true, force: true });

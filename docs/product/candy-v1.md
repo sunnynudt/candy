@@ -26,7 +26,7 @@ Candy V1 includes the following user journey:
 2. select a workspace and create a task;
 3. stream a Pi-backed model turn through Candy's narrow adapter;
 4. inspect bounded, redacted tool activity and task state;
-5. steer, follow up, or cancel an active task when the state permits it;
+5. steer, follow up, or cancel an active task when the state permits it; while the current TUI-owned task runs, ordinary input is queued by default as a bounded, redacted follow-up for the next turn, and `/steer <text>` remains the explicit injection path into the active turn;
 6. review changes and explicitly apply or discard them where the selected workspace mode supports it;
 7. restart Candy, inspect persisted evidence, and continue only with a new explicit prompt.
 

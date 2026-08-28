@@ -259,7 +259,7 @@ class CandyFooter implements Component {
         : phase?.includes("approval")
           ? "/status 查看详情  ·  按上方命令作出决定"
           : isActivePhase(phase)
-            ? "/steer 补充当前轮  ·  /follow-up 排队下一轮"
+            ? "/steer 插入当前轮  ·  直接输入排队下一轮"
             : "/ 查看命令  ·  Enter 发送  ·  Ctrl+V 粘贴图片  ·  Ctrl+G 外部编辑  ·  Ctrl+T 思考";
     return [paddedLine(` ${dim(content)}`, Math.max(1, width))];
   }
