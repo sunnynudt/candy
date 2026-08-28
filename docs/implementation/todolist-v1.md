@@ -3,6 +3,11 @@
 更新日期：2026-08-28
 基线分支：`codex/candy-v1-foundation`
 
+## 2026-08-28 Full access × 当前工作区正交化 checkpoint
+
+- **Full access 与任务落点解耦**：`/access full confirm` 不再强制 Task Worktree；`/access current` 不再清除 Full access 默认（`/access safe` 仍是唯一出口）。Full access 现在只表示命令沙箱放宽（文件+网络），任务落在安全副本还是直接工作区由 `safe`/`current` 决定，二者可组合为 **宽沙箱 + 直接工作区**（Codex full-auto 风格，配合 `/push allow` 与 `candy_git_commit`）。`review` 不再影响 Full access 默认。
+- **验证**：构建通过；新增 full-access-current 测试 **2/2**（current+full 任务 direct 工作区 + fullAccess、重启持久化、/access safe 退出）；全量 `npm test` 待跑（预期 388/389，唯一环境阻塞项不变）；prettier/eslint 待跑。
+
 ## 2026-08-28 多模型配置 checkpoint（models.json）
 
 - **用户配置模型（3A 切片）**：Candy 应用数据目录 `models.json` 可配置额外 OpenAI 兼容模型（GLM/Kimi/Qwen/Doubao 等）。`baseUrl` 为 API 根地址（客户端追加 `/chat/completions`），`credentialName` 对应 OS 凭据库 `candy-v1/<name>` 或环境变量 `CANDY_<NAME>_API_KEY`；配置有界、校验、拒绝完整端点/非 https/多模态/重复 id，非法条目输出 `models.json warning` 诊断且不影响内置模型。

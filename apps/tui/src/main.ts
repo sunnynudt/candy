@@ -2882,7 +2882,6 @@ export class InteractiveTui {
     this.#approvalProfile = value;
     if (value === "read-only") {
       this.#trustedShellEnabled = false;
-      this.setFullAccessDefault(false);
     }
     this.write(
       value === "auto"
@@ -2995,14 +2994,14 @@ export class InteractiveTui {
           "  /access safe     默认；在安全副本中工作，本地检查自动离线运行\n" +
           "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
           "  /access full     macOS 预览；首次确认后成为默认模式，直到 /access safe\n" +
-          "  安全工作区的网络逐条确认；当前工作区不开放网络命令；Full access 也不授予凭据、提交、推送、发布或部署\n",
+          "  /access current 与 Full access 可叠加（宽沙箱 + 直接工作区，Codex 风格）\n" +
+          "  安全工作区的网络逐条确认；当前工作区默认不开放网络命令，Full access 生效时除外；Full access 不授予凭据、提交、推送、发布或部署\n",
       );
       return;
     }
     if (value === "review") {
       this.#approvalProfile = "read-only";
       this.#trustedShellEnabled = false;
-      this.setFullAccessDefault(false);
       this.write("访问模式：只读审阅；Candy 只分析，不修改文件或运行本地检查\n");
       return;
     }
@@ -3033,12 +3032,11 @@ export class InteractiveTui {
         return;
       }
       this.#approvalProfile = "auto";
-      this.#worktreeEnabled = true;
       this.setFullAccessDefault(true);
       this.#trustedShellDisabled = false;
       this.#trustedShellEnabled = false;
       this.write(
-        "Full access is now the macOS default for future Auto Git tasks; ⚠ FULL ACCESS remains visible in the status bar. Use /access safe to return to the default sandbox\n",
+        "Full access is now the macOS default for future Auto tasks; ⚠ FULL ACCESS remains visible in the status bar. Use /access safe to return to the default sandbox\n",
       );
       return;
     }
@@ -3050,11 +3048,15 @@ export class InteractiveTui {
     this.#worktreeEnabled = value === "safe";
     this.#trustedShellDisabled = false;
     this.#trustedShellEnabled = false;
-    this.setFullAccessDefault(false);
+    // /access safe is the documented Full-access exit; /access current keeps
+    // the Full-access sandbox so wide-sandbox direct-workspace tasks work
+    // Codex-style.
+    if (value === "safe") this.setFullAccessDefault(false);
+    const fullAccessNote = this.fullAccessEnabled() ? "；Full access 宽沙箱生效（文件+网络）" : "";
     this.write(
       value === "safe"
         ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行；网络仍逐条确认\n"
-        : "访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络命令不开放\n",
+        : `访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络命令不开放${fullAccessNote}\n`,
     );
   }
 
