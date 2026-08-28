@@ -49,14 +49,62 @@ export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
   },
 ];
 
+/**
+ * The platform model id for a model autocomplete value. Built-in aliases map
+ * to their canonical `CandyModelId`; configured (user) ids pass through so the
+ * current-model marker also works for `/model <configured-id>`.
+ */
+const CANONICAL_MODEL_BY_ALIAS: Readonly<Record<string, string>> = {
+  "deepseek-flash": "deepseek-v4-flash",
+  "deepseek-pro": "deepseek-v4-pro",
+  "deepseek-flash-vision": "deepseek-v4-flash-vision-exp",
+  "minimax-m3": "MiniMax-M3",
+};
+
+/** The inverse of {@link CANONICAL_MODEL_BY_ALIAS}; used to display the current model. */
+const MODEL_ALIAS_BY_CANONICAL: Readonly<Record<string, string>> = {
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-v4-pro": "deepseek-pro",
+  "deepseek-v4-flash-vision-exp": "deepseek-flash-vision",
+  "MiniMax-M3": "minimax-m3",
+};
+
+function canonicalModelId(value: string): string {
+  return CANONICAL_MODEL_BY_ALIAS[value] ?? value;
+}
+
+function modelDisplayId(value: string): string {
+  return MODEL_ALIAS_BY_CANONICAL[value] ?? value;
+}
+
+const CURRENT_MODEL_MARKER = " ✓";
+
+/** True when a model autocomplete value matches the current primary model. */
+export function isCurrentModelChoice(
+  value: string,
+  currentModel: string | undefined,
+): boolean {
+  return currentModel !== undefined && canonicalModelId(value) === currentModel;
+}
+
+/** Mark the autocomplete entry that matches the current primary model. */
+function markCurrentModelChoice(
+  item: AutocompleteItem,
+  currentModel: string | undefined,
+): AutocompleteItem {
+  if (!isCurrentModelChoice(item.value, currentModel)) return item;
+  return { ...item, label: `${item.label}${CURRENT_MODEL_MARKER}` };
+}
+
 function completeModels(
   argumentPrefix: string,
   choices: readonly AutocompleteItem[] = CANDY_MODEL_CHOICES,
+  currentModel: string | undefined = undefined,
 ): AutocompleteItem[] {
   const prefix = argumentPrefix.trim().toLowerCase();
-  return choices.filter((item: AutocompleteItem): boolean =>
-    item.value.toLowerCase().startsWith(prefix),
-  );
+  return choices
+    .filter((item: AutocompleteItem): boolean => item.value.toLowerCase().startsWith(prefix))
+    .map((item: AutocompleteItem): AutocompleteItem => markCurrentModelChoice(item, currentModel));
 }
 
 /**
@@ -68,6 +116,16 @@ const BARE_MODEL_QUERY_ITEM: AutocompleteItem = {
   label: "查看当前模型",
   description: "显示当前模型与全部可选项",
 };
+
+/** A bare `/model` query that also surfaces the current primary model name. */
+function bareModelQueryItem(currentModel: string | undefined): AutocompleteItem {
+  if (currentModel === undefined) return BARE_MODEL_QUERY_ITEM;
+  return {
+    value: "",
+    label: "查看当前模型",
+    description: `当前模型：${modelDisplayId(currentModel)} · 显示当前模型与全部可选项`,
+  };
+}
 
 export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   {
@@ -312,6 +370,7 @@ export function createCandySlashCommandAutocompleteProvider(
   workspacePath: () => string = () => process.cwd(),
   skills: readonly CandySkillSlashCommand[] = [],
   modelChoices: readonly AutocompleteItem[] = CANDY_MODEL_CHOICES,
+  currentModel: () => string | undefined = () => undefined,
 ): AutocompleteProvider {
   const builtInNames = new Set(CANDY_SLASH_COMMANDS.map((command) => command.name));
   const skillCommands: CandySlashCommand[] = skills
@@ -320,13 +379,22 @@ export function createCandySlashCommandAutocompleteProvider(
       name: skill.name,
       description: `Skill — ${skill.description}`,
     }));
-  const commands = new CombinedAutocompleteProvider(
-    [...CANDY_SLASH_COMMANDS, ...skillCommands],
-    ".",
+  // The built-in `/model` command owns a module-level completion callback that
+  // cannot see the live model selection. Override it so the chooser keeps
+  // marking the current model on the filtered `/model <prefix>` path too.
+  const completionCommands: readonly CandySlashCommand[] = CANDY_SLASH_COMMANDS.map((command) =>
+    command.name === "model"
+      ? {
+          ...command,
+          getArgumentCompletions: (argumentPrefix: string): AutocompleteItem[] =>
+            completeModels(argumentPrefix, modelChoices, currentModel()),
+        }
+      : command,
   );
+  const commands = new CombinedAutocompleteProvider([...completionCommands, ...skillCommands], ".");
   const mentions = createWorkspaceMentionAutocompleteProvider(workspacePath);
   const argumentCompletionCommands = buildArgumentCompletionIndex([
-    ...CANDY_SLASH_COMMANDS,
+    ...completionCommands,
     ...skillCommands,
   ]);
   return {
@@ -350,12 +418,16 @@ export function createCandySlashCommandAutocompleteProvider(
         const commandName = trimmed.slice(1);
         const command = argumentCompletionCommands.get(commandName);
         if (command?.getArgumentCompletions) {
-          const items = completeModels("", modelChoices);
+          const items = completeModels("", modelChoices, currentModel());
           if (Array.isArray(items) && items.length > 0) {
             // The full `/<cmd>` is the prefix so `applyCompletion` preserves the
             // command name and inserts a space before the chosen argument.
+            const itemsForReturn: AutocompleteItem[] =
+              commandName === "model"
+                ? [bareModelQueryItem(currentModel()), ...items]
+                : items;
             return {
-              items: commandName === "model" ? [BARE_MODEL_QUERY_ITEM, ...items] : items,
+              items: itemsForReturn,
               prefix: trimmed,
             };
           }

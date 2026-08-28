@@ -303,6 +303,34 @@ test("Candy slash autocomplete keeps bare /model as an explicit query before mod
   assert.equal(suggestions?.prefix, "/model");
 });
 
+test("Candy slash autocomplete marks the current model and surfaces it in the bare query", async () => {
+  const provider = createCandySlashCommandAutocompleteProvider(
+    () => process.cwd(),
+    [],
+    undefined,
+    () => "deepseek-v4-flash",
+  );
+  const suggestions = await provider.getSuggestions(["/model"], 0, 6, {
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(suggestions?.items, [
+    {
+      value: "",
+      label: "查看当前模型",
+      description: "当前模型：deepseek-flash · 显示当前模型与全部可选项",
+    },
+    { value: "deepseek-flash", label: "deepseek-flash ✓", description: "DeepSeek V4 Flash" },
+    { value: "deepseek-pro", label: "deepseek-pro", description: "DeepSeek V4 Pro" },
+    {
+      value: "deepseek-flash-vision",
+      label: "deepseek-flash-vision",
+      description: "DeepSeek V4 Flash Vision (experimental, multimodal)",
+    },
+    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3 (native image)" },
+  ]);
+  assert.equal(suggestions?.prefix, "/model");
+});
+
 test("Candy slash autocomplete preserves a bare /model query completion", async () => {
   const provider = createCandySlashCommandAutocompleteProvider();
   const result = provider.applyCompletion(
@@ -369,6 +397,38 @@ test("Candy TUI surface lets arrow keys select a model inside a bare /model popu
     terminal.emitInput("\x1b[B"); // Down to minimax-m3
     terminal.emitInput("\r");
     assert.deepEqual(submitted, ["/model minimax-m3"]);
+  } finally {
+    await surface.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Candy TUI surface shows queued turn messages in a fixed area and collapses when empty", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-queued-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let queued: readonly string[] = [];
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    queuedTurnMessages: () => queued,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => undefined,
+  });
+  try {
+    surface.start();
+    queued = ["[follow-up] report only after validation"];
+    surface.refreshQueuedTurnMessages();
+    const output = await waitForOutput(terminal, /排队/u);
+    assert.match(output, /\[follow-up\] report only after validation/u);
+    assert.match(output, /排队/u);
+    // Emptying the queue removes the fixed area from subsequent renders.
+    const writesBeforeClear: number = terminal.writes.length;
+    queued = [];
+    surface.refreshQueuedTurnMessages();
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 15);
+    });
+    assert.doesNotMatch(terminal.writes.slice(writesBeforeClear).join(""), /排队/u);
   } finally {
     await surface.stop();
     await rm(root, { recursive: true, force: true });

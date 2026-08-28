@@ -93,6 +93,7 @@ import {
   CANDY_MODEL_CHOICES,
   CANDY_SLASH_COMMANDS,
   isCandySkillSlashCommandName,
+  isCurrentModelChoice,
 } from "./slash-commands.js";
 
 export interface TuiSmokeResult {
@@ -389,6 +390,8 @@ export class InteractiveTui {
   #worktreeEnabled = false;
   #selectedModel: CandyModelId = DEFAULT_CANDY_MODEL;
   #selectedAttachmentIds: string[] = [];
+  /** Messages queued for the active turn (follow-up / steer), shown in a fixed area. */
+  #queuedTurnMessages: string[] = [];
   #trustedShellEnabled = false;
   /** An explicit opt-out overrides the macOS default for subsequent tasks. */
   #trustedShellDisabled = false;
@@ -545,6 +548,7 @@ export class InteractiveTui {
           description: `${entry.label} (user-configured)`,
         })),
       ],
+      queuedTurnMessages: () => this.#queuedTurnMessages,
       terminal: this.#terminal,
       onSubmit: (text: string): void => {
         try {
@@ -1241,10 +1245,12 @@ export class InteractiveTui {
       this.write(`model: ${currentModel}\n`);
       this.write("Available models (choose with /model <name>):\n");
       for (const choice of CANDY_MODEL_CHOICES) {
-        this.write(`  ${choice.value}  ${choice.description ?? ""}\n`);
+        const marker = isCurrentModelChoice(choice.value, currentModel) ? " ✓" : "";
+        this.write(`  ${choice.value}${marker}  ${choice.description ?? ""}\n`);
       }
       for (const entry of this.#configuredModels) {
-        this.write(`  ${entry.id}  ${entry.label} (user-configured)\n`);
+        const marker = isCurrentModelChoice(entry.id, currentModel) ? " ✓" : "";
+        this.write(`  ${entry.id}${marker}  ${entry.label} (user-configured)\n`);
       }
       return;
     }
@@ -2111,6 +2117,8 @@ export class InteractiveTui {
     explicitPrompt?: string,
   ): Promise<void> {
     const taskId = task.snapshot().taskId;
+    // A new turn consumes the messages queued during the previous turn.
+    this.#clearQueuedTurnMessages();
     this.#taskPhases.set(taskId, "starting");
     try {
       this.#workspaceReviews.delete(taskId);
@@ -2335,6 +2343,7 @@ export class InteractiveTui {
       if (current.state === "running") {
         const completed = task.transition("completed", current.revision);
         this.#taskPhases.set(taskId, "completed");
+        this.#clearQueuedTurnMessages();
         this.write(`\n${completed.taskId} completed\n`);
       }
     } catch (error) {
@@ -2347,6 +2356,7 @@ export class InteractiveTui {
           const stopped = task.transition(nextState, current.revision);
           stoppedState = nextState;
           this.#taskPhases.set(taskId, nextState);
+          this.#clearQueuedTurnMessages();
           this.write(`\n${stopped.taskId} ${stopped.state}: ${safeError(error)}\n`);
         } catch {
           const persisted = this.#store.get(taskId);
@@ -2610,6 +2620,13 @@ export class InteractiveTui {
     this.write(`${taskId} is not an active task\n`);
   }
 
+  /** Clear the queued-turn-message display once a new turn starts or a task stops. */
+  #clearQueuedTurnMessages(): void {
+    if (this.#queuedTurnMessages.length === 0) return;
+    this.#queuedTurnMessages = [];
+    this.#surface?.refreshQueuedTurnMessages();
+  }
+
   private async queueActiveTurnMessage(mode: "steer" | "followUp", text: string): Promise<void> {
     if (text.length === 0) {
       this.write(`:${mode === "steer" ? "steer" : "follow-up"} requires text\n`);
@@ -2667,7 +2684,13 @@ export class InteractiveTui {
           text: transcriptText(`[${mode === "steer" ? "steer" : "follow-up"}] ${text}`),
         },
       ]);
-      this.write(`\n[${mode === "steer" ? "steer" : "follow-up"}] ${transcriptText(text)}\n`);
+      // Keep the queued message out of the streaming execution transcript and
+      // show it in the fixed queue area below the status prompt instead.
+      this.#queuedTurnMessages = [
+        ...this.#queuedTurnMessages,
+        `[${mode === "steer" ? "steer" : "follow-up"}] ${transcriptText(text)}`,
+      ];
+      this.#surface?.refreshQueuedTurnMessages();
       this.write(`${snapshot.taskId} ${mode === "steer" ? "steering" : "follow-up"} queued\n`);
     } catch (error) {
       this.write(

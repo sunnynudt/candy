@@ -277,6 +277,39 @@ function isActivePhase(phase: string | undefined): boolean {
   );
 }
 
+/**
+ * A fixed, bounded list of messages queued for the active turn (follow-up /
+ * steer). It sits below the status prompt so queued content stays out of the
+ * streaming execution transcript. It renders nothing when the queue is empty.
+ */
+class QueuedTurnMessages implements Component {
+  readonly #messages: () => readonly string[];
+  readonly #maxVisible: number;
+
+  public constructor(messages: () => readonly string[], maxVisible: number = 3) {
+    this.#messages = messages;
+    this.#maxVisible = Math.max(1, maxVisible);
+  }
+
+  public invalidate(): void {}
+
+  public render(width: number): string[] {
+    const messages = this.#messages();
+    if (messages.length === 0) return [];
+    const safeWidth = Math.max(1, width);
+    const header = ` ${tint("排队", ANSI_ACCENT)} ${dim(`· ${messages.length} 条待处理`)}`;
+    const lines: string[] = [paddedLine(header, safeWidth)];
+    for (const message of messages.slice(-this.#maxVisible)) {
+      lines.push(paddedLine(truncateMiddle(tint(message, ANSI_SOFT), safeWidth), safeWidth));
+    }
+    if (messages.length > this.#maxVisible) {
+      const remaining = messages.length - this.#maxVisible;
+      lines.push(paddedLine(dim(`  … 还有 ${remaining} 条`), safeWidth));
+    }
+    return lines;
+  }
+}
+
 const EDITOR_THEME: EditorTheme = {
   borderColor: dim,
   selectList: {
@@ -328,6 +361,8 @@ export interface CandyTuiSurfaceOptions {
   readonly skills?: readonly CandySkillSlashCommand[];
   /** Model autocomplete entries (built-in plus user-configured). */
   readonly modelChoices?: readonly AutocompleteItem[];
+  /** Messages queued for the active turn (follow-up / steer), shown in a fixed area. */
+  readonly queuedTurnMessages?: () => readonly string[];
   readonly terminal?: CandyTuiTerminal | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly onSubmit: (text: string) => void;
@@ -397,6 +432,7 @@ export class CandyTuiSurface {
         options.workspacePath ?? (() => process.cwd()),
         options.skills,
         options.modelChoices,
+        options.model ?? (() => undefined),
       ),
     );
     this.#editor.onSubmit = (text: string): void => {
@@ -436,6 +472,11 @@ export class CandyTuiSurface {
         },
         { component: new Spacer(1), basis: 1, shrink: 0 },
         { component: new CandyPromptLabel(options.taskPhase), basis: 1, shrink: 0 },
+        {
+          component: new QueuedTurnMessages(options.queuedTurnMessages ?? (() => [])),
+          basis: "auto",
+          shrink: 0,
+        },
         { component: this.#editor, basis: "auto", shrink: 0 },
         {
           component: new CandyFooter({
@@ -517,6 +558,11 @@ export class CandyTuiSurface {
 
   public appendTranscript(value: string, kind: CandyTranscriptKind = "plain"): void {
     this.#transcript.append(value, kind);
+    this.#tui.requestRender();
+  }
+
+  /** Re-render the fixed queued-turn-message area after its source list changes. */
+  public refreshQueuedTurnMessages(): void {
     this.#tui.requestRender();
   }
 
