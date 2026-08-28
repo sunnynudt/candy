@@ -84,3 +84,9 @@ canary remains a separate required check: before running it, an operator must
 explicitly approve the exact temporary-keychain create, host-side readback,
 Full-access denial, and deletion/readback-cleanup sequence. Its command must
 never print the canary value, a full Keychain listing, or a process environment.
+
+`npm run smoke:full-access:keychain-canary:macos` implements that exact
+reversible sequence. It creates a randomly named temporary Keychain with a
+random non-provider record, proves the host can read it without capturing
+output, requires the Full access runner read to fail without exposing the
+record, then deletes the Keychain and verifies that its file is gone.
