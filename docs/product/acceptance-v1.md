@@ -101,7 +101,7 @@ Required outcomes:
 - Tool names and output are bounded; control characters, credential-shaped values, arguments, and unbounded output do not leak into the TUI evidence.
 - Workspace escape, traversal, symlink/reparse-point, invalid-path, and race fixtures fail closed.
 - Git Task Worktrees, when used, are Candy-owned, task-bound, and isolated for concurrent writable tasks.
-- `:changes`, `:diff`, explicit apply, and discard preserve the review boundary; Candy never silently commits, pushes, or removes a dirty user worktree.
+- `:changes`, `:diff`, explicit apply, and discard preserve the review boundary; Candy never silently pushes or removes a dirty user worktree. Git commits are model-issued only through the dedicated `candy_git_commit` tool with a bounded, credential-scanned message; pushes happen only when the user authorized them per task (`/push allow`) and are never silent.
 - Native command containment and process-tree cancellation are independently gated per platform. Until a platform's G2 evidence passes, Shell remains unavailable there.
 
 Evidence for macOS Full access: confirmed two-click Safe entry and TUI warning, persisted-default restart, amber danger badge at supported terminal widths, and `/access safe` reset; outside-workspace filesystem and outbound-network fixtures; child-environment, transcript, diagnostics, and bounded-output credential negatives; disposable Keychain-canary denial; cancellation and parent-loss descendant checks; and publication-denial/recovery fixtures. Complete credential values, headers, and environment dumps are forbidden evidence.

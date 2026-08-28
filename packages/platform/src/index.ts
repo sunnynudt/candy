@@ -118,6 +118,13 @@ export interface TaskMetadata {
   /** macOS Personal Preview: task commands bypass the normal filesystem/network sandbox. */
   readonly fullAccess: boolean;
   /**
+   * Task Git publication policy. 'deny' (default) never pushes; 'allow'
+   * lets the model push after commits during the task when the user
+   * authorized it at task start. Commits themselves are always available
+   * to writable tasks through the candy_git_commit tool.
+   */
+  readonly pushPolicy: "deny" | "allow";
+  /**
    * Task execution mode. 'build' is the normal single-turn implementation;
    * 'debug' runs the bounded Auto Debug loop (model turn + validator until
    * pass, stall, or budget). Plan mode stays expressed through the read-only
@@ -220,6 +227,7 @@ export class SQLiteTaskStore {
         worktree_path TEXT,
         trusted_shell INTEGER NOT NULL DEFAULT 0,
         full_access INTEGER NOT NULL DEFAULT 0,
+        push_policy TEXT NOT NULL DEFAULT 'deny',
         task_mode TEXT NOT NULL DEFAULT 'build',
         title TEXT,
         created_at INTEGER,
@@ -238,7 +246,7 @@ export class SQLiteTaskStore {
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
         transcript_json TEXT NOT NULL
       );
-      PRAGMA user_version = 11;
+      PRAGMA user_version = 12;
       `);
     } else if (schemaVersion === 1) {
       this.#database.exec(`
@@ -369,6 +377,11 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN trusted_shell INTEGER NOT NULL DEFAULT 0;
         PRAGMA user_version = 11;
       `);
+    } else if (schemaVersion === 11) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN push_policy TEXT NOT NULL DEFAULT 'deny';
+        PRAGMA user_version = 12;
+      `);
     } else if (
       schemaVersion !== 11 &&
       schemaVersion !== 12 &&
@@ -462,18 +475,21 @@ export class SQLiteTaskStore {
     title?: string,
     taskMode: "build" | "debug" = "build",
     fullAccess = false,
+    pushPolicy: "deny" | "allow" = "deny",
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     if (title !== undefined) assertTaskTitle(title);
     if (taskMode !== "build" && taskMode !== "debug") throw new Error("Task mode is invalid.");
+    if (pushPolicy !== "deny" && pushPolicy !== "allow")
+      throw new Error("Task push policy is invalid.");
     if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
       throw new Error("Workspace baseline is invalid.");
     if (worktreePath !== undefined) assertWorkspacePath(worktreePath);
     const now = Date.now();
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -487,6 +503,7 @@ export class SQLiteTaskStore {
         worktreePath ?? null,
         trustedShell ? 1 : 0,
         fullAccess ? 1 : 0,
+        pushPolicy,
         taskMode,
         title ?? null,
         now,
@@ -640,7 +657,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -649,7 +666,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -693,7 +710,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -881,6 +898,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
       : {}),
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
     fullAccess: Number(row.full_access ?? 0) === 1,
+    pushPolicy: row.push_policy === "allow" ? "allow" : "deny",
     ...(row.task_mode === "debug" || row.task_mode === "build" ? { taskMode: row.task_mode } : {}),
     ...(row.title === null || row.title === undefined ? {} : { title: String(row.title) }),
     ...(row.created_at === null || row.created_at === undefined

@@ -50,16 +50,17 @@
 
 ## 审查与变更
 
-| 命令           | 语法                             | 说明                                                                   |
-| -------------- | -------------------------------- | ---------------------------------------------------------------------- |
-| `/changes`     | `/changes`                       | 显示当前任务变更                                                       |
-| `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                             |
-| `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                   |
-| `/undo`        | `/undo [task-id]`                | 恢复安全工作区任务最新一轮的变更快照；当前工作区请用 git restore/clean |
-| `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                               |
-| `/discard`     | `/discard`                       | 丢弃 Candy 安全工作区任务                                              |
-| `/validate`    | `/validate`                      | 运行已配置的 validator                                                 |
-| `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                       |
+| 命令           | 语法                             | 说明                                                                             |
+| -------------- | -------------------------------- | -------------------------------------------------------------------------------- |
+| `/changes`     | `/changes`                       | 显示当前任务变更                                                                 |
+| `/diff`        | `/diff [path]`                   | 显示有界脱敏 diff；`/apply` 前必须完整查看                                       |
+| `/apply`       | `/apply`                         | 将审阅后的任务变更显式应用到目标工作区（不自动提交）                             |
+| `/undo`        | `/undo [task-id]`                | 恢复安全工作区任务最新一轮的变更快照；当前工作区请用 git restore/clean           |
+| `/checkpoints` | `/checkpoints`                   | 列出当前任务的 undo 快照                                                         |
+| `/discard`     | `/discard`                       | 丢弃 Candy 安全工作区任务                                                        |
+| `/validate`    | `/validate`                      | 运行已配置的 validator                                                           |
+| `/validator`   | `/validator <executable> [args]` | 为后续 `/new` 配置任务 Validator                                                 |
+| `/push`        | `/push <allow\|deny>`            | 为后续任务授权/禁止 Git push（Candy 绝不静默 push；仅在 current 工作区任务生效） |
 
 ## 控制
 
@@ -112,7 +113,7 @@
 
 ## 安全边界
 
-- `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 commit/push。
+- `/apply` 前必须先查看 `/changes` 与未截断的 `/diff`；Candy 从不自动 push。模型可通过 `candy_git_commit` 工具在可写任务中自主提交（Codex 风格、颗粒度自控），提交前会对暂存内容做凭据扫描；只有任务开始时用户用 `/push allow` 显式授权后，`push:true` 才会把当前分支推送到 `origin`，且不静默执行。
 - 普通开发无需配置：启动后默认是 `/access safe`，Candy 在安全副本中工作，结束时用 `/apply` 合入；`/access current` 显式在当前工作区继续编辑，提交由用户用 git 完成。
 - 如果本地 Git 工作区已有未提交修改，安全工作区任务会在创建时明确说明：它从最新提交开始，不包含这些修改。需要让任务基于它们工作时，取消或丢弃该任务后使用 `/access current` 新建任务。
 - 已批准 macOS 主机上的本地 `npm run` 等命令在两个可写访问模式下离线可用，复用已有依赖而不自动下载。安全工作区的网络操作仍逐条确认；当前工作区不开放网络命令。依赖不可用时，任务会明确提示先在源工作区安装依赖后新建任务，Candy 不会自行下载；如果平台能力未通过 G2，Candy 会显示具体原因。

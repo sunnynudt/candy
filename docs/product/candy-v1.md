@@ -71,7 +71,7 @@ Independent tasks may execute concurrently within the configured global limit. F
 
 ## Workspace and changes
 
-Candy supports a selected Local Workspace and, where the task policy requires isolation, a Candy-owned Task Worktree. Concurrent writable tasks for the same Git repository use separate worktrees. Candy does not silently commit, push, merge, release, deploy, or initialize Git.
+Candy supports a selected Local Workspace and, where the task policy requires isolation, a Candy-owned Task Worktree. Concurrent writable tasks for the same Git repository use separate worktrees. Candy does not silently commit, push, merge, release, deploy, or initialize Git. Model-issued Git commits run only through the dedicated `candy_git_commit` tool in writable tasks, giving Codex-style granular checkpoints with a bounded, credential-scanned message; pushing requires the user's explicit per-task authorization (`/push allow` at task start) and is never silent.
 
 Change review is explicit. The TUI exposes bounded changed-file and diff evidence; applying changes requires the contracted review and ownership checks. Discard removes only Candy-owned worktree state. Dirty targets, conflicts, path mismatches, symlink or reparse-point risks, and credential matches fail closed.
 
@@ -89,7 +89,7 @@ V1 reuses Pi's basic file and model tools behind a thin Candy Tool Host. The hos
 
 Tool names are bounded and redacted. Tool arguments, output, provider errors, and credentials are not exposed merely to make a status line informative. Side-effect-free reads and searches may execute in parallel within one task; file mutations and shell commands execute sequentially by default.
 
-The default profile permits only the contracted workspace operations. Read-only rejects mutations. In Auto, containment-checked local file mutations, including deletion, execute without pausing the task for per-operation approval and are exposed through task-level change review. Sensitive external actions require explicit approval. Native command containment, process-tree ownership, and network policy are platform adapters; a platform without completed G2 evidence remains fail-closed.
+The default profile permits only the contracted workspace operations. Read-only rejects mutations. In Auto, containment-checked local file mutations, including deletion, execute without pausing the task for per-operation approval and are exposed through task-level change review. Writable Git tasks additionally expose the `candy_git_commit` tool: it stages the workspace, scans the exact staged content for active provider credentials (failing closed), and creates one bounded commit; the `push` option is honored only when the user authorized it for the task (`/push allow`), and pushes the current branch to its `origin` upstream. Sensitive external actions require explicit approval. Native command containment, process-tree ownership, and network policy are platform adapters; a platform without completed G2 evidence remains fail-closed.
 
 ## Candy-owned instructions and resources
 

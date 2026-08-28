@@ -191,6 +191,7 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
       workspacePath: process.cwd(),
       trustedShell: false,
       fullAccess: false,
+      pushPolicy: "deny",
       taskMode: "build",
       createdAt: created.createdAt,
       updatedAt: created.updatedAt,

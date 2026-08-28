@@ -392,6 +392,8 @@ export class InteractiveTui {
   #fullAccessEnabled = false;
   /** The warning must be viewed in this TUI process before a confirmation takes effect. */
   #fullAccessConfirmationPending = false;
+  /** Git push authorization for new tasks; 'allow' must be set by the user. */
+  #pushPolicy: "deny" | "allow" = "deny";
   #validatorCommand: CommandValidatorCommand | undefined;
   /** Contiguous assistant text of the current stream; flushed into the last reply on plain writes. */
   #assistantBuffer = "";
@@ -627,6 +629,8 @@ export class InteractiveTui {
       this.setLocalCommands(trimmed.slice(6).trim());
     } else if (trimmed === "/validator" || trimmed.startsWith("/validator ")) {
       this.configureValidator(trimmed.slice(10).trim());
+    } else if (trimmed === "/push" || trimmed.startsWith("/push ")) {
+      this.configurePushPolicy(trimmed.slice(5).trim());
     } else if (trimmed === "/changes") {
       void this.showChanges().catch((error: unknown) => {
         this.write(`changes rejected: ${safeError(error)}\n`);
@@ -850,6 +854,7 @@ export class InteractiveTui {
         title,
         taskMode,
         fullAccess,
+        this.#pushPolicy,
       );
     } catch (error) {
       if (worktreePath !== undefined) {
@@ -1398,6 +1403,25 @@ export class InteractiveTui {
     }
     this.#validatorCommand = command;
     this.write(`validator configured for new tasks: ${command.executable}\n`);
+  }
+
+  private configurePushPolicy(value: string): void {
+    if (value === "") {
+      this.write(`push policy for new tasks: ${this.#pushPolicy}\n`);
+      return;
+    }
+    if (value === "allow" || value === "deny") {
+      this.#pushPolicy = value;
+      this.write(
+        `push policy set to ${value} for new tasks${
+          value === "allow"
+            ? " (applies to current-workspace tasks; Candy never pushes without this explicit authorization)"
+            : ""
+        }\n`,
+      );
+      return;
+    }
+    this.write("push rejected: use /push allow or /push deny\n");
   }
 
   private async showChanges(): Promise<void> {
@@ -2109,6 +2133,10 @@ export class InteractiveTui {
             model: taskSnapshot.model,
             cwd: executionPath,
             approvalProfile: taskSnapshot.approvalProfile,
+            gitPushPolicy:
+              taskSnapshot.pushPolicy === "allow" && taskSnapshot.worktreePath === undefined
+                ? "allow"
+                : "deny",
             activeSecrets,
             ...(taskSnapshot.trustedShell
               ? {
@@ -2738,6 +2766,7 @@ export class InteractiveTui {
       `access: ${task.fullAccess ? "full (macOS preview)" : task.approvalProfile === "read-only" ? "review" : "auto"}`,
       `workspace: ${workspaceState} ${task.worktreePath ?? task.workspacePath}`,
       `local commands: ${task.trustedShell ? (task.fullAccess ? "full access ready" : "offline ready") : "off"}`,
+      `git: push=${task.pushPolicy}${task.worktreePath !== undefined ? " (worktree task; push unavailable)" : ""}`,
       `model: ${task.model}`,
       `revision: r${task.revision}`,
       `created: ${formatTaskTimestamp(task.createdAt)}`,

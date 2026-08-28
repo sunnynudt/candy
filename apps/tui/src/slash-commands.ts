@@ -179,6 +179,13 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     description: "Configure the task validator",
   },
   {
+    name: "push",
+    argumentHint: "<allow|deny>",
+    description: "Authorize (or revoke) Git push for new tasks; Candy never pushes without it",
+    requiredArgument: true,
+    usage: "/push <allow|deny>",
+  },
+  {
     name: "changes",
     description: "Show current task changes",
   },

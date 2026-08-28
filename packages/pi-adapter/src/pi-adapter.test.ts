@@ -957,6 +957,7 @@ test("Pi agent engine uses public Candy workspace tools and Candy-owned sessions
       "candy_edit",
       "candy_write",
       "candy_delete",
+      "candy_git_commit",
     ]);
   } finally {
     globalThis.fetch = originalFetch;

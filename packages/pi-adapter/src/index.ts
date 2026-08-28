@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   constants as fsConstants,
   existsSync,
@@ -31,6 +32,9 @@ const MAX_WEB_FETCH_TIMEOUT_SECONDS = 300;
 const MAX_WEB_FETCH_RESPONSE_BYTES = 512 * 1024;
 const MAX_WEB_FETCH_REDIRECTS = 3;
 const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
+
+const MAX_GIT_COMMIT_MESSAGE_CHARS = 200;
+const MAX_GIT_TOOL_OUTPUT_BYTES = 256 * 1024;
 
 const SAFE_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
@@ -756,6 +760,8 @@ export interface CandyWorkspaceToolOperations {
 
 export interface CandyWorkspaceToolOptions {
   readonly webFetch?: CandyWebFetchOperationsOptions;
+  /** Optional candy_git_commit tool configuration for writable Git tasks. */
+  readonly git?: CandyGitToolOptions;
   /** Candy-owned roots that external image reads must not enter. */
   readonly externalImageRoots?: readonly string[];
   /**
@@ -1467,6 +1473,182 @@ export function createCandyNetworkToolDefinition(
         if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         executionSignal.removeEventListener("abort", abort);
       }
+    },
+  } as unknown as piSdk.ToolDefinition;
+}
+
+/**
+ * Git process runner for Candy's git tools. Spawns git directly with a clean
+ * child environment and bounded output, matching the change tracker's local
+ * git semantics. Push runs through the same runner; the TUI process already
+ * has the network access needed for an explicitly authorized push.
+ */
+export interface CandyGitRunner {
+  run(args: readonly string[], cwd: string, input?: string): Promise<string>;
+}
+
+export function createCandyNodeGitRunner(): CandyGitRunner {
+  return {
+    run(args, cwd, input) {
+      return new Promise((resolve, reject) => {
+        const child = spawn("git", [...args], {
+          cwd,
+          env: cleanChildEnvironment(process.env),
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        let stdout = "";
+        let stderr = "";
+        let outputBytes = 0;
+        let outputLimitExceeded = false;
+        const appendOutput = (current: string, chunk: string): string => {
+          outputBytes += Buffer.byteLength(chunk, "utf8");
+          if (outputBytes > MAX_GIT_TOOL_OUTPUT_BYTES) {
+            outputLimitExceeded = true;
+            child.kill();
+            return current;
+          }
+          return current + chunk;
+        };
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => (stdout = appendOutput(stdout, chunk)));
+        child.stderr.on("data", (chunk) => (stderr = appendOutput(stderr, chunk)));
+        child.once("error", reject);
+        child.once("close", (code) => {
+          if (outputLimitExceeded) reject(new Error("git output exceeded Candy's size limit."));
+          else if (code === 0) resolve(stdout);
+          else reject(new Error(`git ${args[0] ?? "command"} failed: ${stderr.trim()}`));
+        });
+        child.stdin.end(input);
+      });
+    },
+  };
+}
+
+export interface CandyGitToolOptions {
+  /** Task Git publication policy; 'allow' enables push after commit. */
+  readonly pushPolicy: "deny" | "allow";
+  /** Test seam; the production default spawns git with a clean environment. */
+  readonly runner?: CandyGitRunner;
+  readonly activeSecrets?: readonly string[];
+}
+
+function isGitRepositoryRoot(repository: string): boolean {
+  try {
+    return existsSync(path.join(repository, ".git"));
+  } catch {
+    return false;
+  }
+}
+
+const gitCommitMessageSchema = Type.Object({
+  message: Type.String({ minLength: 1, maxLength: MAX_GIT_COMMIT_MESSAGE_CHARS }),
+  push: Type.Optional(Type.Boolean()),
+});
+
+/**
+ * Codex-style model-driven Git commits. Stages all current changes and
+ * creates one bounded commit; optionally pushes when the task authorizes it.
+ * Provider credentials are scanned before the commit and always fail closed.
+ */
+export function createCandyGitCommitToolDefinition(
+  workspaceRoot: string,
+  options: CandyGitToolOptions,
+): piSdk.ToolDefinition {
+  const root = path.resolve(workspaceRoot);
+  const runner = options.runner ?? createCandyNodeGitRunner();
+  const activeSecrets = options.activeSecrets ?? [];
+  return {
+    name: "candy_git_commit",
+    label: "Commit workspace changes",
+    description:
+      "Stage all current workspace changes and create one Git commit with the provided bounded message. Provider credentials are never committed. Optionally push after the commit when the user authorized Git push for this task.",
+    promptSnippet: "Commit workspace changes as a Git commit",
+    promptGuidelines: [
+      "Use candy_git_commit to checkpoint coherent milestones so the repository keeps readable commit granularity.",
+      "Write a concise message that describes the change; Candy does not edit or shorten it.",
+      "Set push:true only after meaningful milestones in long-running tasks when the user authorized push for this task (/push allow); push is never automatic.",
+    ],
+    parameters: gitCommitMessageSchema,
+    executionMode: "sequential",
+    execute: async (
+      _toolCallId: string,
+      input: { message?: unknown; push?: unknown },
+      signal: AbortSignal | undefined,
+    ) => {
+      const executionSignal = signal ?? new AbortController().signal;
+      if (executionSignal.aborted) throw new Error("Operation aborted");
+      const message = typeof input.message === "string" ? input.message.trim() : "";
+      const push = input.push === true;
+      if (message.length === 0 || message.length > MAX_GIT_COMMIT_MESSAGE_CHARS)
+        throw new Error("Git commit message is outside the allowed bounds.");
+      if (containsControlCharacter(message))
+        throw new Error("Git commit message cannot contain control characters.");
+      if (
+        containsCredentialMaterial(message) ||
+        activeSecrets.some((secret) => secret.length > 0 && message.includes(secret))
+      )
+        throw new Error("Provider credentials are forbidden in Git commit messages.");
+      if (push && options.pushPolicy !== "allow")
+        throw new Error(
+          "Git push is not authorized for this task; the user must enable it with /push allow before the task starts.",
+        );
+      if (!isGitRepositoryRoot(root))
+        throw new Error(
+          "The workspace is not a Git repository root; candy_git_commit is unavailable.",
+        );
+      await runner.run(["rev-parse", "--git-dir"], root);
+      if (executionSignal.aborted) throw new Error("Operation aborted");
+      await runner.run(["add", "-A"], root);
+      const stagedPatch = await runner.run(["diff", "--cached", "--binary", "--no-color"], root);
+      if (
+        containsCredentialMaterial(stagedPatch) ||
+        activeSecrets.some((secret) => secret.length > 0 && stagedPatch.includes(secret))
+      ) {
+        await runner.run(["reset"], root).catch(() => undefined);
+        throw new Error("Provider credentials are forbidden in Git commits.");
+      }
+      if (stagedPatch.trim().length === 0) {
+        await runner.run(["reset"], root).catch(() => undefined);
+        return {
+          content: [
+            { type: "text" as const, text: "no changes to commit; the workspace is clean" },
+          ],
+          details: undefined,
+        };
+      }
+      await runner.run(["commit", "-m", message], root);
+      const head = (await runner.run(["rev-parse", "HEAD"], root)).trim();
+      const shortHead = head.length > 12 ? head.slice(0, 12) : head;
+      let pushEvidence = "";
+      if (push) {
+        const branch = (await runner.run(["rev-parse", "--abbrev-ref", "HEAD"], root)).trim();
+        if (branch === "HEAD") {
+          pushEvidence = "; push skipped because HEAD is detached";
+        } else {
+          try {
+            const upstream = (
+              await runner.run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+            ).trim();
+            if (upstream === undefined || upstream.length === 0)
+              await runner.run(["push", "-u", "origin", branch], root);
+            else await runner.run(["push"], root);
+            pushEvidence = `; pushed ${branch} to origin (${shortHead})`;
+          } catch (error) {
+            pushEvidence = `; push failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `committed ${shortHead}: ${message}${pushEvidence}`,
+          },
+        ],
+        details: undefined,
+      };
     },
   } as unknown as piSdk.ToolDefinition;
 }
@@ -2852,6 +3034,9 @@ export function createCandyWorkspaceTools(
         });
       },
     });
+    if (options.git !== undefined && isGitRepositoryRoot(path.resolve(workspaceRoot))) {
+      tools.push(createCandyGitCommitToolDefinition(workspaceRoot, options.git));
+    }
     if (shell !== undefined) {
       const bash = piSdk.createBashToolDefinition(workspaceRoot, {
         operations: createCandyBashOperations(workspaceRoot, {
@@ -3566,6 +3751,8 @@ export interface PiAgentEngineInput {
   readonly shellApproval?: CandyBashOperationsOptions["onApproval"];
   readonly shellNetworkApproval?: CandyNetworkOperationsOptions["onApproval"];
   readonly webFetchApproval?: CandyWebFetchOperationsOptions["onApproval"];
+  /** Task Git publication policy; 'allow' enables push after model commits. */
+  readonly gitPushPolicy?: "deny" | "allow";
 }
 
 export interface PiImageInput {
@@ -3994,6 +4181,10 @@ export class PiAgentEngine {
           },
           externalImageRoots: [path.resolve(this.sessionRoot, "..")],
           readRoots: [...resourceLoader.getSkillReadRoots()],
+          git: {
+            pushPolicy: input.gitPushPolicy ?? "deny",
+            activeSecrets,
+          },
         },
       );
       const sessionBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);

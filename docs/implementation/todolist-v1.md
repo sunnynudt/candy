@@ -1,8 +1,15 @@
 # Candy V1 待办与进度
 
-更新日期：2026-08-25
+更新日期：2026-08-28
 基线分支：`codex/candy-v1-foundation`
-本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
+
+## 2026-08-28 输入排队与 Codex 式自动提交 checkpoint
+
+- **输入排队（Codex 风格）**：任务运行中直接输入普通文本默认排队为下一轮 follow-up（`[follow-up] ... queued`），不再拒绝；`/steer` 保留为显式插入当前轮。回归测试改为断言排队成功且引擎只跑一轮。已推送 `2164213` + `bf3e2dd`。
+- **Codex 式自动提交**：新增 `candy_git_commit` 工具（可写任务可用；Git 仓库根目录才注册）：`git add -A` → 对暂存内容做凭据扫描（fail-closed，含 activeSecrets）→ 有界提交信息（≤200 字符、无控制字符、无凭据）→ 单次提交；`push:true` 仅在任务开始时用户 `/push allow` 显式授权（仅 current 工作区任务）后把当前分支推送到 `origin`，默认禁止、绝不静默。新增 `/push <allow|deny>` 命令（配置后续任务，持久化到任务元数据 push_policy）。change tracker 基于 baseline commit 的 `git diff`，提交后 `/changes` `/diff` `/apply` 语义不变。
+- **验证**：构建通过；全量 `npm test` **377/378**（唯一失败为 worktree 无 Rust native runner 二进制的环境阻塞项，与本次改动无关）；新增 git 工具测试 **9/9**、TUI push-policy 测试 **2/2**；prettier/eslint 通过。
+- **安全边界**：shell 工具仍禁止 commit/push（`containsShellPublicationAction`）；提交/推送只走专用工具；凭据不变量保持（提交前扫描 staged diff）。
+  本工作包起始提交：`b7cab12a8ecfd18d46c2813653e19dd978143ee4`
 
 ## 2026-08-25 Issue 002/005 闭环 checkpoint（`0161be6`）
 
