@@ -22,6 +22,12 @@ export interface NativeProcessRequest {
   /** Explicit one-command capability. Omitted/false is the offline default. */
   readonly network?: boolean;
   /**
+   * macOS Personal Preview only. Runs the task command outside the normal
+   * filesystem and network sandbox while retaining Candy's cleared child
+   * environment and owned process-tree lifecycle.
+   */
+  readonly fullAccess?: boolean;
+  /**
    * Wide shell policy for executing child tools; validators keep this off.
    * When off, only the literal executable plus the explicit processExecPaths
    * below may run.
@@ -134,6 +140,7 @@ export class NativeProcessRunner {
       cwd: request.cwd,
       workspace: request.workspace,
       network: request.network === true,
+      fullAccess: request.fullAccess === true,
       allowProcessExec: request.allowProcessExec === true,
       processExecPaths: request.processExecPaths ?? [],
       readOnlyPaths: request.readOnlyPaths ?? [],
@@ -453,6 +460,7 @@ function assertNativeRequestSize(
   addField("cwd", jsonStringByteLength(request.cwd));
   addField("workspace", jsonStringByteLength(request.workspace));
   addField("network", request.network === true ? 4 : 5);
+  addField("fullAccess", request.fullAccess === true ? 4 : 5);
   addField("allowProcessExec", request.allowProcessExec === true ? 4 : 5);
   addField("processExecPaths", jsonArrayByteLength(request.processExecPaths ?? []));
   addField("readOnlyPaths", jsonArrayByteLength(request.readOnlyPaths ?? []));

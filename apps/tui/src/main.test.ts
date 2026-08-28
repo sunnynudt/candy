@@ -30,6 +30,7 @@ import type {
 import {
   createDefaultInteractiveTui,
   InteractiveTui,
+  isMacosFullAccessAvailable,
   isMacosTrustedShellAutoAvailable,
   type InteractiveTuiOptions,
   type TuiAgentEngine,
@@ -1303,6 +1304,62 @@ test("default TUI runs an offline npm script in its Task Worktree without a loca
 test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () => {
   const expected = process.platform === "darwin" && process.arch === "arm64";
   assert.equal(isMacosTrustedShellAutoAvailable(), expected);
+});
+
+test("interactive TUI requires confirmation and persists macOS Full access for one task", async () => {
+  if (!isMacosFullAccessAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedFullAccess = false;
+  let observedNetworkApproval = true;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      fullAccessAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedFullAccess = input.fullAccess === true;
+          observedNetworkApproval = input.shellNetworkApproval !== undefined;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access full");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Full access warning/u);
+    terminal.emitInput("/access full confirm");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Full access armed/u);
+    terminal.emitInput("run with broad local access");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Full access enabled for this macOS task/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.equal(task?.fullAccess, true);
+    assert.equal(task?.trustedShell, true);
+    assert.equal(observedFullAccess, true);
+    assert.equal(observedNetworkApproval, false);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("interactive TUI defaults Auto Git tasks to offline local commands with reused dependencies", async () => {

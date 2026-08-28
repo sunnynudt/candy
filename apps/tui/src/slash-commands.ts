@@ -109,9 +109,9 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
   },
   {
     name: "access",
-    argumentHint: "[review|safe|current]",
-    description: "Choose how Candy works: review only, a safe workspace, or the current workspace",
-    usage: "/access [review|safe|current]",
+    argumentHint: "[review|safe|current|full]",
+    description: "Choose review, safe/current workspace work, or macOS Full access",
+    usage: "/access [review|safe|current|full]",
   },
   {
     name: "tasks",

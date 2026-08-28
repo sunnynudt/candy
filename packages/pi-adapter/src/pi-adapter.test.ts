@@ -2190,6 +2190,42 @@ test("Candy Trusted Shell runs npm scripts offline without per-command approval"
   );
 });
 
+test("Candy Full access projects broad filesystem and network authority to the native runner", async () => {
+  let runnerRequest:
+    | {
+        readonly network?: boolean;
+        readonly fullAccess?: boolean;
+        readonly environment?: Readonly<Record<string, string>>;
+        readonly activeSecrets?: readonly string[];
+      }
+    | undefined;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    activeSecrets: ["fixture-secret"],
+    fullAccess: true,
+    runner: {
+      run: async (request) => {
+        runnerRequest = request;
+        return { code: 0, signal: null, stdout: "full", stderr: "", cancelled: false };
+      },
+    },
+  });
+  const result = await operations.exec("npm run check", "C:\\task-worktree", {
+    onData: () => undefined,
+  });
+  assert.deepEqual(result, { exitCode: 0 });
+  assert.equal(runnerRequest?.network, true);
+  assert.equal(runnerRequest?.fullAccess, true);
+  assert.deepEqual(runnerRequest?.activeSecrets, ["fixture-secret"]);
+  assert.ok(
+    Object.values(runnerRequest?.environment ?? {}).every(
+      (value) => value === undefined || !value.includes("fixture-secret"),
+    ),
+  );
+});
+
 test("macOS local commands run npm scripts from the current workspace without network", async () => {
   if (process.platform !== "darwin") return;
   const nativeRunner = path.join(

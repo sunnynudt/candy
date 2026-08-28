@@ -784,6 +784,7 @@ export interface CandyBashOperationsOptions {
       readonly environment?: Readonly<Record<string, string>>;
       readonly activeSecrets?: readonly string[];
       readonly network?: boolean;
+      readonly fullAccess?: boolean;
       readonly allowProcessExec?: boolean;
       readonly processExecPaths?: readonly string[];
       readonly readOnlyPaths?: readonly string[];
@@ -793,6 +794,8 @@ export interface CandyBashOperationsOptions {
   readonly bashPath?: string;
   readonly exists?: (absolutePath: string) => boolean;
   readonly activeSecrets?: readonly string[];
+  /** macOS Full access task: unrestricted filesystem/network shell execution. */
+  readonly fullAccess?: boolean;
   readonly pathSeam?: CandyBashPathSeam;
   readonly onApproval?: (
     request: { readonly command: string; readonly cwd: string; readonly timeout?: number },
@@ -903,7 +906,8 @@ export function createCandyBashOperations(
           args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(command)],
           cwd: root,
           workspace: root,
-          network: false,
+          network: options.fullAccess === true,
+          fullAccess: options.fullAccess === true,
           allowProcessExec: true,
           processExecPaths,
           readOnlyPaths: resolveCandyShellReadOnlyPaths(
@@ -911,7 +915,10 @@ export function createCandyBashOperations(
             options.trustedGitCommonDirectory,
             options.trustedDependencyDirectory,
           ),
-          environment: createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
+          environment:
+            options.fullAccess === true
+              ? createCandyFullAccessEnvironment(options.activeSecrets ?? [])
+              : createCandyShellEnvironment(root, options.activeSecrets ?? [], bashPath),
           ...(options.activeSecrets === undefined ? {} : { activeSecrets: options.activeSecrets }),
           signal: controller.signal,
         });
@@ -1843,6 +1850,20 @@ function createCandyShellEnvironment(
   return environment;
 }
 
+/**
+ * Full access keeps normal HOME and PATH semantics, but only after Candy has
+ * removed every active provider credential from the child environment.
+ */
+function createCandyFullAccessEnvironment(
+  activeSecrets: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(cleanChildEnvironment(process.env, activeSecrets)).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+}
+
 function resolveCandyShellReadOnlyPaths(
   root: string,
   trustedGitCommonDirectory: string | undefined,
@@ -2673,6 +2694,7 @@ export function createCandyWorkspaceTools(
     readonly runner: CandyBashOperationsOptions["runner"];
     readonly bashPath?: string;
     readonly activeSecrets?: readonly string[];
+    readonly fullAccess?: boolean;
     readonly onApproval?: CandyBashOperationsOptions["onApproval"];
     readonly networkApproval?: CandyNetworkOperationsOptions["onApproval"];
     readonly trustedGitCommonDirectory?: string;
@@ -2836,6 +2858,7 @@ export function createCandyWorkspaceTools(
           runner: shell.runner,
           ...(shell.bashPath === undefined ? {} : { bashPath: shell.bashPath }),
           ...(shell.activeSecrets === undefined ? {} : { activeSecrets: shell.activeSecrets }),
+          ...(shell.fullAccess === true ? { fullAccess: true } : {}),
           ...(shell.onApproval === undefined ? {} : { onApproval: shell.onApproval }),
           ...(shell.trustedGitCommonDirectory === undefined
             ? {}
@@ -2850,11 +2873,18 @@ export function createCandyWorkspaceTools(
         ...bash,
         name: "candy_bash",
         label: "Local command",
-        promptSnippet: "Run an offline local development command in the selected Task Worktree",
+        promptSnippet:
+          shell.fullAccess === true
+            ? "Run a macOS Full access local development command"
+            : "Run an offline local development command in the selected Task Worktree",
         promptGuidelines: [
           "Use candy_bash for ordinary local development commands such as npm run check, test, build, or format.",
-          "Local commands run offline in the Task Worktree without asking the user for each command.",
-          "Use candy_bash_network only when the command genuinely requires outbound network access.",
+          shell.fullAccess === true
+            ? "This macOS Full access task may access local files and the network without the normal sandbox. Provider credentials and publication actions remain forbidden."
+            : "Local commands run offline in the Task Worktree without asking the user for each command.",
+          shell.fullAccess === true
+            ? "Do not use this authority to commit, push, publish, release, deploy, or retrieve credentials."
+            : "Use candy_bash_network only when the command genuinely requires outbound network access.",
         ],
       } as unknown as piSdk.ToolDefinition);
       if (shell.networkApproval !== undefined) {
@@ -3518,6 +3548,8 @@ export interface PiAgentEngineInput {
   readonly activeSecrets?: readonly string[];
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   readonly trustedShell?: boolean;
+  /** macOS Personal Preview task with broad filesystem and network shell access. */
+  readonly fullAccess?: boolean;
   readonly trustedGitCommonDirectory?: string;
   /** Canonical source-workspace node_modules directory verified by Candy. */
   readonly trustedDependencyDirectory?: string;
@@ -3941,6 +3973,7 @@ export class PiAgentEngine {
               runner: this.bashRunner,
               ...(input.bashPath === undefined ? {} : { bashPath: input.bashPath }),
               activeSecrets,
+              ...(input.fullAccess === true ? { fullAccess: true } : {}),
               ...(input.shellApproval === undefined ? {} : { onApproval: input.shellApproval }),
               ...(input.shellNetworkApproval === undefined
                 ? {}

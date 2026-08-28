@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import {
   appendFile,
   mkdir,
@@ -306,6 +307,115 @@ test("macOS Sandbox Runner rejects provider credentials and keeps them out of th
     assert.equal(result.stdout, "absent");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("macOS Full access reads outside the selected workspace through the supervised runner", async () => {
+  if (process.platform !== "darwin") return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-full-access-workspace-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-full-access-outside-"));
+  const markerPath = path.join(outside, "marker.txt");
+  try {
+    await writeFile(markerPath, "outside-workspace-ok");
+    const result = await new NativeProcessRunner(runnerPath).run({
+      executable: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+        markerPath,
+      ],
+      cwd: workspace,
+      workspace,
+      network: true,
+      fullAccess: true,
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout, "outside-workspace-ok");
+    assert.equal(result.cancelled, false);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("macOS Full access permits a network socket through the supervised runner", async () => {
+  if (process.platform !== "darwin") return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-full-access-network-"));
+  const server = createServer((_request, response) => {
+    response.end("full-access-network-ok");
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Test server address unavailable.");
+    const result = await new NativeProcessRunner(runnerPath).run({
+      executable: process.execPath,
+      args: [
+        "-e",
+        "fetch(process.argv[1]).then((response)=>response.text()).then((body)=>process.stdout.write(body)).catch((error)=>{process.stderr.write(String(error));process.exitCode=1})",
+        `http://127.0.0.1:${address.port}/`,
+      ],
+      cwd: workspace,
+      workspace,
+      network: true,
+      fullAccess: true,
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout, "full-access-network-ok");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("macOS Full access keeps Keychain IPC unavailable to the task process", async () => {
+  if (process.platform !== "darwin" || !existsSync("/usr/bin/security")) return;
+  const runnerPath = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(runnerPath)) return;
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-full-access-keychain-"));
+  try {
+    const result = await new NativeProcessRunner(runnerPath).run({
+      executable: "/usr/bin/security",
+      args: ["list-keychains"],
+      cwd: workspace,
+      workspace,
+      network: true,
+      fullAccess: true,
+    });
+    // Do not expose Keychain command output in test evidence. A non-zero
+    // result is the observable contract for the explicit securityd denial.
+    assert.notEqual(result.code, 0);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 

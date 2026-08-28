@@ -190,6 +190,7 @@ test("sqlite task metadata survives restart and fences stale transitions", () =>
       attachmentIds: [],
       workspacePath: process.cwd(),
       trustedShell: false,
+      fullAccess: false,
       taskMode: "build",
       createdAt: created.createdAt,
       updatedAt: created.updatedAt,
@@ -437,6 +438,38 @@ test("sqlite task metadata reorders queued tasks atomically across restart", () 
         ["task-second", 3],
       ],
     );
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("sqlite task metadata persists an explicit Full access decision", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-full-access-task-store-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    const created = store.create(
+      "task-full-access",
+      "auto",
+      undefined,
+      undefined,
+      [],
+      process.cwd(),
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      "build",
+      true,
+    );
+    assert.equal(created.trustedShell, true);
+    assert.equal(created.fullAccess, true);
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.get("task-full-access")?.fullAccess, true);
     reopened.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });

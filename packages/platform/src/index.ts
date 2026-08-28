@@ -115,6 +115,8 @@ export interface TaskMetadata {
   readonly workspaceBaseline?: string;
   readonly worktreePath?: string;
   readonly trustedShell: boolean;
+  /** macOS Personal Preview: task commands bypass the normal filesystem/network sandbox. */
+  readonly fullAccess: boolean;
   /**
    * Task execution mode. 'build' is the normal single-turn implementation;
    * 'debug' runs the bounded Auto Debug loop (model turn + validator until
@@ -217,6 +219,7 @@ export class SQLiteTaskStore {
         workspace_baseline TEXT,
         worktree_path TEXT,
         trusted_shell INTEGER NOT NULL DEFAULT 0,
+        full_access INTEGER NOT NULL DEFAULT 0,
         task_mode TEXT NOT NULL DEFAULT 'build',
         title TEXT,
         created_at INTEGER,
@@ -370,7 +373,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 11 &&
       schemaVersion !== 12 &&
       schemaVersion !== 13 &&
-      schemaVersion !== 15
+      schemaVersion !== 15 &&
+      schemaVersion !== 16
     ) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
@@ -385,7 +389,12 @@ export class SQLiteTaskStore {
     // Fresh schema-0 databases already include the columns; pre-existing
     // databases (v1..v12) are migrated in place and older tasks keep a NULL
     // title, which callers display as the task-id fallback.
-    if (schemaVersion !== 0 && schemaVersion !== 13 && schemaVersion !== 15) {
+    if (
+      schemaVersion !== 0 &&
+      schemaVersion !== 13 &&
+      schemaVersion !== 15 &&
+      schemaVersion !== 16
+    ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN title TEXT;
         ALTER TABLE task_metadata ADD COLUMN created_at INTEGER;
@@ -397,12 +406,19 @@ export class SQLiteTaskStore {
     // 'build' so pre-existing tasks are never auto-promoted to a debug loop.
     // Schema 14 is intentionally unknown: the platform test asserts that a
     // never-shipped future version is rejected with a clear error.
-    if (schemaVersion !== 0 && schemaVersion !== 15) {
+    if (schemaVersion !== 0 && schemaVersion !== 15 && schemaVersion !== 16) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'build';
       `);
     }
-    this.#database.exec(`PRAGMA user_version = 15;`);
+    // Schema 16 records the task-bound macOS Full access decision. Older
+    // tasks are deliberately never promoted and therefore retain `0`.
+    if (schemaVersion !== 0 && schemaVersion !== 16) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
+      `);
+    }
+    this.#database.exec(`PRAGMA user_version = 16;`);
   }
 
   public create(
@@ -418,6 +434,7 @@ export class SQLiteTaskStore {
     trustedShell = false,
     title?: string,
     taskMode: "build" | "debug" = "build",
+    fullAccess = false,
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
@@ -429,7 +446,7 @@ export class SQLiteTaskStore {
     const now = Date.now();
     this.#database
       .prepare(
-        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO task_metadata (task_id, revision, state, approval_profile, queue_order, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at) VALUES (?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         taskId,
@@ -442,6 +459,7 @@ export class SQLiteTaskStore {
         workspaceBaseline ?? null,
         worktreePath ?? null,
         trustedShell ? 1 : 0,
+        fullAccess ? 1 : 0,
         taskMode,
         title ?? null,
         now,
@@ -595,7 +613,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -604,7 +622,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -648,7 +666,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -835,6 +853,7 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
       ? { worktreePath: String(row.worktree_path) }
       : {}),
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
+    fullAccess: Number(row.full_access ?? 0) === 1,
     ...(row.task_mode === "debug" || row.task_mode === "build" ? { taskMode: row.task_mode } : {}),
     ...(row.title === null || row.title === undefined ? {} : { title: String(row.title) }),
     ...(row.created_at === null || row.created_at === undefined

@@ -58,6 +58,8 @@ struct RunRequest {
     workspace: String,
     #[serde(default)]
     network: bool,
+    #[serde(rename = "fullAccess", default)]
+    full_access: bool,
     #[serde(rename = "allowProcessExec", default)]
     allow_process_exec: bool,
     #[serde(rename = "processExecPaths", default)]
@@ -205,6 +207,9 @@ fn response_for_line(line: &str) -> String {
     if request.network && !cfg!(any(target_os = "macos", windows)) {
         return error_response("network_forbidden");
     }
+    if request.full_access && (!cfg!(target_os = "macos") || !request.network) {
+        return error_response("full_access_unavailable");
+    }
     if !is_absolute_path(Path::new(&request.cwd))
         || !is_absolute_path(Path::new(&request.workspace))
         || !is_absolute_path(Path::new(&request.executable))
@@ -345,6 +350,14 @@ fn run_macos(request: RunRequest) -> String {
         &process_exec_paths,
         &read_only_paths,
     );
+    let profile = if request.full_access {
+        // Full access removes the normal workspace and network restrictions.
+        // It deliberately retains a narrow Seatbelt denial for Keychain IPC:
+        // Candy provider credentials must never become task-process data.
+        full_access_sandbox_profile()
+    } else {
+        profile
+    };
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
         .arg("-p")
@@ -761,6 +774,19 @@ fn sandbox_profile(
         workspace,
         workspace
     )
+}
+
+#[cfg(target_os = "macos")]
+fn full_access_sandbox_profile() -> String {
+    // This deliberately starts from macOS's fully allowed profile, then
+    // carves out the provider-credential Keychain IPC boundary. Do not
+    // replace it with an unsandboxed Command: a cleared environment alone
+    // cannot prevent a same-user child from asking the Keychain.
+    "(version 1)\n\
+     (allow default)\n\
+     (deny mach-lookup (global-name \"com.apple.securityd\"))\n\
+     (deny mach-lookup (global-name \"com.apple.SecurityServer\"))\n"
+        .to_owned()
 }
 
 #[cfg(target_os = "macos")]
@@ -2520,6 +2546,16 @@ mod tests {
         assert!(elevated.contains("(literal \"/private/etc/ssl/cert.pem\")"));
         assert!(elevated.contains("(literal \"/private/etc/ssl/openssl.cnf\")"));
         assert!(!elevated.contains("(subpath \"/private/etc/ssl\")"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_full_access_is_broad_but_keeps_keychain_ipc_denied() {
+        let profile = super::full_access_sandbox_profile();
+        assert!(profile.contains("(allow default)"));
+        assert!(!profile.contains("(deny default)"));
+        assert!(profile.contains("(deny mach-lookup (global-name \"com.apple.securityd\"))"));
+        assert!(profile.contains("(deny mach-lookup (global-name \"com.apple.SecurityServer\"))"));
     }
 
     #[cfg(target_os = "macos")]
