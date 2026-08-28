@@ -45,6 +45,7 @@ const ANSI_WARNING = "\x1b[38;5;221m";
 const ANSI_FULL_ACCESS_BACKGROUND = "\x1b[48;5;130m";
 const ANSI_FULL_ACCESS_TEXT = "\x1b[38;5;231m";
 const COPY_LAST_ASSISTANT_URL = "candy://copy-last-assistant";
+const OPEN_FULL_ACCESS_URL = "candy://open-full-access";
 
 function tint(value: string, color: string): string {
   return `${color}${value}${ANSI_RESET}`;
@@ -119,6 +120,7 @@ interface CandyChromeOptions {
   readonly worktreeEnabled: (() => boolean) | undefined;
   readonly trustedShellEnabled: (() => boolean) | undefined;
   readonly fullAccessEnabled: (() => boolean) | undefined;
+  readonly fullAccessAvailable: (() => boolean) | undefined;
   readonly taskId: (() => string | undefined) | undefined;
   readonly taskTitle: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
@@ -154,6 +156,7 @@ class CandyChrome implements Component {
     const worktree = this.#options.worktreeEnabled?.() === true ? "安全工作区" : "当前工作区";
     const shell = this.#options.trustedShellEnabled?.() === true ? "本地检查就绪" : "本地检查关闭";
     const fullAccess = this.#options.fullAccessEnabled?.() === true;
+    const fullAccessAvailable = this.#options.fullAccessAvailable?.() === true;
     const taskTitle =
       this.#options.taskTitle?.() ??
       (this.#options.taskId?.() === undefined ? "准备新任务" : "未命名任务");
@@ -168,7 +171,9 @@ class CandyChrome implements Component {
       composeChromeLine(
         fullAccess
           ? ` ${fullAccessBadge()} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(`${worktree} · 广域文件与网络 · /access safe`, ANSI_WARNING)}`
-          : ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
+          : fullAccessAvailable
+            ? ` ${localActionLink(OPEN_FULL_ACCESS_URL, tint("⚠ 开启 Full access", ANSI_WARNING))} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`
+            : ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
         `${tint(model, ANSI_SOFT)}${recovery}`,
         safeWidth,
       ),
@@ -306,6 +311,8 @@ export interface CandyTuiSurfaceOptions {
   readonly trustedShellEnabled?: () => boolean;
   /** Persistent macOS Full access mode; always rendered as a warning badge. */
   readonly fullAccessEnabled?: () => boolean;
+  /** Whether this installation can show the macOS Full access entry point. */
+  readonly fullAccessAvailable?: () => boolean;
   readonly taskId?: () => string | undefined;
   readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
@@ -319,6 +326,8 @@ export interface CandyTuiSurfaceOptions {
   readonly onInterrupt: () => void;
   /** Copy the last assistant reply; the surface owns the transcript text. */
   readonly onCopyLastAssistant?: () => void;
+  /** Reveal the warning before a user may explicitly confirm Full access. */
+  readonly onOpenFullAccess?: () => void;
   /** Paste a raster image from the system clipboard after an explicit Ctrl+V gesture. */
   readonly onPasteImage?: () => void;
   /** Cycle the selected model; 1 forward, -1 backward. */
@@ -337,6 +346,7 @@ export class CandyTuiSurface {
   readonly #onSubmit: (text: string) => void;
   readonly #onInterrupt: () => void;
   readonly #onCopyLastAssistant: (() => void) | undefined;
+  readonly #onOpenFullAccess: (() => void) | undefined;
   readonly #onPasteImage: (() => void) | undefined;
   readonly #onCycleModel: ((direction: 1 | -1) => void) | undefined;
   readonly #environment: NodeJS.ProcessEnv;
@@ -352,6 +362,7 @@ export class CandyTuiSurface {
     this.#onSubmit = options.onSubmit;
     this.#onInterrupt = options.onInterrupt;
     this.#onCopyLastAssistant = options.onCopyLastAssistant;
+    this.#onOpenFullAccess = options.onOpenFullAccess;
     this.#onPasteImage = options.onPasteImage;
     this.#onCycleModel = options.onCycleModel;
     this.#environment = options.environment ?? process.env;
@@ -363,6 +374,7 @@ export class CandyTuiSurface {
     this.#tui = new TuiAltScreen(this.#terminal, true, this.logDirectory, {
       openUrl: (url: string): void => {
         if (url === COPY_LAST_ASSISTANT_URL) this.#onCopyLastAssistant?.();
+        if (url === OPEN_FULL_ACCESS_URL) this.#onOpenFullAccess?.();
       },
     });
     this.#transcript = new CandyTranscript();
@@ -385,6 +397,7 @@ export class CandyTuiSurface {
       worktreeEnabled: options.worktreeEnabled,
       trustedShellEnabled: options.trustedShellEnabled,
       fullAccessEnabled: options.fullAccessEnabled,
+      fullAccessAvailable: options.fullAccessAvailable,
       taskId: options.taskId,
       taskTitle: options.taskTitle,
       taskPhase: options.taskPhase,

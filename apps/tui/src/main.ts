@@ -493,6 +493,7 @@ export class InteractiveTui {
       worktreeEnabled: () => this.#worktreeEnabled,
       trustedShellEnabled: () => this.localCommandsEnabled(),
       fullAccessEnabled: () => this.fullAccessEnabled(),
+      fullAccessAvailable: () => this.fullAccessAvailable(),
       taskId: () => this.#currentTaskId,
       taskTitle: () =>
         this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId)?.title,
@@ -514,6 +515,7 @@ export class InteractiveTui {
       },
       onInterrupt: (): void => this.requestExit(),
       onCopyLastAssistant: (): void => this.copyLastAssistant(),
+      onOpenFullAccess: (): void => this.setAccess("full"),
       onPasteImage: (): void => this.pasteImageFromClipboard(),
       onCycleModel: (direction: 1 | -1): void => this.cycleModel(direction),
     });

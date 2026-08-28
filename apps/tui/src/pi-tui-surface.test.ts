@@ -142,6 +142,37 @@ test("Candy TUI surface keeps the Full access danger badge visible at every supp
   }
 });
 
+test("Candy TUI surface exposes a clickable Full access warning entry when available", async () => {
+  for (const columns of [80, 120, 200]) {
+    const root = await mkdtemp(path.join(tmpdir(), `candy-tui-full-access-entry-${columns}-`));
+    const terminal = new FakeTerminal({ columns, rows: 32 });
+    let opened = 0;
+    const surface = new CandyTuiSurface({
+      appDataRoot: root,
+      terminal,
+      fullAccessAvailable: () => true,
+      onSubmit: (): void => undefined,
+      onInterrupt: (): void => undefined,
+      onOpenFullAccess: (): void => {
+        opened += 1;
+      },
+    });
+    try {
+      surface.start();
+      await waitForOutput(terminal, /开启 Full access/u);
+      terminal.emitInput("\x1b[<0;3;2M");
+      terminal.emitInput("\x1b[<0;3;2m");
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 30);
+      });
+      assert.equal(opened, 1);
+    } finally {
+      await surface.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Candy TUI surface uses an explicit Candy app-data log directory", async () => {
   const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-log-path-"));
   const terminal: FakeTerminal = new FakeTerminal();

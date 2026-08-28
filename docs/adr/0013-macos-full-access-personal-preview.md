@@ -26,7 +26,9 @@ default for future Auto Git tasks and survives a TUI restart, until `/access
 safe` (or the `review` or `current` access choices) turns it off. Each task
 persists its own `full_access` decision, independent of later preference
 changes. The status chrome continuously shows an amber `⚠ FULL ACCESS` badge
-and the `/access safe` escape route.
+and the `/access safe` escape route. Before activation, the macOS Safe chrome
+exposes a clickable `⚠ 开启 Full access` entry that reveals the warning but
+cannot itself enable the mode.
 
 For that task the Native Sandbox Runner receives `fullAccess: true` and
 `network: true`. Its macOS Seatbelt profile grants broad filesystem read/write,
