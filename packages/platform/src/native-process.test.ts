@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import test from "node:test";
@@ -418,6 +418,48 @@ test("native Windows adapter forwards the explicit network capability", async ()
     cwd: "C:\\candy",
     workspace: "C:\\candy",
     network: true,
+  });
+  assert.equal(result.code, 0);
+});
+
+test("native Windows adapter canonicalizes an existing task executable before protocol serialization", async () => {
+  if (process.platform !== "win32") return;
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: () => boolean;
+  };
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = (): boolean => false;
+  child.stdin.on("data", (chunk: Buffer) => {
+    const request = JSON.parse(chunk.toString()) as { requestId: string; executable: string };
+    assert.equal(request.executable, realpathSync.native(process.execPath));
+    child.stdout.end(
+      `${JSON.stringify({
+        v: 1,
+        kind: "completed",
+        requestId: request.requestId,
+        code: 0,
+        stdout: "",
+        stderr: "",
+        cancelled: false,
+      })}\n`,
+    );
+    child.stderr.end();
+    queueMicrotask(() => child.emit("close", 0, null));
+  });
+  const result = await new NativeProcessRunner(
+    "C:\\candy\\candy-sandbox-runner.exe",
+    "win32",
+    () => child,
+  ).run({
+    executable: process.execPath,
+    args: [],
+    cwd: process.cwd(),
+    workspace: process.cwd(),
   });
   assert.equal(result.code, 0);
 });

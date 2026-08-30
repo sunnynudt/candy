@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { cleanChildEnvironment } from "./index.js";
 import { containsCredentialMaterial } from "./credential-guard.js";
@@ -22,9 +22,9 @@ export interface NativeProcessRequest {
   /** Explicit one-command capability. Omitted/false is the offline default. */
   readonly network?: boolean;
   /**
-   * macOS Personal Preview only. Runs the task command outside the normal
+   * Explicit Full Access task. Runs the task command outside the normal
    * filesystem and network sandbox while retaining Candy's cleared child
-   * environment and owned process-tree lifecycle.
+   * environment, credential isolation, and owned process-tree lifecycle.
    */
   readonly fullAccess?: boolean;
   /**
@@ -120,6 +120,7 @@ export class NativeProcessRunner {
       throw new Error("Sandbox commands require absolute executable and cwd paths.");
     if (!targetPath.isAbsolute(request.workspace))
       throw new Error("Sandbox commands require an absolute workspace path.");
+    const nativeExecutable = canonicalizeWindowsExecutable(request.executable, this.platform);
     if (request.network === true && this.platform !== "darwin" && this.platform !== "win32")
       throw new Error("Sandbox command network capability is unavailable on this platform.");
     if (request.environment) assertSafeProcessEnvironment(request.environment);
@@ -135,7 +136,7 @@ export class NativeProcessRunner {
       v: 1,
       kind: "run",
       requestId,
-      executable: request.executable,
+      executable: nativeExecutable,
       args: request.args,
       cwd: request.cwd,
       workspace: request.workspace,
@@ -234,6 +235,15 @@ export class NativeProcessRunner {
       if (request.signal?.aborted) onAbort();
       if (!finished) child.stdin.end(`${payload}\n`);
     });
+  }
+}
+
+function canonicalizeWindowsExecutable(executable: string, platform: NodeJS.Platform): string {
+  if (platform !== "win32" || !existsSync(executable)) return executable;
+  try {
+    return realpathSync.native(executable);
+  } catch {
+    throw new Error("Sandbox executable could not be canonicalized.");
   }
 }
 

@@ -28,26 +28,24 @@ descendants after normal command completion. A zero or omitted parent PID is
 retained only for direct protocol fixtures and is not emitted by the
 TypeScript caller.
 
-On Windows, the same protocol first launches through the Windows 11
-`Experimental_CreateProcessInSandbox` AppContainer API with a default-denied
-network and explicit workspace/toolchain grants, then assigns the suspended
-process to a Job Object before resume. This is the only native path that may
-provide the Trusted Shell process-exec capability. When that experimental entry
-point returns `ERROR_CALL_NOT_IMPLEMENTED`, the runner uses the standard
-AppContainer `SECURITY_CAPABILITIES` launch path only for validator/workspace
-containment. Requests requiring process execution fail closed with
-`sandbox_capability_unavailable`. There is no undocumented policy-broker
-fallback and no unsandboxed `CreateProcessW` fallback.
+On Windows, the same protocol first launches through the documented standard
+AppContainer `SECURITY_CAPABILITIES` path with default-denied network, explicit
+workspace/toolchain grants, and Job Object ownership before resume. The
+Windows 11 experimental `Experimental_CreateProcessInSandbox` API is retained
+only as a fallback when the standard backend is unavailable before a child is
+created. There is no undocumented policy-broker fallback and no unsandboxed
+`CreateProcessW` fallback.
 Output is bounded, workspace/cwd reparse paths are rejected, and the owned
 process tree is cleaned up. `network: true` adds only the explicit
 `internetClient` capability for that one process.
 
-The experimental API remains host-gated. The accepted prior checkpoint proved
-the standard validator/workspace path, but the current Windows session denies
-`CreateAppContainerProfile` with `E_ACCESSDENIED`, so it cannot produce fresh
-Trusted Shell evidence. Trusted Shell Auto remains disabled. That is an
-intentional blocked state, not a claim of complete Windows Trusted Shell
-acceptance.
+The Windows 11 x64 strict smoke proves the contained Node boundary: validator
+execution, outside-workspace and reparse rejection, default network denial plus
+explicit network elevation, bounded output, and Job Object cleanup on
+cancellation and parent loss. Trusted Shell Auto remains disabled until Git
+for Windows Bash itself can run under the same ordinary-user AppContainer ACL
+model. It is distinct from Full Access, which needs a stable package identity
+and broad-filesystem entitlement evidence.
 
 The Windows smoke reports an unavailable host as `BLOCKED` for ordinary local
 development. Acceptance runners must pass `--require-native` (or set

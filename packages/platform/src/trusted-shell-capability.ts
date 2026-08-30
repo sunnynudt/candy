@@ -1,9 +1,12 @@
 import { discoverGitBashExecutable, GitBashDiscoveryError } from "./git-bash.js";
 
 /**
- * Windows Trusted Shell is intentionally source-gated. The native runner has
- * one process-exec containment path, but the capability remains disabled until
- * an accepted host proves that backend and its negative matrix.
+ * Windows Trusted Shell is intentionally source-gated. The standard
+ * AppContainer and Job Object backend has passed its Node negative matrix, but
+ * the current host's administrator-owned Git for Windows installation is not
+ * AppContainer-readable. Keep the TUI shell disabled until a compatible
+ * toolchain is packaged or preflighted; environment variables and other
+ * user-controlled runtime state cannot enable it.
  */
 const WINDOWS_TRUSTED_SHELL_AUTO_ATTESTATION = Object.freeze({
   approved: false,

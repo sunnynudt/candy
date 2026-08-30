@@ -200,6 +200,12 @@ try {
     "sandbox_profile_failed",
     "sandbox_capability_unavailable",
     "sandbox_access_denied",
+    "sandbox_executable_not_found",
+    "sandbox_path_not_found",
+    "sandbox_runtime_unavailable",
+    "sandbox_elevation_required",
+    "sandbox_privilege_not_held",
+    "sandbox_launch_failed",
   ]);
   if (normal.response?.kind === "error" && blockedCodes.has(normal.response.code)) {
     throw { type: "blocked", code: normal.response.code };

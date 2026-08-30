@@ -1143,6 +1143,7 @@ extern "system" {
 #[cfg(windows)]
 #[link(name = "advapi32")]
 extern "system" {
+    fn ConvertSidToStringSidW(sid: *mut c_void, string_sid: *mut *mut u16) -> i32;
     fn FreeSid(sid: *mut c_void) -> *mut c_void;
     fn GetNamedSecurityInfoW(
         object_name: *mut u16,
@@ -1183,10 +1184,17 @@ extern "system" {
         app_container_sid: *mut *mut c_void,
     ) -> i32;
     fn DeleteAppContainerProfile(app_container_name: *const u16) -> i32;
+    fn GetAppContainerFolderPath(app_container_sid: *const u16, folder_path: *mut *mut u16) -> i32;
     fn DeriveAppContainerSidFromAppContainerName(
         app_container_name: *const u16,
         app_container_sid: *mut *mut c_void,
     ) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "ole32")]
+extern "system" {
+    fn CoTaskMemFree(memory: *mut c_void);
 }
 
 #[cfg(windows)]
@@ -1295,6 +1303,32 @@ fn create_process_in_windows_sandbox(
     information: *mut ProcessInformation,
     paths: &CanonicalLaunchPaths,
 ) -> Result<Option<WindowsAppContainerProfile>, &'static str> {
+    // SECURITY_CAPABILITIES is the documented desktop AppContainer launch
+    // boundary. Prefer it over the optional Windows 11 experimental API: the
+    // latter can report process creation success while a normal Node child
+    // subsequently fails DLL initialization under a non-empty environment.
+    // Only use the experimental implementation when the documented backend is
+    // unavailable before a child exists.
+    match create_process_in_standard_appcontainer(
+        request,
+        executable,
+        cwd,
+        startup,
+        information,
+        paths,
+    ) {
+        Ok(profile) => return Ok(profile),
+        Err(
+            "sandbox_profile_failed"
+            | "sandbox_attribute_failed"
+            | "sandbox_capability_unavailable"
+            | "sandbox_unavailable",
+        ) => {
+            eprintln!("Candy standard AppContainer launch is unavailable; trying experimental AppContainer");
+        }
+        Err(code) => return Err(code),
+    }
+
     let module = unsafe {
         LoadLibraryExW(
             wide_null("processmodel.dll").as_ptr(),
@@ -1345,23 +1379,13 @@ fn create_process_in_windows_sandbox(
     if created {
         Ok(None)
     } else {
-        match error {
-            120 => create_process_in_standard_appcontainer(
-                request,
-                executable,
-                cwd,
-                startup,
-                information,
-                paths,
-            ),
-            _ => Err(match error {
-                5 => "sandbox_access_denied",
-                13 | 87 | 13_005 => "sandbox_invalid_spec",
-                1168 => "sandbox_capability_unavailable",
-                0 => "sandbox_unavailable",
-                _ => "sandbox_launch_failed",
-            }),
-        }
+        Err(match error {
+            5 => "sandbox_access_denied",
+            13 | 87 | 13_005 => "sandbox_invalid_spec",
+            1168 => "sandbox_capability_unavailable",
+            0 => "sandbox_unavailable",
+            _ => "sandbox_launch_failed",
+        })
     }
 }
 
@@ -1374,22 +1398,27 @@ fn create_process_in_standard_appcontainer(
     information: *mut ProcessInformation,
     paths: &CanonicalLaunchPaths,
 ) -> Result<Option<WindowsAppContainerProfile>, &'static str> {
-    // The standard AppContainer path is retained for validator/workspace
-    // containment only. Trusted Shell requires the experimental native
-    // process-exec boundary and must fail closed when that path is absent.
-    if request.allow_process_exec {
-        return Err("sandbox_capability_unavailable");
-    }
+    // The standard AppContainer path is the supported Windows command
+    // containment boundary when the experimental API is unavailable. It keeps
+    // the same canonical workspace and read-only toolchain grants, default
+    // network denial, and Job Object ownership as the experimental path.
     let mut fallback_command_line = wide_null(&command_line(&request.executable, &request.args));
     let mut fallback_environment_values = std::env::vars().collect::<BTreeMap<_, _>>();
     fallback_environment_values.retain(|key, value| {
         is_safe_environment_key(key) && !contains_forbidden_secret_material(value)
     });
-    fallback_environment_values.extend(request.environment.clone());
-    let mut fallback_environment = wide_environment(&fallback_environment_values)?;
     let identity = wide_null(&sandbox_identity(&request.request_id));
-    let display_name = wide_null("Candy Validator Sandbox");
-    let description = wide_null("Candy validator workspace sandbox");
+    let (display_name, description) = if request.allow_process_exec {
+        (
+            wide_null("Candy Command Sandbox"),
+            wide_null("Candy local command workspace sandbox"),
+        )
+    } else {
+        (
+            wide_null("Candy Validator Sandbox"),
+            wide_null("Candy validator workspace sandbox"),
+        )
+    };
     let mut package_sid = null_mut();
     let (mut capabilities, capability_sids) = appcontainer_capabilities(request.network)?;
     let created_profile = unsafe {
@@ -1418,9 +1447,29 @@ fn create_process_in_standard_appcontainer(
         return Err("sandbox_profile_failed");
     }
 
+    let profile_environment = match appcontainer_profile_environment(package_sid) {
+        Ok(environment) => environment,
+        Err(code) => {
+            unsafe { FreeSid(package_sid) };
+            free_capability_sids(capability_sids);
+            unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+            return Err(code);
+        }
+    };
+
+    fallback_environment_values.extend(request.environment.clone());
+    // Node 22 fails during DLL initialization when an AppContainer child is
+    // handed the parent user's LOCALAPPDATA. Keep that value available to the
+    // trusted native helper while it creates the AppContainer profile, but do
+    // not place the host path in the sandboxed task process environment.
+    fallback_environment_values.retain(|key, _| !key.eq_ignore_ascii_case("LOCALAPPDATA"));
+    fallback_environment_values.extend(profile_environment);
+    let mut fallback_environment = wide_environment(&fallback_environment_values)?;
+
     let access = match grant_standard_appcontainer_access(package_sid, paths) {
         Ok(access) => access,
         Err(code) => {
+            eprintln!("Candy standard AppContainer ACL setup failed ({code})");
             unsafe { FreeSid(package_sid) };
             free_capability_sids(capability_sids);
             unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
@@ -1547,9 +1596,21 @@ fn create_process_in_standard_appcontainer(
     if !created {
         revoke_standard_appcontainer_access(Some(&access));
         unsafe { DeleteAppContainerProfile(identity.as_ptr()) };
+        // This is deliberately limited to the Win32 status number. It helps
+        // operators distinguish a host policy/runtime issue from an invalid
+        // AppContainer request without copying any request path, command,
+        // environment, or credential material into diagnostics.
+        if !matches!(error, 2 | 3 | 5 | 87 | 126 | 740 | 1314) {
+            eprintln!("Candy AppContainer CreateProcessW failed with Win32 error {error}");
+        }
         return Err(match error {
+            2 => "sandbox_executable_not_found",
+            3 => "sandbox_path_not_found",
             5 => "sandbox_access_denied",
             87 => "sandbox_invalid_spec",
+            126 => "sandbox_runtime_unavailable",
+            740 => "sandbox_elevation_required",
+            1314 => "sandbox_privilege_not_held",
             _ => "sandbox_launch_failed",
         });
     }
@@ -1557,6 +1618,51 @@ fn create_process_in_standard_appcontainer(
         identity,
         access: Some(access),
     }))
+}
+
+#[cfg(windows)]
+fn appcontainer_profile_environment(
+    package_sid: *mut c_void,
+) -> Result<BTreeMap<String, String>, &'static str> {
+    let mut string_sid = null_mut::<u16>();
+    if unsafe { ConvertSidToStringSidW(package_sid, &mut string_sid) } == 0 || string_sid.is_null()
+    {
+        return Err("sandbox_profile_failed");
+    }
+    let mut profile_folder = null_mut::<u16>();
+    let result = unsafe { GetAppContainerFolderPath(string_sid, &mut profile_folder) };
+    unsafe { LocalFree(string_sid.cast()) };
+    if result != 0 || profile_folder.is_null() {
+        return Err("sandbox_profile_failed");
+    }
+    let folder = unsafe { wide_pointer_to_string(profile_folder) };
+    unsafe { CoTaskMemFree(profile_folder.cast()) };
+    let folder = folder.ok_or("sandbox_profile_failed")?;
+    if folder.is_empty() || folder.contains('\0') {
+        return Err("sandbox_profile_failed");
+    }
+    let temporary_directory = format!("{folder}\\Temp");
+    fs::create_dir_all(&temporary_directory).map_err(|_| "sandbox_profile_failed")?;
+    Ok(BTreeMap::from([
+        ("LOCALAPPDATA".to_owned(), folder),
+        ("TEMP".to_owned(), temporary_directory.clone()),
+        ("TMP".to_owned(), temporary_directory),
+    ]))
+}
+
+#[cfg(windows)]
+unsafe fn wide_pointer_to_string(pointer: *const u16) -> Option<String> {
+    if pointer.is_null() {
+        return None;
+    }
+    let mut length = 0_usize;
+    while *pointer.add(length) != 0 {
+        length = length.checked_add(1)?;
+        if length > 32_768 {
+            return None;
+        }
+    }
+    String::from_utf16(std::slice::from_raw_parts(pointer, length)).ok()
 }
 
 #[cfg(windows)]
@@ -1664,8 +1770,9 @@ fn grant_standard_appcontainer_access(
     let mut applied = Vec::<std::path::PathBuf>::new();
     let mut resource_roots = vec![paths.workspace.clone()];
 
-    let mut _workspace_targets = Vec::new();
-    collect_acl_targets(&paths.workspace, &mut _workspace_targets)?;
+    // Workspace reparse points are rejected both before creation and before
+    // resume. Do not make an ACL traversal itself the authority: it races the
+    // later launch validation and is needlessly expensive for large trees.
     if let Err(code) = update_path_acl(&paths.workspace, &sid, GRANT_ACCESS, workspace_access()) {
         revoke_acl_targets(&applied, &sid);
         return Err(code);
@@ -1673,11 +1780,12 @@ fn grant_standard_appcontainer_access(
     applied.push(paths.workspace.clone());
 
     for root in &paths.read_only_roots {
-        let mut targets = Vec::new();
-        if let Err(code) = collect_acl_targets(root, &mut targets) {
-            revoke_acl_targets(&applied, &sid);
-            return Err(code);
-        }
+        // These roots were canonicalized by Candy before this launch. They
+        // may legitimately contain package-manager symlinks (for example
+        // Node's `.bin` shims). Granting an inherited ACE to the root does not
+        // grant the AppContainer access to a symlink's external target, whose
+        // own DACL still applies. Recursively rejecting such a trusted
+        // toolchain root would prevent Node/npm from starting at all.
         let access_mode = if resource_roots
             .iter()
             .any(|path| same_windows_path(path, root) || windows_path_is_within(root, path))
@@ -1705,26 +1813,6 @@ fn grant_standard_appcontainer_access(
         paths: applied,
         sid,
     })
-}
-
-#[cfg(windows)]
-fn collect_acl_targets(
-    path: &std::path::Path,
-    targets: &mut Vec<std::path::PathBuf>,
-) -> Result<(), &'static str> {
-    if has_reparse_component(path) {
-        return Err("reparse_forbidden");
-    }
-    targets.push(path.to_path_buf());
-    let metadata = fs::symlink_metadata(path).map_err(|_| "invalid_path")?;
-    if !metadata.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(path).map_err(|_| "sandbox_acl_failed")? {
-        let entry = entry.map_err(|_| "sandbox_acl_failed")?;
-        collect_acl_targets(&entry.path(), targets)?;
-    }
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -2088,6 +2176,7 @@ fn create_windows_process(
         Some(handle)
     };
     if let Some(code) = validate_launch_paths(request, paths) {
+        eprintln!("Candy AppContainer post-launch validation failed ({code})");
         unsafe {
             TerminateJobObject(job, 1);
             CloseHandle(information.thread);
@@ -2405,21 +2494,37 @@ fn validate_launch_paths(
     let Ok(executable) = fs::canonicalize(Path::new(&request.executable)) else {
         return Some("invalid_path");
     };
-    if has_reparse_component(&workspace)
-        || has_reparse_component(&cwd)
-        || contains_reparse_tree(&workspace)
-        || !windows_path_is_within(&cwd, &workspace)
-    {
+    if has_reparse_component(&workspace) {
+        eprintln!("Candy AppContainer launch rejected a reparse component in the workspace");
+        return Some("reparse_forbidden");
+    }
+    if has_reparse_component(&cwd) {
+        eprintln!(
+            "Candy AppContainer launch rejected a reparse component in the working directory"
+        );
+        return Some("reparse_forbidden");
+    }
+    if contains_reparse_tree(&workspace) {
+        eprintln!("Candy AppContainer launch rejected a reparse point inside the workspace");
+        return Some("reparse_forbidden");
+    }
+    if !windows_path_is_within(&cwd, &workspace) {
+        eprintln!("Candy AppContainer launch working directory escaped its workspace");
         return Some("reparse_forbidden");
     }
     if !same_windows_path(&workspace, &expected.workspace)
         || !same_windows_path(&cwd, &expected.cwd)
         || !same_windows_path(&executable, &expected.executable)
-        || executable_is_reparse(&executable)
     {
+        eprintln!("Candy AppContainer launch paths changed before the suspended child resumed");
+        return Some("reparse_forbidden");
+    }
+    if executable_is_reparse(&executable) {
+        eprintln!("Candy AppContainer launch rejected a reparse-point executable");
         return Some("reparse_forbidden");
     }
     let Ok(read_only_roots) = canonical_read_only_roots(request, &executable) else {
+        eprintln!("Candy AppContainer launch read-only grant gained a reparse component");
         return Some("invalid_path");
     };
     if read_only_roots.len() != expected.read_only_roots.len()
@@ -2428,6 +2533,7 @@ fn validate_launch_paths(
             .zip(&expected.read_only_roots)
             .any(|(current, expected)| !same_windows_path(current, expected))
     {
+        eprintln!("Candy AppContainer launch read-only grants changed before child resume");
         return Some("reparse_forbidden");
     }
     None
