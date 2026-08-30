@@ -942,8 +942,8 @@ export class InteractiveTui {
         );
       this.write(
         dependencyDirectory === undefined
-          ? `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 无网络；未检测到可复用的 node_modules，不会自动下载\n`
-          : `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 复用本地依赖 · 无网络${worktreePath === undefined ? "；网络命令不开放" : "；网络操作仍需逐条确认"}\n`,
+          ? `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 无网络；未检测到可复用的 node_modules，不会自动下载；网络操作仍需逐条确认\n`
+          : `本地检查已就绪：${worktreePath === undefined ? "当前工作区" : "安全工作区"} · 复用本地依赖 · 无网络；网络操作仍需逐条确认\n`,
       );
     }
     if (fullAccess) {
@@ -2223,7 +2223,7 @@ export class InteractiveTui {
                     ? {}
                     : { bashPath: this.#shellRunner.bashPath }),
                   shellActiveSecrets: activeSecrets,
-                  ...(taskSnapshot.fullAccess || taskSnapshot.worktreePath === undefined
+                  ...(taskSnapshot.fullAccess
                     ? {}
                     : {
                         shellNetworkApproval: (
@@ -3018,7 +3018,7 @@ export class InteractiveTui {
           "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
           "  /access full     macOS 预览；首次确认后成为默认模式，直到 /access safe\n" +
           "  /access current 与 Full access 可叠加（宽沙箱 + 直接工作区，Codex 风格）\n" +
-          "  安全工作区的网络逐条确认；当前工作区默认不开放网络命令，Full access 生效时除外；Full access 不授予凭据、提交、推送、发布或部署\n",
+          "  两种可写工作区的网络操作均逐条确认；Full access 不授予凭据、提交、推送、发布或部署\n",
       );
       return;
     }
@@ -3079,7 +3079,7 @@ export class InteractiveTui {
     this.write(
       value === "safe"
         ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行；网络仍逐条确认\n"
-        : `访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络命令不开放${fullAccessNote}\n`,
+        : `访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络操作仍需逐条确认${fullAccessNote}\n`,
     );
   }
 
@@ -3798,7 +3798,7 @@ function formatToolLabel(tool: string): string {
     candy_delete: "删除文件",
     candy_bash: "运行命令",
     candy_web_fetch: "读取网页",
-    candy_bash_network: "读取网络资源",
+    candy_bash_network: "运行网络命令",
   };
   return labels[tool] ?? tool.replace(/^candy_/u, "").replaceAll("_", " ");
 }

@@ -668,6 +668,10 @@ function containsActiveSecretBytes(value: Uint8Array, activeSecrets: readonly st
   );
 }
 
+function containsNetworkCredentialArgument(command: string): boolean {
+  return /(?:^|\s)(?:-u(?:\s+|=)?|--(?:user|proxy-user)(?:\s+|=))\S+/u.test(command);
+}
+
 function containsShellPublicationAction(command: string): boolean {
   // A lexical publication deny-list cannot safely reason about shell
   // variables, command substitution, or nested interpreters. Reject those
@@ -1039,335 +1043,6 @@ interface CandyWebFetchToolInput {
   readonly timeout?: number;
 }
 
-interface ParsedDirectNetworkCommand {
-  readonly executable: string;
-  readonly args: readonly string[];
-  /** Explicit executable and library paths the direct tool may spawn (git helpers). */
-  readonly execPaths: readonly string[];
-}
-
-/**
- * Tokenize a strictly bounded network command. Quoted whitespace and quoted
- * shell metacharacters are data; unquoted metacharacters, escapes, variables,
- * and substitution forms are rejected so the command cannot hide indirection.
- */
-function tokenizeNetworkCommand(value: string): readonly string[] | undefined {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | undefined;
-  let hasToken = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] ?? "";
-    if (quote !== undefined) {
-      if (character === quote) {
-        quote = undefined;
-      } else if (character === "\\") {
-        return undefined;
-      } else {
-        current += character;
-      }
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      quote = character;
-      hasToken = true;
-      continue;
-    }
-    if (character === "\\") return undefined;
-    if (/\s/u.test(character)) {
-      if (hasToken) {
-        tokens.push(current);
-        current = "";
-        hasToken = false;
-      }
-      continue;
-    }
-    if (/[`$;|&()<>*?[\]{}!]/u.test(character)) return undefined;
-    current += character;
-    hasToken = true;
-  }
-  if (quote !== undefined) return undefined;
-  if (hasToken) tokens.push(current);
-  return tokens;
-}
-
-function isReadOnlyNetworkUrl(value: string): boolean {
-  if (!/^https?:\/\//iu.test(value)) return false;
-  const remainder = value.slice(value.indexOf("://") + 3);
-  const authority = remainder.split(/[/?#]/u, 1)[0] ?? "";
-  return !authority.includes("@");
-}
-
-const NETWORK_GIT_LS_REMOTE_FLAGS = new Set([
-  "--heads",
-  "--tags",
-  "--refs",
-  "--symref",
-  "--exit-code",
-  "--quiet",
-]);
-
-function parseNetworkGitCommand(
-  tokens: readonly string[],
-  gitPath: string,
-  execPaths: readonly string[],
-): ParsedDirectNetworkCommand | undefined {
-  if (tokens[0] !== "git" || tokens[1] !== "ls-remote") return undefined;
-  const args = ["ls-remote"];
-  let urlSeen = false;
-  for (const token of tokens.slice(2)) {
-    if (token === "--") {
-      args.push(token);
-      continue;
-    }
-    if (token.startsWith("--sort=")) {
-      args.push(token);
-      continue;
-    }
-    if (token.startsWith("-")) {
-      if (!NETWORK_GIT_LS_REMOTE_FLAGS.has(token)) return undefined;
-      args.push(token);
-      continue;
-    }
-    if (!urlSeen) {
-      if (!isReadOnlyNetworkUrl(token) && !/^[A-Za-z0-9._/-]+$/u.test(token)) return undefined;
-      urlSeen = true;
-    }
-    args.push(token);
-  }
-  if (!urlSeen) return undefined;
-  return { executable: gitPath, args, execPaths };
-}
-
-const NETWORK_CURL_NO_ARG_FLAGS = new Set([
-  "-L",
-  "--location",
-  "-s",
-  "--silent",
-  "-S",
-  "--show-error",
-  "-f",
-  "--fail",
-  "--compressed",
-  "-g",
-  "--globoff",
-  "--http1.0",
-  "--http1.1",
-  "--http2",
-  "--tlsv1.2",
-  "--tlsv1.3",
-  "--retry-all-errors",
-  "-O",
-  "--remote-name",
-]);
-
-const NETWORK_CURL_VALUE_FLAGS = new Set([
-  "-o",
-  "--output",
-  "--max-time",
-  "--connect-timeout",
-  "--retry",
-  "-A",
-  "--user-agent",
-]);
-
-const NETWORK_CURL_SAFE_SHORT_FLAGS = new Set(["L", "s", "S", "f", "g", "O", "4", "6"]);
-
-function parseNetworkCurlCommand(
-  tokens: readonly string[],
-  curlPath: string,
-): ParsedDirectNetworkCommand | undefined {
-  if (tokens[0] !== "curl") return undefined;
-  const args = ["--disable"];
-  let urlSeen = false;
-  for (let index = 1; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    if (token === "--") {
-      for (const url of tokens.slice(index + 1)) {
-        if (!isReadOnlyNetworkUrl(url)) return undefined;
-        urlSeen = true;
-        args.push(url);
-      }
-      break;
-    }
-    if (NETWORK_CURL_NO_ARG_FLAGS.has(token)) {
-      args.push(token);
-      continue;
-    }
-    if (NETWORK_CURL_VALUE_FLAGS.has(token)) {
-      const value = tokens[index + 1];
-      if (value === undefined) return undefined;
-      if (
-        (token === "--max-time" || token === "--connect-timeout" || token === "--retry") &&
-        !/^\d+$/u.test(value)
-      )
-        return undefined;
-      args.push(token, value);
-      index += 1;
-      continue;
-    }
-    if (
-      /^-[A-Za-z0-9]+$/u.test(token) &&
-      [...token.slice(1)].every((character) => NETWORK_CURL_SAFE_SHORT_FLAGS.has(character))
-    ) {
-      args.push(token);
-      continue;
-    }
-    if (token.startsWith("-")) return undefined;
-    if (!isReadOnlyNetworkUrl(token)) return undefined;
-    urlSeen = true;
-    args.push(token);
-  }
-  if (!urlSeen) return undefined;
-  return { executable: curlPath, args, execPaths: [] };
-}
-
-const NETWORK_WGET_NO_ARG_FLAGS = new Set([
-  "-q",
-  "--quiet",
-  "-S",
-  "--server-response",
-  "--spider",
-  "-4",
-  "-6",
-]);
-
-function parseNetworkWgetCommand(
-  tokens: readonly string[],
-  wgetPath: string,
-): ParsedDirectNetworkCommand | undefined {
-  if (tokens[0] !== "wget") return undefined;
-  const args: string[] = [];
-  let urlSeen = false;
-  for (let index = 1; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    if (NETWORK_WGET_NO_ARG_FLAGS.has(token)) {
-      args.push(token);
-      continue;
-    }
-    if (
-      token.startsWith("--output-document=") ||
-      token.startsWith("--timeout=") ||
-      token.startsWith("--tries=")
-    ) {
-      args.push(token);
-      continue;
-    }
-    if (token === "-O") {
-      const value = tokens[index + 1];
-      if (value === undefined) return undefined;
-      args.push(token, value);
-      index += 1;
-      continue;
-    }
-    if (token.startsWith("-")) return undefined;
-    if (!isReadOnlyNetworkUrl(token)) return undefined;
-    urlSeen = true;
-    args.push(token);
-  }
-  if (!urlSeen) return undefined;
-  return { executable: wgetPath, args, execPaths: [] };
-}
-
-function resolveDirectNetworkToolPath(
-  tool: "git" | "curl" | "wget",
-  bashPath: string,
-  pathImpl: CandyBashPathSeam,
-  exists: (candidate: string) => boolean,
-): string | undefined {
-  if (pathImpl.sep === "\\") {
-    const gitBin = pathImpl.dirname(bashPath);
-    const gitRoot = pathImpl.dirname(gitBin);
-    const name = tool === "git" ? "git.exe" : tool === "curl" ? "curl.exe" : "wget.exe";
-    if (tool === "git") {
-      return [
-        pathImpl.join(gitBin, name),
-        pathImpl.join(gitRoot, "cmd", name),
-        pathImpl.join(gitRoot, "mingw64", "bin", name),
-      ].find((candidate) => exists(candidate));
-    }
-    return [
-      pathImpl.join(gitRoot, "mingw64", "bin", name),
-      pathImpl.join(gitRoot, "usr", "bin", name),
-      pathImpl.join(gitRoot, "bin", name),
-    ].find((candidate) => exists(candidate));
-  }
-  const candidates =
-    tool === "git"
-      ? [
-          // The real Command Line Tools binary; /usr/bin/git is an xcrun shim
-          // that cannot run inside the Seatbelt sandbox (TMPDIR cache writes
-          // and xcrun exec are denied). Prefer the real binary when present.
-          "/Library/Developer/CommandLineTools/usr/bin/git",
-          "/usr/bin/git",
-          "/opt/homebrew/bin/git",
-          "/usr/local/bin/git",
-        ]
-      : tool === "curl"
-        ? ["/usr/bin/curl", "/opt/homebrew/bin/curl", "/usr/local/bin/curl"]
-        : ["/usr/bin/wget", "/opt/homebrew/bin/wget", "/usr/local/bin/wget"];
-  return candidates.find((candidate) => exists(candidate));
-}
-
-/**
- * Explicit paths a direct `git ls-remote` may spawn and map while running
- * without the wide offline shell policy: the git remote helper binary and the
- * libraries it loads (libcurl). Windows Git installations keep the helper in
- * libexec/git-core and runtime libraries next to it.
- */
-function resolveGitHelperExecPaths(
-  gitPath: string,
-  pathImpl: CandyBashPathSeam,
-  exists: (candidate: string) => boolean,
-): readonly string[] {
-  const gitBin = pathImpl.dirname(gitPath);
-  const gitRoot = pathImpl.dirname(gitBin);
-  if (pathImpl.sep === "\\") {
-    return [
-      pathImpl.join(gitRoot, "libexec", "git-core"),
-      pathImpl.join(gitRoot, "mingw64", "libexec", "git-core"),
-      pathImpl.join(gitRoot, "mingw64", "lib"),
-      pathImpl.join(gitRoot, "usr", "lib"),
-    ].filter((candidate) => exists(candidate));
-  }
-  return [
-    pathImpl.join(gitBin, "..", "libexec", "git-core"),
-    pathImpl.join(gitBin, "..", "lib"),
-    "/usr/libexec/git-core",
-    "/usr/lib",
-  ].filter((candidate) => exists(candidate));
-}
-
-function parseDirectNetworkCommand(
-  command: string,
-  bashPath: string,
-  pathImpl: CandyBashPathSeam,
-  exists: (candidate: string) => boolean,
-): ParsedDirectNetworkCommand | undefined {
-  const tokens = tokenizeNetworkCommand(command);
-  if (tokens === undefined || tokens.length === 0) return undefined;
-  const tool = tokens[0];
-  if (tool === "git") {
-    const gitPath = resolveDirectNetworkToolPath("git", bashPath, pathImpl, exists);
-    return gitPath === undefined
-      ? undefined
-      : parseNetworkGitCommand(
-          tokens,
-          gitPath,
-          resolveGitHelperExecPaths(gitPath, pathImpl, exists),
-        );
-  }
-  if (tool === "curl") {
-    const curlPath = resolveDirectNetworkToolPath("curl", bashPath, pathImpl, exists);
-    return curlPath === undefined ? undefined : parseNetworkCurlCommand(tokens, curlPath);
-  }
-  if (tool === "wget") {
-    const wgetPath = resolveDirectNetworkToolPath("wget", bashPath, pathImpl, exists);
-    return wgetPath === undefined ? undefined : parseNetworkWgetCommand(tokens, wgetPath);
-  }
-  return undefined;
-}
-
 /**
  * Candy-owned network elevation tool. The normal Pi Bash definition remains
  * the offline path; this tool makes network an explicit, single-use capability.
@@ -1384,11 +1059,11 @@ export function createCandyNetworkToolDefinition(
     name: "candy_bash_network",
     label: "Network command (approval)",
     description:
-      "Request one-time read-only outbound network access for a direct tool command (git ls-remote, curl GET/HEAD, or wget GET) in the current Task Worktree. The command runs without a shell, so it cannot create publication-capable descendants. The user must approve each request.",
-    promptSnippet: "Request one approved read-only network command",
+      "Request one-time outbound network access for a local development command in the current task workspace. The user must approve each command; publication and credential-bearing commands remain forbidden.",
+    promptSnippet: "Request one approved network development command",
     promptGuidelines: [
       "Use candy_bash_network only when the command genuinely needs outbound network access.",
-      "Only read-only direct tools are accepted: git ls-remote, curl GET/HEAD, or wget GET. Shell commands, interpreters, package managers, and uploads are rejected.",
+      "Use it for bounded development work such as npm install, package restore, or Git remote inspection. Do not use it for commits, pushes, publication, releases, deployment, uploads, or credential configuration.",
       "Provide a concise reason. Network access is denied by default and is never retained for later commands.",
     ],
     parameters: networkShellSchema,
@@ -1422,6 +1097,7 @@ export function createCandyNetworkToolDefinition(
         throw new Error("Invalid timeout.");
       if (
         containsCredentialMaterial(input.command) ||
+        containsNetworkCredentialArgument(input.command) ||
         containsCredentialMaterial(input.reason) ||
         (options.activeSecrets ?? []).some(
           (secret) =>
@@ -1451,26 +1127,23 @@ export function createCandyNetworkToolDefinition(
       if (executionSignal.aborted) abort();
       else executionSignal.addEventListener("abort", abort, { once: true });
       try {
-        const directCommand = parseDirectNetworkCommand(
-          input.command,
+        const processExecPath = resolveCandyShellProcessExecPath();
+        const processExecPaths = resolveCandyShellProcessExecPaths(
           bashPath,
+          processExecPath,
           pathImpl,
           options.exists ?? existsSync,
+          options.trustedDependencyDirectory,
         );
-        if (directCommand === undefined) {
-          throw new Error(
-            "Network commands are restricted to read-only direct tools: git ls-remote, curl GET/HEAD, or wget GET.",
-          );
-        }
         if (controller.signal.aborted) throw new Error("Operation aborted");
         const result = await options.runner.run({
-          executable: directCommand.executable,
-          args: directCommand.args,
+          executable: bashPath,
+          args: ["--noprofile", "--norc", "-c", wrapCandyShellCommand(input.command)],
           cwd: root,
           workspace: root,
           network: true,
-          allowProcessExec: false,
-          processExecPaths: directCommand.execPaths,
+          allowProcessExec: true,
+          processExecPaths,
           readOnlyPaths: resolveCandyShellReadOnlyPaths(
             root,
             options.trustedGitCommonDirectory,

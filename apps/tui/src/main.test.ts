@@ -1627,7 +1627,7 @@ test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git T
   }
 });
 
-test("interactive TUI runs local checks in the current-workspace access mode", async () => {
+test("interactive TUI runs local checks and requests one-command network approval in the current workspace", async () => {
   if (!isMacosTrustedShellAutoAvailable()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-current-workspace-local-"));
   const repository = await createTuiGitFixture(root);
@@ -1670,7 +1670,7 @@ test("interactive TUI runs local checks in the current-workspace access mode", a
     assert.equal(task?.worktreePath, undefined);
     assert.equal(task?.trustedShell, true);
     assert.equal(observedTrustedShell, true);
-    assert.equal(observedNetworkApproval, false);
+    assert.equal(observedNetworkApproval, true);
     store.close();
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
