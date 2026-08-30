@@ -30,7 +30,7 @@ import type {
 import {
   createDefaultInteractiveTui,
   InteractiveTui,
-  isMacosFullAccessAvailable,
+  isFullAccessAvailableOnHost,
   isMacosTrustedShellAutoAvailable,
   type InteractiveTuiOptions,
   type TuiAgentEngine,
@@ -1322,8 +1322,8 @@ test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () 
   assert.equal(isMacosTrustedShellAutoAvailable(), expected);
 });
 
-test("interactive TUI persists macOS Full access as the default until switched back to Safe", async () => {
-  if (!isMacosFullAccessAvailable()) return;
+test("interactive TUI persists Full Access as the default until switched back to Safe", async () => {
+  if (!isFullAccessAvailableOnHost()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
@@ -1363,13 +1363,10 @@ test("interactive TUI persists macOS Full access as the default until switched b
     await waitForOutput(terminal, /Full access warning/u);
     terminal.emitInput("/access full confirm");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Full access is now the macOS default/u);
+    await waitForOutput(terminal, /Full access is now the default/u);
     terminal.emitInput("run with broad local access");
     terminal.emitInput("\r");
-    const output = await waitForOutput(
-      terminal,
-      /Full access enabled by default for this macOS task/u,
-    );
+    const output = await waitForOutput(terminal, /Full access enabled by default for this task/u);
     const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
     await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
@@ -1394,7 +1391,7 @@ test("interactive TUI persists macOS Full access as the default until switched b
     afterRestart.emitInput("\r");
     const restartOutput = await waitForOutput(
       afterRestart,
-      /Full access enabled by default for this macOS task/u,
+      /Full access enabled by default for this task/u,
     );
     const restartTaskId = restartOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(restartTaskId);
@@ -1450,8 +1447,8 @@ test("interactive TUI persists macOS Full access as the default until switched b
   }
 });
 
-test("interactive TUI enables macOS Full access through the two-click status entry", async () => {
-  if (!isMacosFullAccessAvailable()) return;
+test("interactive TUI enables Full Access through the two-click status entry", async () => {
+  if (!isFullAccessAvailableOnHost()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-entry-"));
   const appDataRoot = path.join(root, "app-data");
   const terminal = new FakeTerminal({ columns: 120, rows: 32 });
@@ -1477,7 +1474,7 @@ test("interactive TUI enables macOS Full access through the two-click status ent
     await waitForOutput(terminal, /确认开启 Full access/u);
     terminal.emitInput("\x1b[<0;3;2M");
     terminal.emitInput("\x1b[<0;3;2m");
-    await waitForOutput(terminal, /Full access is now the macOS default/u);
+    await waitForOutput(terminal, /Full access is now the default/u);
     await waitForOutput(terminal, /⚠ FULL ACCESS/u);
     terminal.emitInput(":quit");
     terminal.emitInput("\r");

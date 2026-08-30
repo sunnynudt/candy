@@ -175,7 +175,7 @@ export interface InteractiveTuiOptions {
   readonly worktreeEnabled?: boolean;
   /** Set only by a composition root after the platform-specific G2 gate passes. */
   readonly trustedShellAutoAvailable?: boolean;
-  /** Set only by a composition root for the macOS Full access Personal Preview. */
+  /** Set only by a composition root after the platform Full Access backend is verified. */
   readonly fullAccessAvailable?: boolean;
   /** Test seam; the production default copies through the platform adapter. */
   readonly copyToClipboardImpl?: (text: string) => Promise<void>;
@@ -205,6 +205,17 @@ const MACOS_FULL_ACCESS_PREVIEW_ATTESTATION = Object.freeze({
   nativeBackend: "supervised-full-access-v1",
 } as const);
 
+const WINDOWS_FULL_ACCESS_PREVIEW_ATTESTATION = Object.freeze({
+  // The Windows Sandbox Engine has a stable AppContainer identity with
+  // capability-backed network and Bound File System grants. Keep the product
+  // gate closed until its native verification matrix passes; a TUI preference
+  // must never turn this into an unrestricted fallback.
+  approved: false,
+  platform: "win32",
+  architecture: "x64",
+  nativeBackend: "appcontainer-full-access-v1",
+} as const);
+
 /**
  * The accepted macOS Trusted Shell Auto Personal Preview composition-root
  * gate. The immutable source attestation is combined with the host platform
@@ -225,6 +236,19 @@ export function isMacosFullAccessAvailable(): boolean {
     process.platform === MACOS_FULL_ACCESS_PREVIEW_ATTESTATION.platform &&
     process.arch === MACOS_FULL_ACCESS_PREVIEW_ATTESTATION.architecture
   );
+}
+
+/** Windows Full Access uses the same native-backed two-click contract as macOS. */
+export function isWindowsFullAccessAvailable(): boolean {
+  return (
+    WINDOWS_FULL_ACCESS_PREVIEW_ATTESTATION.approved &&
+    process.platform === WINDOWS_FULL_ACCESS_PREVIEW_ATTESTATION.platform &&
+    process.arch === WINDOWS_FULL_ACCESS_PREVIEW_ATTESTATION.architecture
+  );
+}
+
+export function isFullAccessAvailableOnHost(): boolean {
+  return isMacosFullAccessAvailable() || isWindowsFullAccessAvailable();
 }
 
 function isTrustedShellAutoAvailableOnHost(): boolean {
@@ -250,7 +274,7 @@ export function createDefaultInteractiveTui(
     ...options,
     worktreeEnabled: options.worktreeEnabled ?? true,
     trustedShellAutoAvailable: isTrustedShellAutoAvailableOnHost(),
-    fullAccessAvailable: isMacosFullAccessAvailable(),
+    fullAccessAvailable: isFullAccessAvailableOnHost(),
   });
 }
 
@@ -393,9 +417,9 @@ export class InteractiveTui {
   /** Messages queued for the active turn (follow-up / steer), shown in a fixed area. */
   #queuedTurnMessages: string[] = [];
   #trustedShellEnabled = false;
-  /** An explicit opt-out overrides the macOS default for subsequent tasks. */
+  /** An explicit opt-out overrides the local-command default for subsequent tasks. */
   #trustedShellDisabled = false;
-  /** Persisted macOS Full access default, selected after one explicit warning. */
+  /** Persisted cross-platform Full Access default, selected after one explicit warning. */
   #fullAccessEnabled = false;
   /** The warning must be viewed in this TUI process before a confirmation takes effect. */
   #fullAccessConfirmationPending = false;
@@ -833,7 +857,9 @@ export class InteractiveTui {
       (fullAccess || this.localCommandsEnabled());
     if (fullAccess) {
       if (!this.fullAccessAvailable())
-        throw new Error("Full access is unavailable on this macOS installation.");
+        throw new Error(
+          "Full access is unavailable because the verified platform backend is missing.",
+        );
       if (this.#shellRunner === undefined)
         throw new Error("Full access requires the Native Sandbox Runner installation.");
       if (workspaceBaseline === undefined) throw new Error("Full access requires a Git workspace.");
@@ -948,7 +974,7 @@ export class InteractiveTui {
     }
     if (fullAccess) {
       this.write(
-        "Full access enabled by default for this macOS task: local commands run with broad filesystem and network access; provider credentials are removed from the child environment, and commit, push, publish, release, and deploy remain protected. Use /access safe to return to the default sandbox\n",
+        "Full access enabled by default for this task: local commands run with broad filesystem and network access; provider credentials are removed from the child environment, and commit, push, publish, release, and deploy remain protected. Use /access safe to return to the default sandbox\n",
       );
     }
     if (!this.#closing) this.drain(new Map([[taskId, effectivePrompt]]));
@@ -2137,7 +2163,7 @@ export class InteractiveTui {
         );
       if (taskSnapshot.fullAccess && !this.fullAccessAvailable())
         throw new Error(
-          "Full access is unavailable because this build has not passed the macOS preview gate.",
+          "Full access is unavailable because this build has not passed the platform backend gate.",
         );
       const executionPath = await this.resolveExecutionPath(taskSnapshot);
       const trustedGitCommonDirectory =
@@ -2851,7 +2877,7 @@ export class InteractiveTui {
         task.approvalProfile === "read-only" ? " (plan mode; /build to implement)" : ""
       }`,
       `mode: ${task.taskMode ?? "build"}`,
-      `access: ${task.fullAccess ? "full (macOS preview)" : task.approvalProfile === "read-only" ? "review" : "auto"}`,
+      `access: ${task.fullAccess ? "full" : task.approvalProfile === "read-only" ? "review" : "auto"}`,
       `workspace: ${workspaceState} ${task.worktreePath ?? task.workspacePath}`,
       `local commands: ${task.trustedShell ? (task.fullAccess ? "full access ready" : "offline ready") : "off"}`,
       `git: push=${task.pushPolicy}${task.worktreePath !== undefined ? " (worktree task; push unavailable)" : ""}`,
@@ -2925,7 +2951,7 @@ export class InteractiveTui {
 
   private fullAccessAvailable(): boolean {
     return (
-      this.#fullAccessAvailable && isMacosFullAccessAvailable() && this.#shellRunner !== undefined
+      this.#fullAccessAvailable && isFullAccessAvailableOnHost() && this.#shellRunner !== undefined
     );
   }
 
@@ -3016,7 +3042,7 @@ export class InteractiveTui {
           "  /access review   只读分析，不修改文件或运行本地检查\n" +
           "  /access safe     默认；在安全副本中工作，本地检查自动离线运行\n" +
           "  /access current  直接在当前工作区工作，本地检查自动离线运行\n" +
-          "  /access full     macOS 预览；首次确认后成为默认模式，直到 /access safe\n" +
+          "  /access full     Full Access；首次确认后成为默认模式，直到 /access safe\n" +
           "  /access current 与 Full access 可叠加（宽沙箱 + 直接工作区，Codex 风格）\n" +
           "  两种可写工作区的网络操作均逐条确认；Full access 不授予凭据、提交、推送、发布或部署\n",
       );
@@ -3030,24 +3056,28 @@ export class InteractiveTui {
     }
     if (value === "full") {
       if (!this.fullAccessAvailable()) {
-        this.write("Full access unavailable: requires the macOS arm64 Personal Preview runner\n");
+        this.write(
+          "Full access unavailable: requires a verified macOS arm64 or Windows x64 Full Access backend\n",
+        );
         return;
       }
       if (this.fullAccessEnabled()) {
         this.write(
-          "Full access is already the macOS default; use /access safe to return to the default sandbox\n",
+          "Full access is already the default; use /access safe to return to the default sandbox\n",
         );
         return;
       }
       this.#fullAccessConfirmationPending = true;
       this.write(
-        "Full access warning: future Auto Git tasks may read/write local files and use the network outside Candy's normal sandbox until you run /access safe. Provider credentials are removed from child environments and Keychain credential IPC remains denied; Candy still blocks automatic commit, push, publishing, release, and deployment. Confirm with /access full confirm\n",
+        "Full access warning: future Auto Git tasks may read/write local files and use the network outside Candy's normal sandbox until you run /access safe. Provider credentials are removed from child environments and the platform credential store remains denied; Candy still blocks automatic commit, push, publishing, release, and deployment. Confirm with /access full confirm\n",
       );
       return;
     }
     if (value === "full confirm") {
       if (!this.fullAccessAvailable()) {
-        this.write("Full access unavailable: requires the macOS arm64 Personal Preview runner\n");
+        this.write(
+          "Full access unavailable: requires a verified macOS arm64 or Windows x64 Full Access backend\n",
+        );
         return;
       }
       if (!this.#fullAccessConfirmationPending) {
@@ -3059,7 +3089,7 @@ export class InteractiveTui {
       this.#trustedShellDisabled = false;
       this.#trustedShellEnabled = false;
       this.write(
-        "Full access is now the macOS default for future Auto tasks; ⚠ FULL ACCESS remains visible in the status bar. Use /access safe to return to the default sandbox\n",
+        "Full access is now the default for future Auto tasks; ⚠ FULL ACCESS remains visible in the status bar. Use /access safe to return to the default sandbox\n",
       );
       return;
     }

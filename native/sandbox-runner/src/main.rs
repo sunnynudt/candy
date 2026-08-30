@@ -207,6 +207,9 @@ fn response_for_line(line: &str) -> String {
     if request.network && !cfg!(any(target_os = "macos", windows)) {
         return error_response("network_forbidden");
     }
+    // Windows Full Access remains fail-closed until its AppContainer backend
+    // passes the native validation matrix. It must never degrade to an
+    // unsandboxed same-user CreateProcessW launch.
     if request.full_access && (!cfg!(target_os = "macos") || !request.network) {
         return error_response("full_access_unavailable");
     }
@@ -2784,5 +2787,14 @@ mod tests {
             r#"{"v":1,"kind":"run","requestId":"fixture","executable":"node","args":[],"cwd":"relative","workspace":"/tmp","network":false,"environment":{}}"#,
         );
         assert!(response.contains("invalid_path"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_full_access_remains_unavailable_until_the_backend_is_verified() {
+        let response = response_for_line(
+            r#"{"v":1,"kind":"run","requestId":"fixture","executable":"C:\\Windows\\System32\\cmd.exe","args":[],"cwd":"C:\\workspace","workspace":"C:\\workspace","network":true,"fullAccess":true,"environment":{}}"#,
+        );
+        assert!(response.contains("full_access_unavailable"));
     }
 }

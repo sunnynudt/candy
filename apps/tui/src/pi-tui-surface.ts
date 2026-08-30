@@ -346,9 +346,9 @@ export interface CandyTuiSurfaceOptions {
   readonly profile?: () => string;
   readonly worktreeEnabled?: () => boolean;
   readonly trustedShellEnabled?: () => boolean;
-  /** Persistent macOS Full access mode; always rendered as a warning badge. */
+  /** Persistent platform Full Access mode; always rendered as a warning badge. */
   readonly fullAccessEnabled?: () => boolean;
-  /** Whether this installation can show the macOS Full access entry point. */
+  /** Whether this installation can show the platform Full Access entry point. */
   readonly fullAccessAvailable?: () => boolean;
   /** The user has viewed the warning and may now explicitly confirm Full access. */
   readonly fullAccessConfirmationPending?: () => boolean;

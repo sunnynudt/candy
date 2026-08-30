@@ -8,7 +8,7 @@ import test from "node:test";
 import { resolveAppPaths, SQLiteTaskStore } from "@candy/platform";
 import {
   InteractiveTui,
-  isMacosFullAccessAvailable,
+  isFullAccessAvailableOnHost,
   type InteractiveTuiOptions,
   type TuiAgentEngine,
 } from "./main.js";
@@ -52,7 +52,7 @@ class FullAccessHarness extends InteractiveTui {
 }
 
 test("Full access keeps current-workspace placement: tasks work directly with the wide sandbox", async () => {
-  if (!isMacosFullAccessAvailable()) return;
+  if (!isFullAccessAvailableOnHost()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-full-current-"));
   const repository = createGitWorkspace(root);
   const appDataRoot = path.join(root, "app-data");
@@ -81,7 +81,7 @@ test("Full access keeps current-workspace placement: tasks work directly with th
     await waitForOutput(terminal, /Full access warning/u);
     terminal.emitInput("/access full confirm");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Full access is now the macOS default/u);
+    await waitForOutput(terminal, /Full access is now the default/u);
     terminal.emitInput("run direct with wide sandbox");
     terminal.emitInput("\r");
     const created = await waitForOutput(terminal, /Full access enabled by default/u);
@@ -106,7 +106,7 @@ test("Full access keeps current-workspace placement: tasks work directly with th
 });
 
 test("Full access default survives /access current and restarts; /access safe exits it", async () => {
-  if (!isMacosFullAccessAvailable()) return;
+  if (!isFullAccessAvailableOnHost()) return;
   const root = await mkdtemp(path.join(tmpdir(), "candy-full-current-persist-"));
   const repository = createGitWorkspace(root);
   const appDataRoot = path.join(root, "app-data");
@@ -130,7 +130,7 @@ test("Full access default survives /access current and restarts; /access safe ex
     await waitForOutput(terminal, /Full access warning/u);
     terminal.emitInput("/access full confirm");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /Full access is now the macOS default/u);
+    await waitForOutput(terminal, /Full access is now the default/u);
     terminal.emitInput("/access current");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /访问模式：当前工作区/u);
