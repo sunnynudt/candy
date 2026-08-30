@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0014
 ---
 
 # Enable macOS Full access as a credential-isolated Personal Preview
@@ -47,8 +47,10 @@ task.
 
 Full access does not authorize Candy-managed commit, push, publishing, release,
 or deployment. The existing publication guard, bounded tool evidence, explicit
-recovery, and exclusive task ownership remain in force. Windows Full access is
-unavailable; no macOS evidence enables it there.
+recovery, and exclusive task ownership remain in force. ADR-0014 supersedes
+the macOS-only product policy: this ADR remains the macOS backend decision and
+evidence record, while Windows must implement the same user contract through
+its own credential-isolated backend.
 
 ## Consequences
 

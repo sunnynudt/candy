@@ -60,6 +60,14 @@ _Avoid_: Browser lock, tab owner
 The audited native helper that applies operating-system command containment and owns the launched process tree. Candy task, model, approval, provider, and product policy remain outside it.
 _Avoid_: Shell wrapper, sandbox service
 
+**Full Access**:
+A user-selected, persistent execution profile with the same contract on every supported host: a task may use broad local files, local commands, and outbound network access without per-command approval. It never conveys a Candy provider credential, bypasses credential scanning, or implicitly authorizes push, publishing, release, or deployment.
+_Avoid_: macOS Full access, unrestricted shell, trusted shell
+
+**Full Access Backend**:
+The platform-specific operating-system isolation mechanism that realizes Full Access while keeping the task separate from Candy credentials and owning its complete process tree.
+_Avoid_: Full trust fallback, Job Object sandbox
+
 **Acceptance Gate**:
 A named set of observable pass criteria and required evidence that a Candy slice or release must satisfy before it is considered complete.
 _Avoid_: QA phase, test checklist
