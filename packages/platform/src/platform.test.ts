@@ -126,7 +126,12 @@ test("credential store exposes presence and short-lived leases without renderer 
 
 test("child environment is allowlisted and removes values containing active secrets", () => {
   const environment = cleanChildEnvironment(
-    { PATH: "path", HOME: "home", DEEPSEEK_API_KEY: "fixture-secret", CUSTOM: "ignored" },
+    {
+      PATH: "path",
+      HOME: "home",
+      DEEPSEEK_API_KEY: "fixture-secret",
+      CUSTOM: "ignored",
+    },
     ["fixture-secret"],
   );
   assert.equal(environment.PATH, "path");

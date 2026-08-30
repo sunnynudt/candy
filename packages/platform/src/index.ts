@@ -119,7 +119,7 @@ export interface TaskMetadata {
   readonly workspaceBaseline?: string;
   readonly worktreePath?: string;
   readonly trustedShell: boolean;
-  /** macOS Personal Preview: task commands bypass the normal filesystem/network sandbox. */
+  /** Explicit Full Access task: commands bypass the normal filesystem/network sandbox. */
   readonly fullAccess: boolean;
   /**
    * Task Git publication policy. 'deny' (default) never pushes; 'allow'
@@ -439,7 +439,7 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'build';
       `);
     }
-    // Schema 16 records the task-bound macOS Full access decision. Older
+    // Schema 16 records the task-bound Full Access decision. Older
     // tasks are deliberately never promoted and therefore retain `0`.
     if (schemaVersion !== 0 && schemaVersion !== 16 && schemaVersion !== 17) {
       this.#database.exec(`
@@ -459,7 +459,7 @@ export class SQLiteTaskStore {
     this.#database.exec(`PRAGMA user_version = 17;`);
   }
 
-  /** Persisted local-only default for macOS Full access TUI tasks. */
+  /** Persisted local-only default for Full Access TUI tasks. */
   public fullAccessDefaultEnabled(): boolean {
     const row = this.#database
       .prepare("SELECT enabled FROM tui_preferences WHERE preference_key = 'full_access_default'")
