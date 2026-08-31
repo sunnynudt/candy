@@ -8,8 +8,10 @@ import {
   Spacer,
   TuiAltScreen,
   VStack,
+  detectCapabilities,
   isKeyRelease,
   matchesKey,
+  setCapabilities,
   truncateToWidth,
   visibleWidth,
   type AutocompleteItem,
@@ -561,6 +563,12 @@ export class CandyTuiSurface {
     this.#tui.requestRender();
   }
 
+  /** Render an explicitly attached image inline, with a terminal-safe fallback. */
+  public appendImageAttachment(mimeType: string, content: Uint8Array): void {
+    this.#transcript.appendImage(mimeType, content);
+    this.#tui.requestRender();
+  }
+
   /** Re-render the fixed queued-turn-message area after its source list changes. */
   public refreshQueuedTurnMessages(): void {
     this.#tui.requestRender();
@@ -618,6 +626,7 @@ export class CandyTuiSurface {
   /** Reconnect the terminal and re-render after an external editor session. */
   #resume(): void {
     this.#tui.start();
+    this.#restoreInlineImageCapability();
     this.#tui.requestRender();
   }
 
@@ -625,6 +634,18 @@ export class CandyTuiSurface {
     assertSafeTuiEnvironment(this.#environment);
     this.#started = true;
     this.#tui.start();
+    this.#restoreInlineImageCapability();
+  }
+
+  /**
+   * Pi TUI conservatively suppresses iTerm2 images while entering the
+   * alternate screen. Candy's transcript owns its viewport and image rows, so
+   * restore only a positively detected native iTerm2 capability afterwards.
+   * Multiplexed and unknown terminals remain on Pi's text fallback.
+   */
+  #restoreInlineImageCapability(): void {
+    const capabilities = detectCapabilities();
+    if (capabilities.images === "iterm2") setCapabilities(capabilities);
   }
 
   public async stop(): Promise<void> {

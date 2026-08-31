@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { ProviderContractError } from "@candy/pi-adapter";
+import { resetCapabilitiesCache } from "@earendil-works/pi-tui";
 import {
   InMemoryCredentialStore,
   NativeProcessRunner,
@@ -3783,6 +3784,35 @@ test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", asyn
     terminal.emitInput("\r");
     await runPromise;
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+V renders an attached image inline when iTerm2 graphics are available", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-inline-clipboard-image-"));
+  const terminal = new FakeTerminal();
+  const previousItermSession = process.env.ITERM_SESSION_ID;
+  process.env.ITERM_SESSION_ID = "candy-inline-image-test";
+  resetCapabilitiesCache();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => ({ mimeType: "image/png", content: VALID_PNG }),
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const firstPreviewWrite = terminal.writes.length;
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    const preview = await waitForNewOutput(terminal, firstPreviewWrite, /File=inline=1/u);
+    assert.ok(preview.includes("\x1b]1337;File=inline=1"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    if (previousItermSession === undefined) delete process.env.ITERM_SESSION_ID;
+    else process.env.ITERM_SESSION_ID = previousItermSession;
+    resetCapabilitiesCache();
     await rm(root, { recursive: true, force: true });
   }
 });

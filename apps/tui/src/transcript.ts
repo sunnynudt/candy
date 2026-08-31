@@ -1,4 +1,5 @@
 import {
+  Image,
   Markdown,
   truncateToWidth,
   visibleWidth,
@@ -65,6 +66,8 @@ const CANDY_TRANSCRIPT_THEME: MarkdownTheme = {
 interface CandyTranscriptSegment {
   readonly kind: CandyTranscriptKind;
   text: string;
+  /** Retained payload size used to bound the live transcript window. */
+  byteLength: number;
   readonly key: string | undefined;
   /**
    * Markdown renderer for assistant segments. Thinking and plain segments
@@ -72,6 +75,8 @@ interface CandyTranscriptSegment {
    * have their markdown-significant characters interpreted.
    */
   readonly markdown: Markdown | undefined;
+  /** A terminal-native image preview for an explicitly attached raster image. */
+  readonly image: Image | undefined;
 }
 
 const THINKING_COLLAPSED_HINT = "▸ 思考过程 · Ctrl+T 展开";
@@ -97,22 +102,26 @@ export class CandyTranscript implements Component {
     if (
       last !== undefined &&
       last.kind === kind &&
+      last.image === undefined &&
       kind !== "user" &&
       kind !== "tool" &&
       kind !== "approval" &&
       last.text.length < MAX_SEGMENT_BYTES
     ) {
       last.text += value;
+      last.byteLength += value.length;
       last.markdown?.setText(last.text);
     } else {
       this.#segments.push({
         kind,
         text: value,
+        byteLength: value.length,
         key: undefined,
         markdown:
           kind === "assistant"
             ? new Markdown(value, CONTENT_PADDING_X, 0, CANDY_TRANSCRIPT_THEME)
             : undefined,
+        image: undefined,
       });
     }
     this.#dropOldest();
@@ -126,9 +135,40 @@ export class CandyTranscript implements Component {
     );
     if (existing !== undefined) {
       existing.text = value;
+      existing.byteLength = value.length;
     } else {
-      this.#segments.push({ kind: "tool", text: value, key, markdown: undefined });
+      this.#segments.push({
+        kind: "tool",
+        text: value,
+        byteLength: value.length,
+        key,
+        markdown: undefined,
+        image: undefined,
+      });
     }
+    this.#dropOldest();
+  }
+
+  /**
+   * Add an image the user explicitly attached. Pi TUI selects Kitty or iTerm2
+   * graphics when available and supplies a compact text fallback everywhere
+   * else, so a terminal capability never changes task semantics.
+   */
+  public appendImage(mimeType: string, content: Uint8Array): void {
+    if (content.byteLength === 0) return;
+    this.#segments.push({
+      kind: "plain",
+      text: "",
+      byteLength: content.byteLength,
+      key: undefined,
+      markdown: undefined,
+      image: new Image(
+        Buffer.from(content).toString("base64"),
+        mimeType,
+        { fallbackColor: DIM },
+        { maxWidthCells: 72, maxHeightCells: 24 },
+      ),
+    });
     this.#dropOldest();
   }
 
@@ -157,6 +197,10 @@ export class CandyTranscript implements Component {
       } else if (segment.kind === "approval") {
         appendBlockSeparator(lines, width);
         lines.push(...renderApprovalLines(segment.text, width));
+      } else if (segment.image !== undefined) {
+        appendBlockSeparator(lines, width);
+        lines.push(roleLabel("图片附件", width, "user"));
+        lines.push(...segment.image.render(width));
       } else {
         lines.push(...wrapPlainLines(segment.text, width));
       }
@@ -166,10 +210,10 @@ export class CandyTranscript implements Component {
 
   /** Drop oldest segments until the live window fits the byte bound. */
   #dropOldest(): void {
-    let bytes = this.#segments.reduce((total, segment) => total + segment.text.length, 0);
+    let bytes = this.#segments.reduce((total, segment) => total + segment.byteLength, 0);
     while (this.#segments.length > 1 && bytes > MAX_LIVE_TRANSCRIPT_BYTES) {
       const dropped = this.#segments.shift();
-      if (dropped !== undefined) bytes -= dropped.text.length;
+      if (dropped !== undefined) bytes -= dropped.byteLength;
     }
   }
 }

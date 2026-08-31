@@ -1424,6 +1424,7 @@ export class InteractiveTui {
       if (!this.#selectedAttachmentIds.includes(attachment.id))
         this.#selectedAttachmentIds.push(attachment.id);
       this.write(`${successPrefix}: ${attachment.id}\n`);
+      this.#surface?.appendImageAttachment(mimeType, content);
       if (!isVisionCapableModel(this.#selectedModel))
         this.write(
           "image attachment requires /model minimax-m3 or /model deepseek-flash-vision before starting a task\n",
@@ -1442,6 +1443,7 @@ export class InteractiveTui {
       );
     }
     this.write(`${successPrefix.replace("staged", "added")}: ${attachment.id}\n`);
+    this.#surface?.appendImageAttachment(mimeType, content);
   }
 
   private pasteImageFromClipboard(): void {
