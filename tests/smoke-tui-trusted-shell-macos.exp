@@ -1,0 +1,99 @@
+log_user 0
+set timeout 120
+log_file -a $env(CANDY_JOURNEY_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "Trusted Shell TUI journey failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+cd $env(CANDY_JOURNEY_LAUNCH_DIR)
+spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
+wait_for {开始任务|继续任务} "usable TUI input"
+
+send_command ":workspace $env(CANDY_JOURNEY_WORKSPACE)"
+wait_for {workspace selected:} "workspace selection"
+send_command ":profile auto"
+wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
+wait_for {offline local commands on} "default local-command state"
+send_command ":model deepseek-flash"
+wait_for {model selected: deepseek-v4-flash} "DeepSeek Flash selection"
+send_command ":validator $env(CANDY_JOURNEY_NODE) --test test/value.test.mjs"
+wait_for {validator configured for new tasks:} "validator configuration"
+
+send_command "Fix the failing fixture completely and do not skip any step. You MUST: (1) use candy_search with the literal query value = 1; (2) use candy_read on README.md, src/value.mjs, and test/value.test.mjs; (3) use candy_bash automatically (no approval needed) to run node --test test/value.test.mjs before editing, inspect and diagnose the failure, and also run git status --short; (4) use candy_edit to change only src/value.mjs so the test expects the correct value; (5) use candy_bash a second time to rerun node --test test/value.test.mjs and git status --short; (6) use candy_bash_network exactly once for the complete command git ls-remote https://github.com/sunnynudt/candy.git HEAD, with a concise reason explaining that the read-only remote revision lookup genuinely needs outbound network access. Do not commit, stage, push, or modify anything outside the Task Worktree. Report the diagnosis, test results, and final change."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set coding_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for coding task creation" }
+  eof { fail "TUI exited while waiting for coding task creation" }
+}
+wait_for {操作[[:space:]]+} "network elevation request"
+wait_for {命令：} "bounded network command"
+expect {
+  -re {/approve (network-[a-z0-9]+)} { set network_approval_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for network approval id" }
+  eof { fail "TUI exited while waiting for network approval" }
+}
+send_command ":approve $network_approval_id"
+wait_for {network approved} "network approval"
+wait_for "${coding_task_id} completed" "coding task completion"
+
+send_command ":changes"
+wait_for "changed files: ${coding_task_id}" "changed-file manifest"
+send_command ":diff"
+wait_for {diff } "complete diff"
+send_command ":validate"
+wait_for {validator running:} "validator start"
+wait_for {validator pass:} "validator pass"
+send_command ":diff"
+wait_for {\x1b\[\?2026l} "complete diff render"
+send_command ":apply"
+expect {
+  -re "applied ${coding_task_id} to Local Workspace" {}
+  -re {apply blocked:([^\r\n]*)} { fail "Apply was blocked: [string trim $expect_out(1,string)]" }
+  timeout { fail "timed out waiting for Apply" }
+  eof { fail "TUI exited while waiting for Apply" }
+}
+
+# Exercise a real task-owned shell cancellation after the completed coding
+# task has been reviewed and applied.
+send_command ":new"
+wait_for {new task ready} "new cancellation task"
+send_command "You MUST use candy_bash to run the exact offline command sleep 30 and wait for it; do not edit files or use network."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set cancel_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for cancellation task creation" }
+  eof { fail "TUI exited while waiting for cancellation task creation" }
+}
+after 1000
+send_command ":cancel $cancel_task_id"
+wait_for "${cancel_task_id} cancelled" "shell cancellation"
+
+send_command ":quit"
+expect eof
+
+spawn -noecho $env(CANDY_JOURNEY_NODE) $env(CANDY_JOURNEY_CHILD)
+wait_for {开始任务|继续任务} "TUI restart"
+after 1000
+send_command ":tasks"
+wait_for {(?s)(completed.*cancelled|cancelled.*completed)} "restarted task listing"
+send_command ":quit"
+expect eof
+
+set result [open $env(CANDY_JOURNEY_RESULT) w]
+puts $result "coding_task_id=$coding_task_id"
+puts $result "cancel_task_id=$cancel_task_id"
+puts $result "network_approval_id=$network_approval_id"
+close $result

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Candy V1 System Architecture",
+    "subtitle": "TUI in-process runtime, Desktop app-server child, local data, browser, and domestic model providers",
+    "output": "candy-system-architecture.html",
+    "viewBox": [1320, 940]
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "User", "sublabel": "developer", "pos": [40, 330], "size": [120, 60] },
+    { "id": "tui", "type": "frontend", "label": "Candy TUI", "sublabel": "terminal client", "pos": [220, 120], "size": [150, 64] },
+    { "id": "tui_runtime", "type": "backend", "label": "Candy Runtime", "sublabel": "in process", "pos": [450, 120], "size": [160, 64] },
+    { "id": "renderer", "type": "frontend", "label": "Electron Renderer", "sublabel": "presentation only", "pos": [220, 360], "size": [160, 64] },
+    { "id": "main", "type": "backend", "label": "Electron Main", "sublabel": "lifecycle + IPC", "pos": [430, 360], "size": [160, 64] },
+    { "id": "appserver", "type": "messagebus", "label": "App-server Child", "sublabel": "task scheduler", "pos": [640, 360], "size": [160, 64] },
+    { "id": "desktop_runtime", "type": "backend", "label": "Candy Runtime", "sublabel": "per running task", "pos": [850, 360], "size": [160, 64] },
+    { "id": "browser", "type": "frontend", "label": "Browser Module", "sublabel": "WebContents + CDP", "pos": [430, 560], "size": [160, 64] },
+    { "id": "task_store", "type": "database", "label": "Task Store", "sublabel": "sessions + attachments", "pos": [650, 650], "size": [160, 64] },
+    { "id": "workspace", "type": "database", "label": "Workspace", "sublabel": "Local + Worktrees", "pos": [880, 650], "size": [160, 64] },
+    { "id": "credentials", "type": "security", "label": "OS Credential Store", "sublabel": "provider secrets", "pos": [850, 100], "size": [170, 64] },
+    { "id": "models", "type": "external", "label": "Model Providers", "sublabel": "DeepSeek / MiniMax CN", "pos": [1110, 300], "size": [170, 70] },
+    { "id": "web", "type": "external", "label": "Web + Local Apps", "sublabel": "untrusted pages", "pos": [1110, 540], "size": [170, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "TUI process", "wraps": ["tui", "tui_runtime"] },
+    { "kind": "region", "label": "Desktop application", "wraps": ["renderer", "main", "appserver", "desktop_runtime", "browser"] },
+    { "kind": "security-group", "label": "Secret-only path", "wraps": ["credentials"] }
+  ],
+  "connections": [
+    { "from": "user", "to": "tui", "label": "terminal", "variant": "emphasis", "route": "orthogonal-h" },
+    { "from": "user", "to": "renderer", "label": "desktop", "variant": "emphasis", "route": "orthogonal-h" },
+    { "from": "tui", "to": "tui_runtime", "variant": "emphasis" },
+    { "from": "renderer", "to": "main" },
+    { "from": "main", "to": "appserver", "label": "typed JSONL", "variant": "emphasis", "labelAt": [615, 340] },
+    { "from": "appserver", "to": "desktop_runtime", "variant": "emphasis" },
+    { "from": "main", "to": "browser", "label": "owns", "fromSide": "bottom", "toSide": "top", "labelAt": [510, 450] },
+    { "from": "browser", "to": "web", "label": "user + agent", "variant": "security", "route": "orthogonal-h" },
+    { "from": "tui_runtime", "to": "credentials", "label": "secret lease", "variant": "security", "route": "orthogonal-h" },
+    { "from": "desktop_runtime", "to": "credentials", "label": "secret lease", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "from": "tui_runtime", "to": "models", "label": "approved HTTPS", "variant": "emphasis", "route": "orthogonal-h" },
+    { "from": "desktop_runtime", "to": "models", "label": "approved HTTPS", "variant": "emphasis", "route": "orthogonal-h" },
+    { "from": "desktop_runtime", "to": "task_store", "label": "persist", "fromSide": "bottom", "toSide": "top" },
+    { "from": "desktop_runtime", "to": "workspace", "label": "tools", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Runtime", "items": ["TUI runs the shared runtime in-process", "Desktop owns an app-server child", "One execution owner per task"] },
+    { "dot": "rose", "title": "Security", "items": ["Secrets never enter JSONL, sessions, tools, or browser", "MiniMax is restricted to the domestic endpoint", "Page content is always untrusted"] },
+    { "dot": "emerald", "title": "Lifetime", "items": ["Window close may continue in tray", "Explicit quit cancels active tasks", "No daemon or detached execution"] }
+  ]
+}

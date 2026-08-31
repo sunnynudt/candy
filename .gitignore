@@ -1,0 +1,35 @@
+# Dependencies
+node_modules
+.pnpm-store/
+.npm-cache/
+
+# Build output
+dist/
+build/
+out/
+coverage/
+.turbo/
+.vite/
+.webpack/
+*.tsbuildinfo
+native/sandbox-runner/target/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+.candy/
+/.omo/
+*.pem
+*.key
+
+# Editors and operating systems
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,4007 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test, { after } from "node:test";
+import { ProviderContractError } from "@candy/pi-adapter";
+import { resetCapabilitiesCache } from "@earendil-works/pi-tui";
+import {
+  InMemoryCredentialStore,
+  NativeProcessRunner,
+  resolveAppPaths,
+  SQLiteTaskStore,
+} from "@candy/platform";
+import type {
+  CommandValidatorCommand,
+  ValidatorResult,
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeTracker,
+} from "@candy/runtime";
+import {
+  createDefaultInteractiveTui,
+  InteractiveTui,
+  isFullAccessAvailableOnHost,
+  isMacosTrustedShellAutoAvailable,
+  type InteractiveTuiOptions,
+  type TuiAgentEngine,
+  type TuiValidator,
+} from "./main.js";
+import { FakeTerminal } from "./pi-tui-surface.js";
+
+const testWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-"));
+
+class TestInteractiveTui extends InteractiveTui {
+  public constructor(options: InteractiveTuiOptions = {}) {
+    super({ workspacePath: testWorkspace, ...options });
+  }
+}
+
+after(async () => {
+  await rm(testWorkspace, { recursive: true, force: true });
+});
+
+async function waitForOutput(
+  terminal: FakeTerminal,
+  pattern: RegExp,
+  maxAttempts: number = 500,
+): Promise<string> {
+  for (let attempt: number = 0; attempt < maxAttempts; attempt += 1) {
+    const output: string = terminal.writes.join("");
+    if (pattern.test(output)) return output;
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 1);
+    });
+  }
+  return terminal.writes.join("");
+}
+
+async function waitForNewOutput(
+  terminal: FakeTerminal,
+  firstWriteIndex: number,
+  pattern: RegExp,
+  maxAttempts: number = 500,
+): Promise<string> {
+  for (let attempt: number = 0; attempt < maxAttempts; attempt += 1) {
+    const output: string = terminal.writes.slice(firstWriteIndex).join("");
+    if (pattern.test(output)) return output;
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 1);
+    });
+  }
+  return terminal.writes.slice(firstWriteIndex).join("");
+}
+
+function terminalText(terminal: FakeTerminal): string {
+  const escape = String.fromCharCode(0x1b);
+  const bell = String.fromCharCode(0x07);
+  const csi = new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, "gu");
+  const osc = new RegExp(`${escape}\\][^${bell}]*(?:${bell}|${escape}\\\\)`, "gu");
+  return terminal.writes.join("").replace(osc, "").replace(csi, "");
+}
+
+function runGit(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+async function createTuiGitFixture(root: string): Promise<string> {
+  const repository = path.join(root, "repository");
+  await mkdir(repository);
+  runGit(repository, ["init", "-q"]);
+  await writeFile(path.join(repository, "README.md"), "base\n");
+  runGit(repository, ["add", "README.md"]);
+  runGit(repository, [
+    "-c",
+    "user.name=Candy Fixture",
+    "-c",
+    "user.email=candy-fixture@example.invalid",
+    "commit",
+    "-qm",
+    "base",
+  ]);
+  return repository;
+}
+
+test("interactive TUI creates a queued task, runs it, and reports completion", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input, signal) {
+      if (signal.aborted) throw new Error("cancelled");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: "fixture response sk-proj-tui-output-canary-123456",
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /completed/u);
+    assert.match(output, /用户[\s\S]*inspect fixture/u);
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.match(output, /created task-/u);
+    assert.match(output, /fixture response \[REDACTED\]/u);
+    assert.doesNotMatch(output, /sk-proj-tui-output-canary-123456/u);
+    assert.match(output, /completed/u);
+    assert.match(output, /task-.*completed/u);
+    assert.equal(terminal.started, true);
+    assert.equal(terminal.stopped, true);
+    assert.equal(terminal.drainCalls, 1);
+    assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+X copies the last contiguous assistant reply without touching a real clipboard", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-reply-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const copied: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      copyToClipboardImpl: async (text: string): Promise<void> => {
+        copied.push(text);
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "first reply part ",
+          };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "one" };
+          yield { type: "tool.started", taskId: input.taskId, tool: "candy_read" };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "second reply" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("copy fixture");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /second reply/u);
+    terminal.emitInput("\x18"); // Ctrl+X
+    await waitForOutput(terminal, /clipboard: copied/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    // The tool line flushed the first run; the second copy returns only the
+    // contiguous assistant stream after the tool interruption.
+    assert.deepEqual(copied, ["second reply"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+X with no assistant reply reports nothing to copy", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-copy-empty-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let copied: boolean = false;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      copyToClipboardImpl: async (): Promise<void> => {
+        copied = true;
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("\x18"); // Ctrl+X before any task ran
+    await waitForOutput(terminal, /clipboard: no assistant reply to copy/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(copied, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("thinking streams render dim, stay out of the store, and never enter the copy buffer", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-thinking-run-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const copied: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      copyToClipboardImpl: async (text: string): Promise<void> => {
+        copied.push(text);
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.thinking.delta",
+            taskId: input.taskId,
+            text: "secret reasoning fixture",
+          };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "the answer" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("thinking fixture");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /the answer/u);
+    // Thinking is rendered collapsed; the raw reasoning text is not visible
+    // until Ctrl+T, and it is never persisted to the task store.
+    assert.equal(terminal.writes.join("").includes("secret reasoning fixture"), false);
+    terminal.emitInput("\x18"); // Ctrl+X copies only the assistant reply
+    await waitForOutput(terminal, /clipboard: copied/u);
+    terminal.emitInput(":transcript");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /assistant: the answer/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.deepEqual(copied, ["the answer"]);
+    assert.equal(terminal.writes.join("").includes("secret reasoning fixture"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skills lists Candy-owned skills and their diagnostics", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-"));
+  await mkdir(path.join(root, "skills", "fixture"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "fixture", "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: fixture skill description\n---\ncontent\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skills");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /fixture-skill/u);
+    assert.match(output, /fixture skill description/u);
+    // Tabs render as three spaces; the source column follows the description.
+    assert.match(output, /fixture skill description\s+candy\s+/u);
+    assert.match(output, /skills\/fixture/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skills marks shared and configured skill sources", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-sources-"));
+  const sharedRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-shared-"));
+  const configuredRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-skills-configured-"));
+  const shared = path.join(sharedRoot, ".agents", "skills", "shared-fixture");
+  const configured = path.join(configuredRoot, "skills", "cfg-fixture");
+  await mkdir(shared, { recursive: true });
+  await mkdir(configured, { recursive: true });
+  await writeFile(
+    path.join(shared, "SKILL.md"),
+    "---\nname: shared-fixture\ndescription: shared fixture\n---\ncontent\n",
+  );
+  await writeFile(
+    path.join(configured, "SKILL.md"),
+    "---\nname: cfg-fixture\ndescription: configured fixture\n---\ncontent\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [path.join(sharedRoot, ".agents", "skills"), configuredRoot],
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skills");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /shared-fixture/u);
+    assert.match(output, /shared fixture\s+shared\s+/u);
+    assert.match(output, /configured fixture\s+configured\s+/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(sharedRoot, { recursive: true, force: true });
+    await rm(configuredRoot, { recursive: true, force: true });
+  }
+});
+
+test("/skill submits the skill body with an optional goal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-run-"));
+  await mkdir(path.join(root, "skills", "fixture"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "fixture", "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: fixture skill description\n---\n# Fixture Instructions\nstep one; step two\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn(input) {
+          prompts.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "done" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill fixture-skill 分析当前工作区");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /done/u);
+    assert.match(output, /preparing task-/u);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /skill: fixture-skill/u);
+    assert.match(prompts[0] ?? "", /# Fixture Instructions/u);
+    assert.match(prompts[0] ?? "", /step one; step two/u);
+    assert.match(prompts[0] ?? "", /任务目标：分析当前工作区/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("slash autocomplete suggests and invokes available Candy skills", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-autocomplete-"));
+  await mkdir(path.join(root, "skills", "multica"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "multica", "SKILL.md"),
+    "---\nname: multica-fixture\ndescription: Manage Multica fixture tasks\n---\n# Multica Fixture\nRun the fixture skill.\n",
+  );
+  const terminal: FakeTerminal = new FakeTerminal();
+  const prompts: string[] = [];
+  const runPromise = new TestInteractiveTui({
+    appDataRoot: root,
+    terminal,
+    skillRoots: [],
+    engine: {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "skill autocomplete done" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    },
+  }).run();
+  try {
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("/mu");
+    const suggestions = await waitForOutput(terminal, /Manage Multica fixture tasks/u);
+    assert.match(suggestions, /multica-fixture/u);
+    terminal.emitInput("\t");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /skill autocomplete done/u);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /skill: multica-fixture/u);
+    assert.match(prompts[0] ?? "", /# Multica Fixture/u);
+  } finally {
+    terminal.emitInput("\x03");
+    await runPromise;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skill without a name lists skills and does not submit a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-list-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "never" };
+          throw new Error("bare /skill must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /usage: \/skill <name> \[goal\]/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(turnCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/skill reports an unknown skill without submitting a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-skill-missing-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      skillRoots: [],
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "never" };
+          throw new Error("unknown skill must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":skill does-not-exist");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /skill not found or unreadable: does-not-exist/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(turnCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI does not submit a bare slash as an agent prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-slash-"));
+  const terminal = new FakeTerminal();
+  let turnCount = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn() {
+          turnCount += 1;
+          yield { type: "turn.started", taskId: "bare-slash" };
+          throw new Error("bare slash must not start an agent turn");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/");
+    await waitForOutput(terminal, /Choose the primary model/u);
+    terminal.emitInput("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(turnCount, 0);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI echoes a redacted line when a prompt contains credential-shaped content", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credential-echo-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn() {
+          yield { type: "turn.started", taskId: "rejected-prompt" };
+          throw new Error("the provider must not run for a rejected prompt");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(
+      "请分析 https://example.invalid/article?poc_token=HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn",
+    );
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /prompt rejected: credential-shaped content is forbidden/u,
+    );
+    assert.match(
+      output,
+      /用户[\s\S]*请分析 https:\/\/example\.invalid\/article\?poc_token=\[REDACTED\]/u,
+    );
+    assert.doesNotMatch(output, /HPtmgmqjMfstplkOR2qck4y8hVmBTsUhmSq10Ijn/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI strips terminal control sequences from assistant evidence", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-control-sequences-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "\u001b[31mred\u001b[0m\u0007\u000dnext\n\u001b]0;hostile title\u0007done",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("show hostile output");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /completed/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    if (taskId === undefined) throw new Error("TUI task id was not rendered.");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const assistant = store.transcript(taskId)?.find((entry) => entry.role === "assistant")?.text;
+    store.close();
+    assert.equal(assistant, " red   next\n done");
+    assert.equal(
+      [...(assistant ?? "")].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return (
+          codePoint <= 0x09 ||
+          (codePoint >= 0x0b && codePoint <= 0x1f) ||
+          (codePoint >= 0x7f && codePoint <= 0x9f)
+        );
+      }),
+      false,
+    );
+    assert.match(output, /red {3}next/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI manages OS credential presence without reading back secrets", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-credentials-"));
+  const terminal = new FakeTerminal();
+  const credentials = new InMemoryCredentialStore();
+  const environment = { [["CANDY", "DEEPSEEK", "API", "KEY"].join("_")]: "test-secret" };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      credentialStore: credentials,
+      credentialEnvironment: environment,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":credentials");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek: absent/u);
+    terminal.emitInput(":credential set deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential set \(present\)/u);
+    terminal.emitInput(":credential replace deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential replace \(present\)/u);
+    terminal.emitInput(":credential delete deepseek");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /deepseek credential deleted/u);
+    terminal.emitInput(":credential set deepseek test-secret");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /credential rejected/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(credentials.has("deepseek"), "absent");
+    assert.doesNotMatch(output, /test-secret/u);
+    assert.doesNotMatch(terminal.writes.join(""), /test-secret/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI restores the terminal after a task error and Ctrl+C", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-error-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      throw new Error("fixture failure");
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /runtime error/u);
+    assert.match(output, /runtime error/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+    assert.equal(terminal.stopped, true);
+    assert.equal(terminal.drainCalls, 1);
+    assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI exposes sanitized provider recovery actions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-provider-recovery-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      throw new ProviderContractError("Provider request timed out.", "provider_error", "timeout");
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect fixture");
+    terminal.emitInput("\r");
+    const output: string = await waitForOutput(terminal, /provider request timed out/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    assert.match(
+      output,
+      new RegExp(
+        `recovery: /resume ${taskId} <continuation>[\\s\\S]*deepseek-pro[\\s\\S]*/cancel`,
+        "u",
+      ),
+    );
+    assert.doesNotMatch(output, /fixture-secret|Bearer\s+|sk-proj-/iu);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI enables file Auto without pausing for workspace deletes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-auto-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let observedProfile: "read-only" | "auto" | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      observedProfile = input.approvalProfile;
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "tool.completed",
+        taskId: input.taskId,
+        tool: "candy_delete",
+        ok: true,
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput("remove the obsolete file");
+    terminal.emitInput("\r");
+    const completedOutput = await waitForOutput(terminal, /task-(?:[a-z0-9]+) completed/u, 5_000);
+    const taskId = completedOutput.match(/task-[a-z0-9]+/u)?.[0];
+    assert.ok(taskId);
+    assert.match(completedOutput, new RegExp(`${taskId} completed`, "u"));
+    assert.doesNotMatch(completedOutput, /需要你的确认|waiting_approval|\/approve delete-/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(observedProfile, "auto");
+    assert.match(completedOutput, /✓[\s\S]*删除文件[\s\S]*完成/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI bounds and redacts tool visibility while steering and cancelling", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-steering-"));
+  const terminal = new FakeTerminal();
+  const steering: string[] = [];
+  const followUps: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input, signal) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "tool.started",
+          taskId: input.taskId,
+          tool: "candy_list",
+          toolCallId: "call-list",
+          args: '{"path":"docs/product"}',
+        };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "candy_list",
+          toolCallId: "call-list",
+          ok: true,
+        };
+        yield {
+          type: "tool.started",
+          taskId: input.taskId,
+          tool: "candy_read",
+          toolCallId: "call-1",
+          args: '{"path":"src/value.ts","token":"sk-proj-tool-output-canary-1234567890"}',
+        };
+        yield {
+          type: "tool.updated",
+          taskId: input.taskId,
+          tool: "candy_read",
+          toolCallId: "call-1",
+          output: '{"content":"partial fixture output"}',
+        };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "candy_" + "x".repeat(300),
+          ok: true,
+          output: '{"path":"src/value.ts","token":"sk-proj-tool-output-canary-1234567890"}',
+        };
+        yield {
+          type: "tool.completed",
+          taskId: input.taskId,
+          tool: "sk-proj-tool-output-canary-1234567890",
+          ok: true,
+          output: "Bearer fixture-secret-value-0123456789",
+        };
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            signal.removeEventListener("abort", onAbort);
+            reject(new Error("cancelled"));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+          void input;
+          void resolve;
+        });
+      },
+      async steer(_taskId, text) {
+        steering.push(text);
+      },
+      async followUp(_taskId, text) {
+        followUps.push(text);
+      },
+    };
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("start a long turn");
+    terminal.emitInput("\r");
+    const toolActivityPattern =
+      /列出目录：docs\/product · candy_list[\s\S]*读取文件：src\/value\.ts · candy_read/u;
+    const taskOutput = await waitForOutput(terminal, toolActivityPattern);
+    const completedOutput = await waitForOutput(terminal, /x{20}[\s\S]*完成/u);
+    assert.match(taskOutput, toolActivityPattern);
+    assert.doesNotMatch(taskOutput, /x{150}/u);
+    assert.match(taskOutput, /src\/value\.ts/u);
+    assert.doesNotMatch(taskOutput, /partial fixture output/u);
+    assert.doesNotMatch(completedOutput, /sk-proj-tool-output-canary|Bearer fixture-secret/u);
+    const redactedToolOutput = await waitForOutput(terminal, /\[REDACTED\][\s\S]*完成/u);
+    assert.match(redactedToolOutput, /\[REDACTED\][\s\S]*完成/u);
+    const taskId = taskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    terminal.emitInput(":steer focus on the failing test");
+    terminal.emitInput("\r");
+    const steeringOutput = await waitForOutput(terminal, /steering queued/u);
+    assert.match(steeringOutput, /\[steer\] focus on the failing test/u);
+    terminal.emitInput(":follow-up report only after validation");
+    terminal.emitInput("\r");
+    const followUpOutput = await waitForOutput(terminal, /follow-up queued/u);
+    assert.match(followUpOutput, /\[follow-up\] report only after validation/u);
+    terminal.emitInput(`:steer ${"x".repeat(4_097)}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn message rejected: text exceeds 4096 characters/u);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    terminal.emitInput("\x03");
+    await runPromise;
+    assert.deepEqual(steering, ["focus on the failing test"]);
+    assert.deepEqual(followUps, ["report only after validation"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI shows safe actionable reasons for classified tool failures", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-tool-failure-reason-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.started",
+            taskId: input.taskId,
+            tool: "candy_read",
+            toolCallId: "read-beyond-end",
+            args: '{"path":"apps/tui/src/plan-build.test.ts","offset":409}',
+          };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_read",
+            toolCallId: "read-beyond-end",
+            ok: false,
+            failure: { kind: "read_offset_out_of_range", totalLines: 394 },
+            output:
+              "Offset 409 is beyond end of file (394 lines total): raw-error-body-should-not-appear",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("read the unavailable range");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /起始行超过文件末尾（当前共 394 行）；请重新读取后重试/u,
+    );
+    assert.match(output, /读取文件：apps\/tui\/src\/plan-build\.test\.ts · candy_read/u);
+    assert.match(output, /失败 · 起始行超过[\s\S]*文件末尾（当前共 394 行）/u);
+    assert.doesNotMatch(output, /Offset 409|raw-error-body-should-not-appear/u);
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI explains unavailable local dependencies without exposing command output", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-dependency-failure-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.started",
+            taskId: input.taskId,
+            tool: "candy_bash",
+            toolCallId: "missing-local-dependency",
+            args: '{"command":"npm run check"}',
+          };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_bash",
+            toolCallId: "missing-local-dependency",
+            ok: false,
+            failure: { kind: "local_dependency_unavailable" },
+            output:
+              "npm error code ENOENT: node_modules/.bin/prettier is unavailable: raw-error-body-should-not-appear",
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run the project check");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /本地依赖不可用；Candy 不会自动下载，请先在源工作区安装依赖后新建任务/u,
+    );
+    assert.match(output, /运行命令 · candy_bash/u);
+    assert.doesNotMatch(output, /node_modules|raw-error-body-should-not-appear/u);
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI confirms activity before the first model event", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-activity-feedback-"));
+  const terminal = new FakeTerminal();
+  let releaseFirstEvent: (() => void) | undefined;
+  const firstEvent = new Promise<void>((resolve) => {
+    releaseFirstEvent = resolve;
+  });
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          await firstEvent;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("wait for the first model event");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /正在处理中（准备上下文并请求模型）/u);
+    const taskId = output.match(/状态：(task-[a-z0-9]+) 正在处理中/u)?.[1];
+    assert.ok(taskId);
+    assert.ok(output.indexOf("wait for the first model event") < output.indexOf("正在处理中"));
+    releaseFirstEvent?.();
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    releaseFirstEvent?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI projects retry and compaction until the turn settles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-lifecycle-"));
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "turn.retrying",
+          taskId: input.taskId,
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 1,
+        };
+        yield { type: "turn.retry.completed", taskId: input.taskId, attempt: 1, ok: true };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "started",
+          reason: "overflow",
+        };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "completed",
+          reason: "overflow",
+          aborted: false,
+          willRetry: true,
+        };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "recovered after compaction" };
+        yield { type: "turn.settled", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("recover the turn");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /completed/u);
+    assert.match(output, /provider retry 1\/3; waiting 1ms/u);
+    assert.match(output, /provider retry 1 succeeded/u);
+    assert.match(output, /context compaction: overflow/u);
+    assert.match(output, /context compaction settled: overflow/u);
+    assert.match(output, /turn settled/u);
+    assert.match(output, /recovered after compaction/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI cancels a turn while compaction is in progress", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-compaction-cancel-"));
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input, signal) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield {
+          type: "turn.compaction",
+          taskId: input.taskId,
+          phase: "started",
+          reason: "overflow",
+        };
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            signal.removeEventListener("abort", onAbort);
+            reject(new Error("compaction cancelled"));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+          void resolve;
+        });
+      },
+    };
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal, engine }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("recover during compaction");
+    terminal.emitInput("\r");
+    const compactionOutput = await waitForOutput(terminal, /context compaction: overflow/u);
+    const taskId = compactionOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    terminal.emitInput(`:cancel ${taskId}`);
+    terminal.emitInput("\r");
+    const cancelledOutput = await waitForOutput(terminal, new RegExp(`${taskId} cancelled`, "u"));
+    assert.match(cancelledOutput, /context compaction: overflow/u);
+    assert.doesNotMatch(cancelledOutput, /context compaction settled|turn settled| completed/u);
+    terminal.emitInput("\x03");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("default TUI composition root isolates new Auto tasks with local commands ready", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
+  try {
+    const runPromise = createDefaultInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput("inspect the default local commands");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /本地命令已就绪/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    store.close();
+    terminal.emitInput(":trusted-shell off");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands disabled for new tasks/u);
+    terminal.emitInput(":shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled for the next Auto Git Task/u);
+    assert.match(terminalText(terminal), /安全工作区/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("default TUI runs an offline npm script in its Task Worktree without a local approval", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const nativeRunner = path.join(
+    process.cwd(),
+    "native",
+    "sandbox-runner",
+    "target",
+    "debug",
+    "candy-sandbox-runner",
+  );
+  if (!existsSync(nativeRunner)) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-default-local-command-"));
+  const repository = await createTuiGitFixture(root);
+  const appDataRoot = path.join(root, "app-data");
+  const terminal = new FakeTerminal();
+  const fixtureSecret = "candy-local-command-fixture-secret-40a7d1b9";
+  const originalFetch = globalThis.fetch;
+  const fetchUrls: string[] = [];
+  let runPromise: Promise<void> | undefined;
+  try {
+    await mkdir(path.join(repository, "node_modules"));
+    await writeFile(
+      path.join(repository, "package.json"),
+      JSON.stringify({ scripts: { check: "node --version" } }),
+    );
+    runGit(repository, ["add", "package.json"]);
+    runGit(repository, [
+      "-c",
+      "user.name=Candy Fixture",
+      "-c",
+      "user.email=candy-fixture@example.invalid",
+      "commit",
+      "-qm",
+      "add local check",
+    ]);
+    globalThis.fetch = async (input) => {
+      fetchUrls.push(String(input));
+      const response =
+        fetchUrls.length === 1
+          ? [
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call_local_npm_check",
+                          type: "function",
+                          function: {
+                            name: "candy_bash",
+                            arguments: JSON.stringify({ command: "npm run check" }),
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+            ]
+          : [
+              {
+                choices: [
+                  {
+                    delta: { content: "Offline local npm check completed." },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              { choices: [{ delta: {}, finish_reason: "stop" }] },
+            ];
+      return new Response(
+        `${response.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    };
+    const shellRunner = new NativeProcessRunner(nativeRunner);
+    const credentialStore = new InMemoryCredentialStore();
+    credentialStore.set("deepseek", fixtureSecret);
+    runPromise = createDefaultInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      credentialStore,
+      credentialEnvironment: {},
+      shellRunner,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run the local check");
+    terminal.emitInput("\r");
+    const completed = await waitForOutput(
+      terminal,
+      /Offline local npm check completed\.[\s\S]*completed/u,
+      4_000,
+    );
+    const taskId = completed.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    assert.match(terminalText(terminal), /运行命令 · candy_bash · 完成/u);
+    assert.doesNotMatch(
+      terminalText(terminal),
+      /waiting for your approval|Local commands enabled/u,
+    );
+    assert.deepEqual(fetchUrls, [
+      "https://api.deepseek.com/chat/completions",
+      "https://api.deepseek.com/chat/completions",
+    ]);
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(
+      await realpath(path.join(task.worktreePath, "node_modules")),
+      await realpath(path.join(repository, "node_modules")),
+    );
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    runPromise = undefined;
+  } finally {
+    if (runPromise !== undefined) {
+      terminal.emitInput(":quit");
+      terminal.emitInput("\r");
+      await runPromise.catch(() => undefined);
+    }
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("macOS Trusted Shell Auto attestation is host-bound after G2 approval", () => {
+  const expected = process.platform === "darwin" && process.arch === "arm64";
+  assert.equal(isMacosTrustedShellAutoAvailable(), expected);
+});
+
+test("interactive TUI persists Full Access as the default until switched back to Safe", async () => {
+  if (!isFullAccessAvailableOnHost()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  const appDataRoot = path.join(root, "app-data");
+  const observedFullAccess: boolean[] = [];
+  const observedNetworkApproval: boolean[] = [];
+  let firstRun: Promise<void> | undefined;
+  let secondRun: Promise<void> | undefined;
+  let afterRestart: FakeTerminal | undefined;
+  const shellRunner = {
+    run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+  };
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      observedFullAccess.push(input.fullAccess === true);
+      observedNetworkApproval.push(input.shellNetworkApproval !== undefined);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    firstRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      fullAccessAvailable: true,
+      shellRunner,
+      engine,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access full confirm");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /requires reviewing \/access full warning first/u);
+    terminal.emitInput("/access full");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Full access warning/u);
+    terminal.emitInput("/access full confirm");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Full access is now the default/u);
+    terminal.emitInput("run with broad local access");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Full access enabled by default for this task/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await firstRun;
+    firstRun = undefined;
+
+    afterRestart = new FakeTerminal();
+    secondRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal: afterRestart,
+      worktreeEnabled: true,
+      fullAccessAvailable: true,
+      shellRunner,
+      engine,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForOutput(afterRestart, /⚠ FULL ACCESS/u);
+    afterRestart.emitInput("run after restart");
+    afterRestart.emitInput("\r");
+    const restartOutput = await waitForOutput(
+      afterRestart,
+      /Full access enabled by default for this task/u,
+    );
+    const restartTaskId = restartOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(restartTaskId);
+    await waitForOutput(afterRestart, new RegExp(`${restartTaskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    const restartedTask = store.get(restartTaskId);
+    assert.equal(task?.fullAccess, true);
+    assert.equal(task?.trustedShell, true);
+    assert.equal(restartedTask?.fullAccess, true);
+    assert.deepEqual(observedFullAccess, [true, true]);
+    assert.deepEqual(observedNetworkApproval, [false, false]);
+    afterRestart.emitInput("/access safe");
+    afterRestart.emitInput("\r");
+    await waitForOutput(afterRestart, /访问模式：安全工作区/u);
+    assert.equal(store.fullAccessDefaultEnabled(), false);
+    afterRestart.emitInput("/new");
+    afterRestart.emitInput("\r");
+    await waitForOutput(afterRestart, /new task ready; enter a prompt/u);
+    const safeOutputStart = afterRestart.writes.length;
+    afterRestart.emitInput("run after safe reset");
+    afterRestart.emitInput("\r");
+    const safeOutput = await waitForNewOutput(
+      afterRestart,
+      safeOutputStart,
+      /created task-[a-z0-9]+/u,
+    );
+    const safeTaskId = safeOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(safeTaskId);
+    await waitForOutput(afterRestart, new RegExp(`${safeTaskId} completed`, "u"));
+    assert.equal(store.get(safeTaskId)?.fullAccess, false);
+    assert.deepEqual(observedFullAccess, [true, true, false]);
+    assert.deepEqual(observedNetworkApproval, [false, false, false]);
+    store.close();
+    afterRestart.emitInput(":quit");
+    afterRestart.emitInput("\r");
+    await secondRun;
+    secondRun = undefined;
+  } finally {
+    if (firstRun !== undefined) {
+      terminal.emitInput(":quit");
+      terminal.emitInput("\r");
+      await firstRun.catch(() => undefined);
+    }
+    if (secondRun !== undefined && afterRestart !== undefined) {
+      afterRestart.emitInput(":quit");
+      afterRestart.emitInput("\r");
+      await secondRun.catch(() => undefined);
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI enables Full Access through the two-click status entry", async () => {
+  if (!isFullAccessAvailableOnHost()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-full-access-entry-"));
+  const appDataRoot = path.join(root, "app-data");
+  const terminal = new FakeTerminal({ columns: 120, rows: 32 });
+  const runPromise = new TestInteractiveTui({
+    appDataRoot,
+    terminal,
+    fullAccessAvailable: true,
+    shellRunner: {
+      run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+    },
+    engine: {
+      async *runTurn(input) {
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    },
+  }).run();
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForOutput(terminal, /开启 Full access/u);
+    terminal.emitInput("\x1b[<0;3;2M");
+    terminal.emitInput("\x1b[<0;3;2m");
+    await waitForOutput(terminal, /Full access warning/u);
+    await waitForOutput(terminal, /确认开启 Full access/u);
+    terminal.emitInput("\x1b[<0;3;2M");
+    terminal.emitInput("\x1b[<0;3;2m");
+    await waitForOutput(terminal, /Full access is now the default/u);
+    await waitForOutput(terminal, /⚠ FULL ACCESS/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    const afterRestart = new FakeTerminal({ columns: 120, rows: 32 });
+    const afterRestartRun = new TestInteractiveTui({
+      appDataRoot,
+      terminal: afterRestart,
+      fullAccessAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await waitForOutput(afterRestart, /⚠ FULL ACCESS/u);
+    } finally {
+      afterRestart.emitInput(":quit");
+      afterRestart.emitInput("\r");
+      await afterRestartRun.catch(() => undefined);
+    }
+  } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise.catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI defaults Auto Git tasks to offline local commands with reused dependencies", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-default-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
+  try {
+    await mkdir(path.join(repository, "node_modules"));
+    await writeFile(path.join(repository, "node_modules", "fixture.js"), "export {};\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("run local checks");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /本地命令已就绪/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.ok(task?.worktreePath);
+    assert.equal(task.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    assert.equal(
+      await realpath(path.join(task.worktreePath, "node_modules")),
+      await realpath(path.join(repository, "node_modules")),
+    );
+    store.close();
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI explicitly enables macOS Trusted Shell Auto only for Git Task Worktrees", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const shellRunner = {
+    async run() {
+      return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+    },
+  };
+  let observedTrustedShell = false;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      shellRunner,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "shell-ready" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("inspect with shell enabled");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /shell-ready/u);
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.list()[0];
+    assert.ok(task);
+    assert.equal(task.trustedShell, true);
+    assert.equal(task.approvalProfile, "auto");
+    assert.ok(task.worktreePath);
+    assert.equal(observedTrustedShell, true);
+    assert.match(output, /Local commands enabled/u);
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI runs local checks and requests one-command network approval in the current workspace", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-current-workspace-local-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedTrustedShell = false;
+  let observedNetworkApproval = true;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          observedTrustedShell = input.trustedShell === true;
+          observedNetworkApproval = input.shellNetworkApproval !== undefined;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /访问模式：当前工作区/u);
+    terminal.emitInput("run the local check here");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /本地检查已就绪：当前工作区/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(path.join(root, "app-data")).state, "tasks.sqlite"),
+    );
+    const task = store.get(taskId);
+    assert.equal(task?.worktreePath, undefined);
+    assert.equal(task?.trustedShell, true);
+    assert.equal(observedTrustedShell, true);
+    assert.equal(observedNetworkApproval, true);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI passes all active provider secrets to Trusted Shell redaction", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-secrets-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let observedSecrets: readonly string[] | undefined;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      activeSecrets: () => ["deepseek-secret", "minimax-secret"],
+      worktreeEnabled: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          observedSecrets = input.shellActiveSecrets;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("run with complete credential redaction");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.deepEqual(observedSecrets, ["deepseek-secret", "minimax-secret"]);
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /discarded task-/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI exposes web reads to ordinary tasks without an approval pause", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-web-fetch-"));
+  const workspace = await mkdtemp(path.join(root, "workspace-"));
+  const appData = await mkdtemp(path.join(root, "app-data-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: appData,
+      workspacePath: workspace,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          assert.equal(input.webFetchApproval, undefined);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "tool.completed",
+            taskId: input.taskId,
+            tool: "candy_web_fetch",
+            ok: true,
+          };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("read the Cursor changelog");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /candy_web_fetch:completed/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI presents one-command network elevation and leaves the task resumable on denial", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-approval-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git fetch origin",
+              cwd: input.cwd,
+              reason: "refresh the repository metadata requested by the user",
+              timeout: 15,
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved)
+            yield {
+              type: "tool.completed",
+              taskId: input.taskId,
+              tool: "candy_bash_network",
+              ok: true,
+            };
+          else throw new Error("network request denied");
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("fetch metadata");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git fetch origin[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+[\s\S]*执行此命令并继续任务/u,
+    );
+    const approvalId = waiting.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(approvalId);
+    terminal.emitInput(`:deny ${approvalId}`);
+    terminal.emitInput("\r");
+    const denied = await waitForOutput(terminal, /network denied/u);
+    assert.match(denied, /interrupted/u);
+    assert.deepEqual(decisions, [false]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("approval anchors stay visible in a long transcript", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-approval-anchor-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal: FakeTerminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          // Fill the transcript far beyond the viewport so the approval frame
+          // head would scroll out of the emitted tail without the anchor.
+          for (let index = 0; index < 60; index += 1) {
+            yield {
+              type: "assistant.delta",
+              taskId: input.taskId,
+              text: `filler line ${index}\n`,
+            };
+          }
+          await input.shellNetworkApproval?.(
+            {
+              command: "git fetch origin",
+              cwd: input.cwd,
+              reason:
+                "this read-only remote revision lookup needs outbound network access because git fetch must contact the public server over HTTPS and cannot be performed from local files alone, and the wrapped reason must push the frame head beyond the viewport tail",
+              timeout: 15,
+            },
+            signal,
+          );
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("fetch metadata");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /操作：执行受限网络命令[\s\S]*命令：git fetch origin/u,
+    );
+    assert.match(output, /\/approve network-[a-z0-9]+/u);
+    // The actionable summary must be rendered in the visible tail, not
+    // scrolled out by the long streamed filler and wrapped details.
+    assert.match(terminal.writes.slice(-4).join(""), /操作：执行受限网络命令/u);
+    const approvalId = output.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(approvalId);
+    terminal.emitInput(`:deny ${approvalId}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /network denied/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI settles network approval on exit and rejects stale approval after restart", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-network-exit-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  let firstEngineCalls = 0;
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          firstEngineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git ls-remote origin HEAD",
+              cwd: input.cwd,
+              reason: "inspect the configured remote revision",
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved) {
+            yield {
+              type: "tool.completed",
+              taskId: input.taskId,
+              tool: "candy_bash_network",
+              ok: true,
+            };
+            yield { type: "turn.completed", taskId: input.taskId };
+          } else {
+            throw new Error("network request denied on exit");
+          }
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("inspect remote");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
+    );
+    const staleApprovalId = waiting.match(/\/approve (network-[a-z0-9]+)/u)?.[1];
+    assert.ok(staleApprovalId);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await firstRun;
+
+    assert.deepEqual(decisions, [false]);
+    assert.equal(firstEngineCalls, 1);
+    const afterExit = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const interrupted = afterExit.list()[0];
+    assert.equal(interrupted?.state, "interrupted");
+    assert.equal(interrupted?.ownerId, undefined);
+    afterExit.close();
+
+    const secondTerminal = new FakeTerminal();
+    let secondEngineCalls = 0;
+    const secondRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal: secondTerminal,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          secondEngineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /interrupted/u);
+    secondTerminal.emitInput(`:approve ${staleApprovalId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /is not awaiting approval/u);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+    assert.equal(secondEngineCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI aborts a pending network request when its owner is fenced", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-fence-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  const decisions: boolean[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input, signal) {
+          yield { type: "turn.started", taskId: input.taskId };
+          const approved = await input.shellNetworkApproval?.(
+            {
+              command: "git ls-remote origin HEAD",
+              cwd: input.cwd,
+              reason: "inspect the configured remote revision",
+            },
+            signal,
+          );
+          decisions.push(approved === true);
+          if (approved) throw new Error("owner fence must not approve network");
+          throw new Error("network request was fenced");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":trusted-shell on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Local commands enabled/u);
+    terminal.emitInput("inspect remote");
+    terminal.emitInput("\r");
+    const waiting = await waitForOutput(
+      terminal,
+      /需要你的确认[\s\S]*操作\s+执行受限网络命令[\s\S]*命令：git ls-remote origin HEAD[\s\S]*状态：任务已暂停[\s\S]*\/approve network-[a-z0-9]+/u,
+    );
+    const taskId = waiting.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    const ownerStore = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const ownerId = ownerStore.get(taskId)?.ownerId;
+    assert.ok(ownerId);
+    assert.equal(ownerStore.markOwnerInterrupted(ownerId), 1);
+    ownerStore.close();
+
+    for (let attempt = 0; attempt < 100 && decisions.length === 0; attempt += 1)
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(decisions, [false]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    const recovered = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(recovered.get(taskId)?.state, "interrupted");
+    assert.equal(recovered.get(taskId)?.ownerId, undefined);
+    recovered.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI recovers a dead owner without replaying a waiting network task", async () => {
+  if (!isMacosTrustedShellAutoAvailable()) return;
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-owner-loss-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const store = new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+  store.create(
+    "task-dead-owner",
+    "auto",
+    1,
+    "deepseek-v4-flash",
+    [],
+    repository,
+    undefined,
+    undefined,
+    path.join(repository, ".git", "candy-worktrees", "task-dead-owner"),
+    true,
+  );
+  store.transition("task-dead-owner", 0, "waiting_approval", "tui:999999");
+  store.close();
+  const terminal = new FakeTerminal();
+  let engineCalls = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      trustedShellAutoAvailable: true,
+      engine: {
+        async *runTurn(input) {
+          engineCalls += 1;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /task-dead-owner\tinterrupted\t/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(engineCalls, 0);
+    const recovered = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(recovered.get("task-dead-owner")?.state, "interrupted");
+    assert.equal(recovered.get("task-dead-owner")?.ownerId, undefined);
+    recovered.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI starts in the Auto profile with file mutation enabled", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-auto-default-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let observedProfile: "read-only" | "auto" | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      observedProfile = input.approvalProfile;
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise: Promise<void> = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("inspect only");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(observedProfile, "auto");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI expands @file context before starting an agent turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-file-mention-"));
+  const appDataRoot = await mkdtemp(path.join(tmpdir(), "candy-tui-file-mention-app-"));
+  const terminal = new FakeTerminal();
+  let observedPrompt: string | undefined;
+  let runPromise: Promise<void> | undefined;
+  try {
+    await writeFile(path.join(root, "README.md"), "# Candy context\n", "utf8");
+    runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          observedPrompt = input.prompt;
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("Review @README.md");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(
+      observedPrompt,
+      'Review [workspace file: README.md]\n\n<workspace-context>\n<file path="README.md">\n# Candy context\n</file>\n</workspace-context>',
+    );
+  } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise?.catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+    await rm(appDataRoot, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI continues the current task and :new starts a different task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-continuation-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const turns: { readonly taskId: string; readonly prompt: string }[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      turns.push({ taskId: input.taskId, prompt: input.prompt });
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: `turn ${turns.length}: ${input.prompt}`,
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput("first request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 1: first request/u);
+    terminal.emitInput("second request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 2: second request/u);
+    assert.equal(turns[0]?.taskId, turns[1]?.taskId);
+
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /new task ready/u);
+    terminal.emitInput("third request");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /turn 3: third request/u);
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /deepseek-v4-flash\t/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.notEqual(turns[1]?.taskId, turns[2]?.taskId);
+    assert.match(output, /\*task-/u);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.equal(store.list().filter((task) => task.state === "completed").length, 2);
+    assert.ok(store.list().every((task) => task.model === "deepseek-v4-flash"));
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI reports malformed and conflicting Candy resource diagnostics", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-resource-diagnostics-"));
+  const terminal = new FakeTerminal();
+  try {
+    await mkdir(path.join(root, "skills", "broken"), { recursive: true });
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(
+      path.join(root, "skills", "broken", "SKILL.md"),
+      "---\nname: broken\n---\nThis skill is malformed.\n",
+    );
+    await writeFile(
+      path.join(root, "prompts", "first.md"),
+      "---\nname: duplicate\n---\nFirst prompt\n",
+    );
+    await writeFile(
+      path.join(root, "prompts", "second.md"),
+      "---\nname: duplicate\n---\nSecond prompt\n",
+    );
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":resources");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /prompt resource collision/u);
+    assert.match(
+      output,
+      /skill resource error: Candy skill requires frontmatter name and description/u,
+    );
+    assert.match(output, /prompt resource collision: prompt name "duplicate" collision/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI lists and invokes Candy-owned prompt templates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-prompt-template-"));
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      prompts.push(input.prompt);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "assistant.delta", taskId: input.taskId, text: "prompt invoked" };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(
+      path.join(root, "prompts", "review.md"),
+      "---\nname: review\ndescription: Review a change\nargument-hint: <path>\n---\nReview $1\nKeep fixture-secret private.\n",
+    );
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      activeSecrets: () => ["fixture-secret"],
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":prompts");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /review\tReview a change\t<path>/u);
+    terminal.emitInput(':prompt review "src/file with spaces.ts"');
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt invoked/u);
+    assert.deepEqual(prompts, ["Review src/file with spaces.ts\nKeep [REDACTED] private.\n"]);
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects unknown or unsafe prompt template invocations", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-prompt-template-reject-"));
+  const terminal = new FakeTerminal();
+  try {
+    await mkdir(path.join(root, "prompts"), { recursive: true });
+    await writeFile(path.join(root, "prompts", "review.md"), "Review $1\n");
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":prompt missing value");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt template not found: missing/u);
+    terminal.emitInput(`:prompt review ${"x".repeat(4_097)}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /prompt arguments rejected/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI selects an existing workspace for new tasks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-command-app-"));
+  const firstWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace command-first-"));
+  const secondWorkspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace command-second-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const workspaces: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      workspaces.push(input.cwd);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield {
+        type: "assistant.delta",
+        taskId: input.taskId,
+        text: `workspace selected ${workspaces.length}`,
+      };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(":workspace relative");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /Workspace paths must be absolute/u);
+
+    terminal.emitInput(`:workspace ${firstWorkspace}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /workspace selected:/u);
+    terminal.emitInput("work in the first workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /created task-/u);
+    await waitForOutput(terminal, /task-[a-z0-9]+ completed/u);
+
+    terminal.emitInput(`:workspace ${secondWorkspace}`);
+    terminal.emitInput("\r");
+    await waitForOutput(
+      terminal,
+      new RegExp(`workspace selected: .*${path.basename(secondWorkspace)}`, "u"),
+    );
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /new task ready/u);
+    terminal.emitInput("work in the second workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /workspace selected 2/u);
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    const expectedWorkspaces = [
+      await realpath(firstWorkspace),
+      await realpath(secondWorkspace),
+    ].sort();
+    assert.deepEqual([...workspaces].sort(), expectedWorkspaces);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(
+      store
+        .list()
+        .map((task) => task.workspacePath)
+        .sort(),
+      expectedWorkspaces,
+    );
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(firstWorkspace, { recursive: true, force: true });
+    await rm(secondWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects workspaces overlapping Candy application data", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-overlap-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-workspace-overlap-safe-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(`:workspace ${root}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /cannot overlap Candy application data/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI restores a task and its transcript before continuing after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-restart-"));
+  const firstTerminal: FakeTerminal = new FakeTerminal();
+  const firstTurns: { readonly taskId: string; readonly prompt: string }[] = [];
+  const firstEngine: TuiAgentEngine = {
+    async *runTurn(input) {
+      firstTurns.push({ taskId: input.taskId, prompt: input.prompt });
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "assistant.delta", taskId: input.taskId, text: "first persisted answer" };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot: root,
+      engine: firstEngine,
+      terminal: firstTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("persist this context");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /first persisted answer/u);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const before = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const task = before.list()[0];
+    assert.ok(task);
+    assert.deepEqual(before.transcript(task.taskId), [
+      { role: "user", text: "persist this context" },
+      { role: "assistant", text: "first persisted answer" },
+    ]);
+    before.close();
+
+    const secondTerminal: FakeTerminal = new FakeTerminal();
+    const secondTurns: { readonly taskId: string; readonly prompt: string }[] = [];
+    const secondEngine: TuiAgentEngine = {
+      async *runTurn(input) {
+        secondTurns.push({ taskId: input.taskId, prompt: input.prompt });
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "second persisted answer" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const secondRun = new TestInteractiveTui({
+      appDataRoot: root,
+      engine: secondEngine,
+      terminal: secondTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${task.taskId}\\tcompleted\\t`));
+    secondTerminal.emitInput(`:use ${task.taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${task.taskId}`));
+    secondTerminal.emitInput("continue from the saved context");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /second persisted answer/u);
+    secondTerminal.emitInput(":transcript");
+    secondTerminal.emitInput("\r");
+    const transcriptOutput = await waitForOutput(
+      secondTerminal,
+      /transcript task-[^\n]+\nuser: persist this context[\s\S]*second persisted answer/u,
+    );
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+
+    assert.deepEqual(secondTurns, [
+      { taskId: task.taskId, prompt: "continue from the saved context" },
+    ]);
+    assert.match(transcriptOutput, /user: persist this context/u);
+    assert.match(transcriptOutput, /assistant: first persisted answer/u);
+    assert.match(transcriptOutput, /user: continue from the saved context/u);
+    assert.match(transcriptOutput, /assistant: second persisted answer/u);
+    const after = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(after.transcript(task.taskId), [
+      { role: "user", text: "persist this context" },
+      { role: "assistant", text: "first persisted answer" },
+      { role: "user", text: "continue from the saved context" },
+      { role: "assistant", text: "second persisted answer" },
+    ]);
+    after.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI never replays an interrupted prompt and requires explicit continuation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-explicit-recovery-"));
+  const firstTerminal = new FakeTerminal();
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "partial side-effect evidence",
+          };
+          throw new Error("ambiguous side effect");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("perform the original operation");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /ambiguous side effect/u);
+    const taskId = firstOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const calls: string[] = [];
+    let recoverPromptCalls = 0;
+    const secondRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "safe continuation" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+        async recoverPrompt() {
+          recoverPromptCalls += 1;
+          return "replay the interrupted operation";
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    secondTerminal.emitInput(`:resume ${taskId}`);
+    secondTerminal.emitInput("\r");
+    const evidence = await waitForOutput(
+      secondTerminal,
+      new RegExp(
+        `${taskId} requires an explicit continuation[\\s\\S]*partial side-effect evidence`,
+        "u",
+      ),
+    );
+    assert.match(evidence, /perform the original operation/u);
+    assert.equal(calls.length, 0);
+    assert.equal(recoverPromptCalls, 0);
+
+    secondTerminal.emitInput(
+      `:resume ${taskId} inspect the saved evidence before taking any new action`,
+    );
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /safe continuation/u);
+    assert.deepEqual(calls, ["inspect the saved evidence before taking any new action"]);
+    assert.equal(recoverPromptCalls, 0);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI accepts a fresh direct task after an interrupted task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-fresh-after-interrupted-"));
+  const repository = await createTuiGitFixture(root);
+  const appDataRoot = path.join(root, "app-data");
+  const store = new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+  const baseline = runGit(repository, ["rev-parse", "HEAD"]).trim();
+  store.create(
+    "task-interrupted",
+    "auto",
+    1,
+    "deepseek-v4-flash",
+    [],
+    repository,
+    undefined,
+    baseline,
+  );
+  store.transition("task-interrupted", 0, "interrupted");
+  store.close();
+
+  const terminal = new FakeTerminal();
+  const calls: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await waitForOutput(terminal, /↻ 1 待恢复/u);
+    terminal.emitInput("start a fresh task");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.deepEqual(calls, ["start a fresh task"]);
+
+    const updatedStore = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(updatedStore.get("task-interrupted")?.state, "interrupted");
+    assert.equal(updatedStore.list().filter((task) => task.state === "completed").length, 1);
+    updatedStore.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI queues ordinary input while the current turn owns execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-active-owner-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let started: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const releasePromise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queuedFollowUps: string[] = [];
+  let calls = 0;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      calls += 1;
+      yield { type: "turn.started", taskId: input.taskId };
+      started?.();
+      await releasePromise;
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+    async followUp(_taskId, text) {
+      queuedFollowUps.push(text);
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("long turn");
+    terminal.emitInput("\r");
+    await startedPromise;
+    terminal.emitInput("do not overlap");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /follow-up queued/u);
+    assert.equal(calls, 1);
+    release?.();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.deepEqual(queuedFollowUps, ["do not overlap"]);
+    assert.match(output, /\[follow-up\] do not overlap/u);
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI may inspect but cannot control a task owned by another client", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-non-owner-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const engineCalls: string[] = [];
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      engineCalls.push(input.taskId);
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  let external: SQLiteTaskStore | undefined;
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    external = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    external.create("foreign-task", "read-only", 1, "deepseek-v4-flash", [], process.cwd());
+    external.transition("foreign-task", 0, "running", "desktop-owner");
+    terminal.emitInput(":use foreign-task");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /read-only task: foreign-task/u);
+    terminal.emitInput("attempt foreign control");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /owned by desktop-owner/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.deepEqual(engineCalls, []);
+    assert.match(output, /owned by desktop-owner/u);
+  } finally {
+    external?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI reviews non-Git changed files and bounded diff without mutating the workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-nongit-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-workspace-"));
+  const terminal = new FakeTerminal();
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      await writeFile(path.join(input.cwd, "new.ts"), "created by fixture\n");
+      await unlink(path.join(input.cwd, "obsolete.ts"));
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await writeFile(path.join(workspace, "obsolete.ts"), "before\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("review workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    const changes = await waitForOutput(terminal, /changed files:/u);
+    assert.match(changes, /new\.ts/u);
+    assert.match(changes, /obsolete\.ts/u);
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    const diff = await waitForOutput(terminal, /changed: new\.ts/u);
+    assert.match(diff, /changed: obsolete\.ts/u);
+    assert.equal(await readWorkspaceFile(workspace, "new.ts"), "created by fixture\n");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI supports the current-workspace access mode for Git workspace edits", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "direct edit\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+      worktreeEnabled: false,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /访问模式：当前工作区/u);
+    terminal.emitInput("edit directly");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(executionPath, repository);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "direct edit\n");
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    const task = store.list()[0];
+    assert.equal(task?.worktreePath, undefined);
+    assert.equal(existsSync(path.join(repository, ".git", "candy-worktrees")), false);
+    store.close();
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /direct mode: changes are already in the local workspace/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI allows direct-mode tasks when the Git workspace is dirty", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-direct-dirty-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let engineCalls = 0;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      engineCalls += 1;
+      await writeFile(path.join(input.cwd, "README.md"), "candy edit\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    await writeFile(path.join(repository, "dirty.txt"), "uncommitted\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("edit dirty workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    assert.equal(engineCalls, 1);
+    assert.equal(await readFile(path.join(repository, "dirty.txt"), "utf8"), "uncommitted\n");
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "candy edit\n");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI explains that isolated tasks exclude existing uncommitted workspace changes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-dirty-source-"));
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let taskSawSourceChange = true;
+  try {
+    await writeFile(path.join(repository, "dirty.txt"), "uncommitted\n");
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      workspacePath: repository,
+      terminal,
+      worktreeEnabled: true,
+      engine: {
+        async *runTurn(input) {
+          taskSawSourceChange = existsSync(path.join(input.cwd, "dirty.txt"));
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("inspect the current change");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(
+      terminal,
+      /本地工作区有未提交修改：此隔离任务从最新提交开始，不包含这些修改/u,
+    );
+    assert.match(output, /使用 \/access current 新建任务/u);
+    const taskId = output.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    assert.equal(taskSawSourceChange, false);
+    assert.equal(await readFile(path.join(repository, "dirty.txt"), "utf8"), "uncommitted\n");
+    terminal.emitInput("/discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`discarded ${taskId}`, "u"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed Apply", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-apply-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "changed in task\n");
+      await writeFile(path.join(input.cwd, "new.txt"), "created in task\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput(":worktree on");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /访问模式：安全工作区/u);
+    terminal.emitInput("edit in isolation");
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /created task-/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    assert.ok(executionPath?.startsWith(path.join(repository, ".git", "candy-worktrees")));
+    assert.notEqual(executionPath, repository);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(path.join(repository, "new.txt")), false);
+
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /apply blocked: Review the complete current change list/u);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`changed files: ${taskId}`, "u"));
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /\+changed in task/u);
+    await waitForOutput(terminal, /\+created in task/u);
+    terminal.emitInput(":apply");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed in task\n");
+    assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "created in task\n");
+    assert.equal(existsSync(executionPath!), false);
+    assert.equal(runGit(repository, ["diff", "--cached", "--quiet"]), "");
+    const store = new SQLiteTaskStore(
+      path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"),
+    );
+    assert.equal(store.get(taskId)?.worktreePath, undefined);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI explicitly discards a completed Task Worktree without touching Local", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-worktree-discard-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const terminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "discard me\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine,
+      terminal,
+      worktreeEnabled: true,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":profile auto");
+    terminal.emitInput("\r");
+    terminal.emitInput("edit then discard");
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /Task Worktree:/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":discard");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, new RegExp(`discarded ${taskId}`, "u"));
+
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(executionPath!), false);
+    assert.equal(runGit(repository, ["status", "--porcelain"]), "");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI persists reviewed workspace metadata across restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-review-restart-"));
+  const appDataRoot = path.join(root, "app-data");
+  const repository = await createTuiGitFixture(root);
+  const firstTerminal = new FakeTerminal();
+  let executionPath: string | undefined;
+  const firstEngine: TuiAgentEngine = {
+    async *runTurn(input) {
+      executionPath = input.cwd;
+      await writeFile(path.join(input.cwd, "README.md"), "reviewed after restart\n");
+      await writeFile(path.join(input.cwd, "new.txt"), "created after restart\n");
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine: firstEngine,
+      terminal: firstTerminal,
+      worktreeEnabled: true,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput(":profile auto");
+    firstTerminal.emitInput("\r");
+    firstTerminal.emitInput("edit and review after restart");
+    firstTerminal.emitInput("\r");
+    const created = await waitForOutput(firstTerminal, /Task Worktree:/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    await waitForOutput(firstTerminal, new RegExp(`${taskId} completed`, "u"));
+    firstTerminal.emitInput(":changes");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, new RegExp(`changed files: ${taskId}`, "u"));
+    firstTerminal.emitInput(":diff");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /\+reviewed after restart/u);
+    await waitForOutput(firstTerminal, /\+created after restart/u);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    assert.ok(executionPath);
+    assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "base\n");
+    assert.equal(existsSync(path.join(repository, "new.txt")), false);
+
+    const secondTerminal = new FakeTerminal();
+    let secondEngineCalls = 0;
+    const secondEngine: TuiAgentEngine = {
+      async *runTurn() {
+        yield* [];
+        secondEngineCalls += 1;
+        throw new Error("review restart unexpectedly started a provider turn");
+      },
+    };
+    const secondRun = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: repository,
+      engine: secondEngine,
+      terminal: secondTerminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(":tasks");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${taskId}\\tcompleted\\t`, "u"));
+    secondTerminal.emitInput(`:use ${taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
+    secondTerminal.emitInput(":transcript");
+    secondTerminal.emitInput("\r");
+    const transcript = await waitForOutput(
+      secondTerminal,
+      /edit and review after restart[\s\S]*candy_write|edit and review after restart/u,
+    );
+    assert.match(transcript, /edit and review after restart/u);
+    secondTerminal.emitInput(":apply");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+    assert.equal(secondEngineCalls, 0);
+    assert.equal(
+      await readFile(path.join(repository, "README.md"), "utf8"),
+      "reviewed after restart\n",
+    );
+    assert.equal(
+      await readFile(path.join(repository, "new.txt"), "utf8"),
+      "created after restart\n",
+    );
+    assert.equal(existsSync(executionPath), false);
+    assert.equal(runGit(repository, ["diff", "--cached", "--quiet"]), "");
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI reviews Git tracked, untracked, removed files and filters diff paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-changes-git-"));
+  const terminal = new FakeTerminal();
+  const changes: WorkspaceChangeSnapshot = {
+    available: true,
+    tracked: ["src/value.ts", "old.ts"],
+    untracked: ["notes.txt"],
+    patchText:
+      "diff --git a/src/value.ts b/src/value.ts\n@@ -1 +1 @@\n-old\n+new\n" +
+      "diff --git a/old.ts b/old.ts\ndeleted file mode 100644\n",
+    patchTruncated: false,
+  };
+  const changeTracker: WorkspaceChangeTracker = {
+    async captureBaseline() {
+      return "0123456789abcdef";
+    },
+    async inspect() {
+      return changes;
+    },
+  };
+  const engine: TuiAgentEngine = {
+    async *runTurn(input) {
+      yield { type: "turn.started", taskId: input.taskId };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      engine,
+      terminal,
+      changeTracker,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/profile read-only");
+    terminal.emitInput("\r");
+    terminal.emitInput("review git workspace");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":changes");
+    terminal.emitInput("\r");
+    const changesOutput = await waitForOutput(terminal, /removed:/u);
+    assert.match(changesOutput, /tracked: src\/value\.ts/u);
+    assert.match(changesOutput, /untracked: notes\.txt/u);
+    assert.match(changesOutput, /removed: old\.ts/u);
+    terminal.emitInput(":diff src/value.ts");
+    terminal.emitInput("\r");
+    const diffOutput = await waitForOutput(terminal, /@@ -1 \+1 @@/u);
+    assert.match(diffOutput, /src\/value\.ts/u);
+    assert.doesNotMatch(diffOutput, /deleted file mode/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI bounds a large diff before rendering it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-large-diff-"));
+  const terminal = new FakeTerminal();
+  const largePatch = `diff --git a/src/large.ts b/src/large.ts\n${"+line\n".repeat(20_000)}`;
+  const changeTracker: WorkspaceChangeTracker = {
+    async captureBaseline() {
+      return "0123456789abcdef";
+    },
+    async inspect() {
+      return {
+        available: true,
+        tracked: ["src/large.ts"],
+        untracked: [],
+        patchText: largePatch,
+        patchTruncated: false,
+      };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      changeTracker,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/profile read-only");
+    terminal.emitInput("\r");
+    terminal.emitInput("review large diff");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":diff");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /diff truncated at 65536 bytes/u);
+    assert.match(output, /diff truncated at 65536 bytes/u);
+    assert.ok(
+      Math.max(...terminal.writes.map((write) => Buffer.byteLength(write, "utf8"))) < 70 * 1024,
+    );
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI projects explicit validator pass, fail, cancel, and timeout safely", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-validator-"));
+  const terminal = new FakeTerminal();
+  const results = new Map<string, ValidatorResult>([
+    ["pass", { ok: true, fingerprint: "pass", evidence: "validator passed", durationMs: 1 }],
+    [
+      "fail",
+      {
+        ok: false,
+        fingerprint: "fail",
+        evidence: "validator failed fixture-secret",
+        durationMs: 2,
+      },
+    ],
+  ]);
+  const validator = {
+    run: async (
+      command: CommandValidatorCommand,
+      _workspace: string,
+      signal: AbortSignal,
+    ): Promise<ValidatorResult> => {
+      const mode = command.args[0];
+      const result = results.get(mode ?? "");
+      if (result !== undefined) return result;
+      if (mode === "cancel") {
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("validator cancelled")), {
+            once: true,
+          });
+        });
+      }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason ?? new Error("timeout")), {
+          once: true,
+        });
+      });
+      throw new Error("validator did not stop");
+    },
+  };
+  const taskIds: string[] = [];
+  const createAndValidate = async (mode: string, expected: RegExp): Promise<string> => {
+    terminal.emitInput(`:validator ${process.execPath} ${mode}`);
+    terminal.emitInput("\r");
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    terminal.emitInput(`run ${mode}`);
+    terminal.emitInput("\r");
+    let taskId: string | undefined;
+    for (let attempt = 0; attempt < 500 && taskId === undefined; attempt += 1) {
+      const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)];
+      taskId = matches
+        .map((match) => match[1])
+        .find((candidate) => candidate !== undefined && !taskIds.includes(candidate));
+      if (taskId === undefined) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.ok(taskId);
+    taskIds.push(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":validate");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, expected);
+    return taskId;
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+      validator,
+      validatorTimeoutMs: 5,
+      activeSecrets: () => ["fixture-secret"],
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await createAndValidate("pass", /validator pass/u);
+    await createAndValidate("fail", /validator fail/u);
+    const cancelledTask = await createAndValidate("cancel", /validator running/u);
+    terminal.emitInput(`:cancel ${cancelledTask}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /validator cancelled/u);
+    await createAndValidate("timeout", /validator running/u);
+    await waitForOutput(terminal, /validator timeout/u);
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.equal(store.list().length, taskIds.length);
+    assert.ok(store.list().every((task) => task.validator?.executable === process.execPath));
+    const evidenceSummaries = store.list().map((task) => ({
+      taskId: task.taskId,
+      summary: store.getRun(task.taskId)?.evidenceSummary,
+    }));
+    assert.ok(
+      evidenceSummaries.some(({ summary }) => summary === "validator failed [REDACTED]"),
+      JSON.stringify(evidenceSummaries),
+    );
+    assert.doesNotMatch(terminal.writes.join(""), /fixture-secret/u);
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("long validator evidence keeps the terminal status line visible", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-validator-long-"));
+  const terminal = new FakeTerminal();
+  const longEvidence = Array.from(
+    { length: 40 },
+    (_unused, index) => `evidence line ${index + 1}`,
+  ).join("\n");
+  const validator: TuiValidator = {
+    run: async (): Promise<ValidatorResult> => ({
+      ok: false,
+      fingerprint: "fail",
+      evidence: longEvidence,
+      durationMs: 1,
+    }),
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+      terminal,
+      validator,
+      activeSecrets: () => [],
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(`:validator ${process.execPath} fail`);
+    terminal.emitInput("\r");
+    terminal.emitInput(":new");
+    terminal.emitInput("\r");
+    terminal.emitInput("run fail");
+    terminal.emitInput("\r");
+    let taskId: string | undefined;
+    for (let attempt = 0; attempt < 500 && taskId === undefined; attempt += 1) {
+      const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)];
+      taskId = matches.map((match) => match[1]).find((candidate) => candidate !== undefined);
+      if (taskId === undefined) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.ok(taskId);
+    await waitForOutput(terminal, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":validate");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /validator fail:/u);
+    // The status anchor must be present in the terminal byte stream even
+    // though the 40-line evidence body overflows the transcript viewport.
+    assert.match(output, /validator fail:/u);
+    // The status line must be rendered in the visible tail, not scrolled out.
+    assert.match(terminal.writes.slice(-4).join(""), /validator fail:/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI identifies tasks and supports one-shot /new validator configuration", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-task-status-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput(`/new --validator ${process.execPath} --strict -- Repair task list display`);
+    terminal.emitInput("\r");
+    const created = await waitForOutput(terminal, /completed/u);
+    const taskId = created.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const task = store.get(taskId);
+    assert.equal(task?.title, "Repair task list display");
+    assert.deepEqual(task?.validator, { executable: process.execPath, args: ["--strict"] });
+    assert.equal(typeof task?.createdAt, "number");
+    assert.equal(typeof task?.updatedAt, "number");
+    store.close();
+
+    terminal.emitInput(":tasks");
+    terminal.emitInput("\r");
+    const tasks = await waitForOutput(
+      terminal,
+      /title=Repair task list display[\s\S]*created=[^\t]+\tupdated=/u,
+    );
+    assert.match(tasks, /workspace=local/u);
+    assert.match(tasks, /local-commands=off/u);
+    assert.match(tasks, /validator=configured/u);
+
+    terminal.emitInput(":status");
+    terminal.emitInput("\r");
+    const status = await waitForOutput(
+      terminal,
+      new RegExp(`status ${taskId}[\\s\\S]*phase: completed`, "u"),
+    );
+    assert.match(status, /profile: auto/u);
+    assert.match(status, /local commands: off/u);
+    assert.match(status, /approval: none/u);
+    assert.match(status, /run: none/u);
+
+    terminal.emitInput(":new --validator relative-executable -- invalid validator");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /usage: \/new \[prompt\]/u);
+    const afterInvalid = new SQLiteTaskStore(
+      path.join(resolveAppPaths(root).state, "tasks.sqlite"),
+    );
+    assert.equal(afterInvalid.list().length, 1);
+    afterInvalid.close();
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function readWorkspaceFile(workspace: string, fileName: string): Promise<string> {
+  return readFile(path.join(workspace, fileName), "utf8");
+}
+
+const VALID_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
+test("interactive TUI selects each explicit model through the slash command", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-models-"));
+  const terminal = new FakeTerminal();
+  const observed: string[] = [];
+  const cases = [
+    ["deepseek-flash", "deepseek-v4-flash"],
+    ["deepseek-pro", "deepseek-v4-pro"],
+    ["deepseek-flash-vision", "deepseek-v4-flash-vision-exp"],
+    ["minimax-m3", "MiniMax-M3"],
+  ] as const;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          observed.push(input.model);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: `model ${input.model}` };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const [alias, model] of cases) {
+      terminal.emitInput(":new");
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, /new task ready/u);
+      terminal.emitInput(`/model ${alias}`);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`model selected: ${model}`, "u"));
+      terminal.emitInput(`run ${alias}`);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`model ${model}`, "u"));
+    }
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.deepEqual(
+      observed,
+      cases.map(([, model]) => model),
+    );
+    assert.deepEqual(
+      store
+        .list()
+        .map((task) => task.model)
+        .sort(),
+      cases.map(([, model]) => model).sort(),
+    );
+    store.close();
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI lists available models for a bare /model", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-model-list-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/model");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Available models/u);
+    assert.match(output, /deepseek-flash/u);
+    assert.match(output, /deepseek-pro/u);
+    assert.match(output, /minimax-m3/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI /help lists the full command reference", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-help-"));
+  const terminal = new FakeTerminal({ rows: 60 });
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/help");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /Candy commands/u);
+    assert.match(output, /\/model/u);
+    assert.match(output, /\/access/u);
+    assert.doesNotMatch(output, /\/local|\/worktree|\/profile/u);
+    assert.doesNotMatch(output, /\/trusted-shell/u);
+    assert.match(output, /\/resume/u);
+    assert.match(output, /\/apply/u);
+    assert.match(output, /\/quit/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI lists resumable tasks for a bare /resume without submitting a prompt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-resume-list-"));
+  const firstTerminal = new FakeTerminal();
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield {
+            type: "assistant.delta",
+            taskId: input.taskId,
+            text: "partial side-effect evidence",
+          };
+          throw new Error("ambiguous side effect requires review");
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput("perform the original operation");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /ambiguous side effect/u);
+    const taskId = firstOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const calls: string[] = [];
+    const secondRun = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput("/resume");
+    secondTerminal.emitInput("\r");
+    const list = await waitForOutput(secondTerminal, /choose with \/resume <task-id>/u);
+    assert.match(list, new RegExp(taskId, "u"));
+    assert.equal(calls.length, 0);
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI shows usage for bare required-argument commands and keeps prompts intact", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-bare-usage-"));
+  const terminal = new FakeTerminal();
+  const calls: string[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          calls.push(input.prompt);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "ok" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const command of [
+      "/cancel",
+      "/pause",
+      "/approve",
+      "/deny",
+      "/prioritize",
+      "/steer",
+      "/follow-up",
+    ]) {
+      terminal.emitInput(command);
+      terminal.emitInput("\r");
+      await waitForOutput(terminal, new RegExp(`usage: ${command}`, "u"));
+    }
+    terminal.emitInput("/profile");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /profile: auto/u);
+    assert.equal(calls.length, 0);
+    terminal.emitInput("/private/tmp/probe");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /ok/u);
+    assert.deepEqual(calls, ["/private/tmp/probe"]);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI rejects a model switch during an active turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-model-active-"));
+  const terminal = new FakeTerminal();
+  let release: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          await started;
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput(":model deepseek-flash");
+    terminal.emitInput("\r");
+    terminal.emitInput("long model turn");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /long model turn/u);
+    terminal.emitInput(":model minimax-m3");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /model switch rejected:.*active turn/u);
+    assert.match(output, /model switch rejected/u);
+    release?.();
+    await waitForOutput(terminal, /completed/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    release?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-clipboard-image-"));
+  const terminal = new FakeTerminal();
+  const images: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  let clipboardReads = 0;
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => {
+        clipboardReads += 1;
+        return { mimeType: "image/png", content: VALID_PNG };
+      },
+      engine: {
+        async *runTurn(input) {
+          images.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "clipboard image accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    await waitForOutput(terminal, /image attachment requires \/model minimax-m3/u);
+    terminal.emitInput("/model minimax-m3");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /model selected: MiniMax-M3/u);
+    terminal.emitInput("describe the pasted image");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /clipboard image accepted/u);
+    assert.equal(clipboardReads, 1);
+    assert.equal(images.length, 1);
+    assert.equal(images[0]?.[0]?.mimeType, "image/png");
+    assert.equal(images[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl+V renders an attached image inline when iTerm2 graphics are available", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-inline-clipboard-image-"));
+  const terminal = new FakeTerminal();
+  const previousItermSession = process.env.ITERM_SESSION_ID;
+  process.env.ITERM_SESSION_ID = "candy-inline-image-test";
+  resetCapabilitiesCache();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => ({ mimeType: "image/png", content: VALID_PNG }),
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const firstPreviewWrite = terminal.writes.length;
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    const preview = await waitForNewOutput(terminal, firstPreviewWrite, /File=inline=1/u);
+    assert.ok(preview.includes("\x1b]1337;File=inline=1"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    if (previousItermSession === undefined) delete process.env.ITERM_SESSION_ID;
+    else process.env.ITERM_SESSION_ID = previousItermSession;
+    resetCapabilitiesCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI accepts a clipboard image for the experimental DeepSeek vision model", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-deepseek-vision-image-"));
+  const terminal = new FakeTerminal();
+  const images: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      readClipboardImageImpl: async () => ({ mimeType: "image/png", content: VALID_PNG }),
+      engine: {
+        async *runTurn(input) {
+          images.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "vision accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/model deepseek-flash-vision");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /model selected: deepseek-v4-flash-vision-exp/u);
+    terminal.emitInput("\x16"); // Ctrl+V
+    await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
+    terminal.emitInput("describe the pasted image");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /vision accepted/u);
+    assert.equal(images.length, 1);
+    assert.equal(images[0]?.[0]?.mimeType, "image/png");
+    assert.equal(images[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    terminal.emitInput("/quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI sends Candy-owned image attachments and recovers them after restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-attachments-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-workspace-"));
+  const imagePath = path.join(path.dirname(root), "candy-tui-attachment-fixture.png");
+  await writeFile(imagePath, VALID_PNG);
+  const firstTerminal = new FakeTerminal();
+  const firstImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+  let taskId: string | undefined;
+  try {
+    const firstRun = new TestInteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal: firstTerminal,
+      engine: {
+        async *runTurn(input) {
+          firstImages.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "image accepted" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstTerminal.emitInput(`:attach ${imagePath}`);
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /attachment staged: att_[a-f0-9]{64}/u);
+    firstTerminal.emitInput(":model minimax-m3");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /model selected: MiniMax-M3/u);
+    firstTerminal.emitInput(":new");
+    firstTerminal.emitInput("\r");
+    await waitForOutput(firstTerminal, /new task ready/u);
+    firstTerminal.emitInput("describe the attached image");
+    firstTerminal.emitInput("\r");
+    const firstOutput = await waitForOutput(firstTerminal, /image accepted/u);
+    taskId = [...firstOutput.matchAll(/created (task-[a-z0-9]+)/gu)].at(-1)?.[1];
+    assert.ok(taskId);
+    assert.equal(firstImages.length, 1);
+    assert.equal(firstImages[0]?.[0]?.mimeType, "image/png");
+    assert.equal(firstImages[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    const firstStore = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    const saved = firstStore.get(taskId);
+    assert.ok(saved);
+    assert.equal(saved.model, "MiniMax-M3");
+    assert.equal(saved.attachmentIds.length, 1);
+    const attachmentId = saved.attachmentIds[0];
+    assert.ok(attachmentId);
+    firstStore.close();
+    firstTerminal.emitInput(":quit");
+    firstTerminal.emitInput("\r");
+    await firstRun;
+
+    const secondTerminal = new FakeTerminal();
+    const secondImages: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
+    const secondRun = new TestInteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal: secondTerminal,
+      engine: {
+        async *runTurn(input) {
+          secondImages.push(input.images ?? []);
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "assistant.delta", taskId: input.taskId, text: "recovered image" };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    secondTerminal.emitInput(`:use ${taskId}`);
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
+    secondTerminal.emitInput(":attachments");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, new RegExp(`${attachmentId}\\timage/png`, "u"));
+    secondTerminal.emitInput("continue with the saved image");
+    secondTerminal.emitInput("\r");
+    await waitForOutput(secondTerminal, /recovered image/u);
+    assert.equal(secondImages.length, 1);
+    assert.equal(secondImages[0]?.[0]?.data, VALID_PNG.toString("base64"));
+    secondTerminal.emitInput(":quit");
+    secondTerminal.emitInput("\r");
+    await secondRun;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+    await rm(imagePath, { force: true });
+  }
+});
+
+test("interactive TUI rejects unsafe or invalid attachment paths", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-"));
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-workspace-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "candy-tui-attachment-reject-outside-"));
+  const terminal = new FakeTerminal();
+  const workspaceImage = path.join(workspace, "workspace.png");
+  const appDataImage = path.join(root, "app-data.png");
+  const invalidMime = path.join(outside, "not-image.txt");
+  const corruptImage = path.join(outside, "corrupt.png");
+  const video = path.join(outside, "clip.mp4");
+  const oversized = path.join(outside, "oversized.png");
+  const linked = path.join(root, "linked.png");
+  const linkTarget = path.join(outside, "target.png");
+  await writeFile(workspaceImage, VALID_PNG);
+  await writeFile(appDataImage, VALID_PNG);
+  await writeFile(invalidMime, VALID_PNG);
+  await writeFile(corruptImage, "not a png");
+  await writeFile(video, "video");
+  await writeFile(oversized, Buffer.alloc(10 * 1024 * 1024 + 1));
+  await writeFile(linkTarget, VALID_PNG);
+  try {
+    await symlink(linkTarget, linked);
+  } catch {
+    // Windows test hosts may not grant symlink creation; the other path gates remain covered.
+  }
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      workspacePath: workspace,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const rejected = async (filePath: string, pattern: RegExp): Promise<void> => {
+      terminal.emitInput(`:attach ${filePath}`);
+      terminal.emitInput("\r");
+      const output = await waitForOutput(terminal, pattern);
+      assert.match(output, pattern);
+    };
+    await rejected(workspaceImage, /workspace attachment paths are not allowed/iu);
+    await rejected(appDataImage, /Candy application-data attachment paths are not allowed/iu);
+    await rejected(invalidMime, /unsupported image MIME type/iu);
+    await rejected(corruptImage, /image content is corrupt/iu);
+    await rejected(video, /video attachments are unavailable/iu);
+    await rejected(oversized, /attachment exceeds the 10485760-byte limit/iu);
+    if (await readFile(linked).catch(() => undefined))
+      await rejected(linked, /symbolic links are not allowed/iu);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
