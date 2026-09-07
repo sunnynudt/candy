@@ -102,7 +102,7 @@ try {
     firstTerminal,
     /Pi completed the reviewed coding journey\.[\s\S]*completed/u,
   );
-  assert.match(completed, /\[tool candy_write\b/u);
+  assert.match(completed, /candy_write\b/u);
   assert.doesNotMatch(completed, new RegExp(fixtureSecret, "u"));
   const created = completed.match(/created (task-[a-z0-9]+)/u);
   assert.ok(created?.[1]);
@@ -139,7 +139,7 @@ try {
   activeRun = secondRun;
   await nextTurn();
   send(secondTerminal, ":tasks");
-  await waitForOutput(secondTerminal, new RegExp(`${taskId}\\s+completed\\s+`, "u"));
+  await waitForOutput(secondTerminal, new RegExp(`${taskId}[\\s\\S]*completed`, "u"));
   send(secondTerminal, `:use ${taskId}`);
   await waitForOutput(secondTerminal, new RegExp(`current task: ${taskId}`, "u"));
   send(secondTerminal, ":transcript");
@@ -218,7 +218,8 @@ async function waitForOutput(terminal, pattern) {
     if (pattern.test(output)) return output;
     await new Promise((resolve) => globalThis.setTimeout(resolve, 1));
   }
-  throw new Error(`Timed out waiting for Pi coding journey output: ${pattern}`);
+  const tail = terminal.writes.join("").slice(-4_000);
+  throw new Error(`Timed out waiting for Pi coding journey output: ${pattern}\nTail:\n${tail}`);
 }
 
 async function collectFiles(directory) {

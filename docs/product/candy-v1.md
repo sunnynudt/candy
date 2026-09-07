@@ -2,7 +2,7 @@
 
 ## Product statement
 
-Candy V1 is a standalone, DeepSeek-first coding product delivered as a terminal UI (TUI). It provides a Codex-class local coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. The TUI runs one agent per task and may run independent tasks concurrently within a bounded limit.
+Candy V1 is a standalone, model-neutral local coding product delivered through a terminal UI (TUI) and a local browser WebUI. It provides a Codex-class local coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each interface runs one agent per task and may run independent tasks concurrently within a bounded limit.
 
 V1 targets the current macOS Tahoe `26.x` Apple Silicon host (currently `26.6.1`) and Windows 11.
 
@@ -12,7 +12,7 @@ The Electron Desktop client and Browser Workspace are explicitly V2 scope. Their
 
 Candy V1 is:
 
-- TUI-only and local-first;
+- TUI-first and local-first, with the local browser WebUI as a second V1 operator surface;
 - single-user and single-agent per task;
 - bounded to three concurrent tasks by default and five at most;
 - TypeScript for product and control-plane code, with only the narrow Rust native-helper exception for OS command sandboxing and Windows process-tree ownership;
@@ -101,7 +101,7 @@ Loaded skill directories become read-only roots for Candy's file tools: `candy_r
 
 ## Providers and credentials
 
-DeepSeek is the default provider path. MiniMax domestic Token Plan is supported only through its approved domestic endpoint, `https://api.minimaxi.com`; Candy must not fail over to the global MiniMax endpoint. Provider model contracts, live entitlement, multimodal behavior, and cancellation are accepted only with the evidence described by the live-provider procedure.
+Candy is model- and provider-neutral at the product boundary. The built-in DeepSeek and MiniMax domestic Token Plan paths are supported only through their approved endpoints; MiniMax must use `https://api.minimaxi.com` and must not fail over to the global endpoint. Additional configured OpenAI-compatible models remain explicitly user-configured and capability-bounded. Provider model contracts, live entitlement, multimodal behavior, and cancellation are accepted only with the evidence described by the live-provider procedure.
 
 In addition to the built-in DeepSeek and MiniMax paths, users may configure additional OpenAI-compatible models through the Candy-owned `models.json` in the application-data directory (bounded, validated, credential-free). Each entry declares an id, label, model name, OpenAI-compatible API root `baseUrl`, and a `credentialName`; the client appends `/chat/completions`. Configured models are non-vision and are verified by the user with their own API key (BYOK); they do not constitute V1 live-gate acceptance evidence. The model id, label, and credential name are also surfaced by `/model`, `/credentials`, and `/credential`.
 

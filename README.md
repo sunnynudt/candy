@@ -1,6 +1,6 @@
 # Candy
 
-Candy is a standalone, DeepSeek-first coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary macOS host is `26.6.1`.
+Candy is a standalone, model-neutral local coding product for the current macOS Tahoe `26.x` on Apple Silicon and Windows 11. The current primary macOS host is `26.6.1`. The TUI and local browser WebUI share Candy's task and history rules; Electron Desktop remains V2.
 
 ## Development baseline
 
@@ -35,7 +35,7 @@ TUI 命令以 `/` 为前缀（`:` 为兼容别名）：运行 `/help` 查看完�
 
 Windows development-machine setup, native prerequisites, and executable audit instructions are in [`docs/development/windows-11-toolchain.md`](docs/development/windows-11-toolchain.md).
 
-Product scope is defined in `docs/product/candy-v1.md`. Implementation order and evidence requirements are defined in `docs/architecture/implementation-plan-v1.md` and `docs/product/acceptance-v1.md`.
+Product scope is defined in `docs/product/candy-v1.md`. Implementation order and evidence requirements are defined in `docs/architecture/implementation-plan-v1.md` and `docs/product/acceptance-v1.md`. Start the local WebUI with `npm run webui`; it binds to loopback and requires the printed one-time bearer token.
 
 Run `npm run acceptance:macos` for the current Tahoe 26.x primary host.
 

@@ -154,6 +154,25 @@ export interface AppServerControllerOptions {
       readonly cancelled: boolean;
     }>;
   };
+  /** A second local operator surface may inspect the shared store without fencing live owners. */
+  readonly recoverActiveTasks?: boolean;
+}
+
+export interface AppServerTaskView {
+  readonly metadata: TaskMetadata;
+  readonly transcript: readonly {
+    readonly role: "user" | "assistant" | "tool";
+    readonly text: string;
+  }[];
+  readonly run?: ReturnType<SQLiteTaskStore["getRun"]>;
+  readonly review?: ReturnType<SQLiteTaskStore["getReview"]>;
+  readonly changes: {
+    readonly available: boolean;
+    readonly tracked: readonly string[];
+    readonly untracked: readonly string[];
+    readonly patchText: string;
+    readonly patchTruncated: boolean;
+  };
 }
 
 interface AppServerValidator {
@@ -225,6 +244,7 @@ export class AppServerController {
   readonly #pendingRuns: PendingRun[] = [];
   readonly #requestedRuns = new Set<string>();
   readonly #bashRunner: AppServerControllerOptions["bashRunner"];
+  readonly #recoverActiveTasks: boolean;
   readonly #shellApprovals = new Map<string, PendingShellApproval>();
   readonly #sequences = new Map<string, number>();
   #closed = false;
@@ -249,7 +269,8 @@ export class AppServerController {
     this.#applyChanges = options.applyChanges;
     this.#worktreeRoot = options.worktreeRoot;
     this.#worktreeManager = options.worktreeManager;
-    this.recoverActiveTasks();
+    this.#recoverActiveTasks = options.recoverActiveTasks ?? true;
+    if (this.#recoverActiveTasks) this.recoverActiveTasks();
   }
 
   public get state(): AppServerState {
@@ -258,6 +279,52 @@ export class AppServerController {
       runtimeVersion: "0.0.0",
       executingTasks: [...this.#active.keys()],
     };
+  }
+
+  /** Read-only projection shared by the local WebUI and the app-server protocol. */
+  public listTasks(): readonly TaskMetadata[] {
+    return this.#store.list();
+  }
+
+  public async inspectTask(taskId: string): Promise<AppServerTaskView | undefined> {
+    const metadata = this.#store.get(taskId);
+    if (metadata === undefined) return undefined;
+    const current = await this.ensureBaseline(metadata);
+    const changes = await this.#changeTracker.inspect(
+      current.worktreePath ?? current.workspacePath,
+      current.workspaceBaseline,
+      this.#activeSecrets?.() ?? [],
+    );
+    return {
+      metadata: current,
+      transcript: this.#store.transcript(taskId) ?? [],
+      ...(this.#store.getRun(taskId) === undefined ? {} : { run: this.#store.getRun(taskId) }),
+      ...(this.#store.getReview(taskId) === undefined
+        ? {}
+        : { review: this.#store.getReview(taskId) }),
+      changes: {
+        available: changes.available,
+        tracked: changes.tracked,
+        untracked: changes.untracked,
+        patchText: redactWorkspacePatch(changes.patchText, this.#activeSecrets?.() ?? []),
+        patchTruncated: changes.patchTruncated,
+      },
+    };
+  }
+
+  /** Stop is intentionally owner-fenced; a different local client may inspect but not control. */
+  public async stopOwnedTask(taskId: string): Promise<readonly ProtocolMessage[]> {
+    const metadata = this.#store.get(taskId);
+    if (metadata === undefined) throw new Error("Task does not exist.");
+    if (!this.ownsExecution(metadata)) throw new Error("Task is owned by another client.");
+    return this.dispatch({
+      v: 1,
+      kind: "command",
+      commandId: `web-stop-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      taskId,
+      expectedRevision: metadata.revision,
+      command: { type: "task.pause" },
+    });
   }
 
   public async dispatch(
@@ -1270,8 +1337,15 @@ function createCodingJourneyEngine(): RecoverableAgentEngine {
   };
 }
 
-export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
-  const paths = resolveAppPaths(resolveDefaultAppDataRoot());
+export interface DefaultAppServerControllerOptions {
+  readonly appDataRoot?: string;
+  readonly recoverActiveTasks?: boolean;
+}
+
+export function createDefaultAppServerController(
+  options: DefaultAppServerControllerOptions = {},
+): AppServerController {
+  const paths = resolveAppPaths(options.appDataRoot ?? resolveDefaultAppDataRoot());
   const sandboxRunner = resolveNativeProcessRunnerPath(import.meta.url);
   const commandValidator =
     sandboxRunner === undefined
@@ -1281,7 +1355,7 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
   const longRunningSmoke = process.env.CANDY_LONG_RUNNING_SMOKE === "1";
   const codingJourneySmoke = process.env.CANDY_CODING_JOURNEY_SMOKE === "1";
   const smokeEngine = longRunningSmoke || codingJourneySmoke || deterministicRecoverySmoke;
-  const controller = new AppServerController({
+  return new AppServerController({
     databasePath: path.join(paths.state, "tasks.sqlite"),
     attachments: new AttachmentStore(paths.attachments, Date.now, (content) =>
       containsActiveProviderSecret(content, resolveActiveProviderSecrets()),
@@ -1337,7 +1411,14 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
               Promise.reject(new Error("Validator execution is unavailable on this installation.")),
           },
         }),
+    ...(options.recoverActiveTasks === undefined
+      ? {}
+      : { recoverActiveTasks: options.recoverActiveTasks }),
   });
+}
+
+export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
+  const controller = createDefaultAppServerController();
   const write = (message: ProtocolMessage): void => {
     stdout.write(encodeJsonLine(message));
   };

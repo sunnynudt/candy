@@ -80,10 +80,7 @@ function modelDisplayId(value: string): string {
 const CURRENT_MODEL_MARKER = " ✓";
 
 /** True when a model autocomplete value matches the current primary model. */
-export function isCurrentModelChoice(
-  value: string,
-  currentModel: string | undefined,
-): boolean {
+export function isCurrentModelChoice(value: string, currentModel: string | undefined): boolean {
   return currentModel !== undefined && canonicalModelId(value) === currentModel;
 }
 
@@ -423,9 +420,7 @@ export function createCandySlashCommandAutocompleteProvider(
             // The full `/<cmd>` is the prefix so `applyCompletion` preserves the
             // command name and inserts a space before the chosen argument.
             const itemsForReturn: AutocompleteItem[] =
-              commandName === "model"
-                ? [bareModelQueryItem(currentModel()), ...items]
-                : items;
+              commandName === "model" ? [bareModelQueryItem(currentModel()), ...items] : items;
             return {
               items: itemsForReturn,
               prefix: trimmed,

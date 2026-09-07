@@ -1,8 +1,8 @@
 # Candy V1 Product Acceptance Standard
 
-Status: accepted TUI-only acceptance contract
+Status: accepted local operator-surface acceptance contract
 
-This document defines when the Candy V1 TUI is complete. Product scope comes from [Candy V1](candy-v1.md). Electron Desktop and Browser Workspace are V2 and have no required V1 acceptance gates.
+This document defines when the Candy V1 local operator surfaces are complete. Product scope comes from [Candy V1](candy-v1.md). Electron Desktop and Browser Workspace remain V2 and have no required V1 acceptance gates.
 
 ## Acceptance policy
 
@@ -12,6 +12,7 @@ This document defines when the Candy V1 TUI is complete. Product scope comes fro
 - A provider or network failure may produce a controlled, actionable result; it must never cause silent fallback, state corruption, uncertain side-effect replay, or secret exposure.
 - Any credential exposure, data loss, workspace escape, unauthorized side effect, or task-ownership violation blocks release.
 - Disabled Desktop, Browser, Shell, or Auto Debug capabilities are not V1 passes; they are out of scope or explicitly gated.
+- The local WebUI is an operator surface only. It never becomes an Agent browser, a remote service, or a second agent loop.
 - Results are recorded against an exact source revision, lockfile, Node/npm/TypeScript/Pi versions, operating system patch, architecture, and fixture revision.
 
 ## Result classifications
@@ -139,6 +140,20 @@ Targets are measured over ten runs on each required platform, excluding provider
 
 Provider first-token and completion time are reported separately and are not attributed to Candy.
 
+## Local WebUI acceptance gates
+
+### ACC-WEB-01 Operator surface and shared state
+
+The repository provides a reproducible `npm run webui` command. The loopback WebUI lists the same Candy-owned tasks and persisted history as the TUI, opens one task's bounded conversation and change review, and exposes stop only when the WebUI owns that task. Viewing a task never starts or resumes it; a new continuation is explicit.
+
+### ACC-WEB-02 Boundary and authorization
+
+The service binds only to loopback, requires its printed per-process bearer token, rejects missing or invalid authorization, rejects non-loopback binding, and rejects cross-site browser requests. It does not expose credentials, raw provider errors, unbounded tool output, or arbitrary filesystem reads. It uses the same task ownership, revision fencing, redaction, and review/apply rules as the app-server controller.
+
+### ACC-WEB-03 Lifecycle
+
+The WebUI process is foreground and app-owned: closing a tab does not stop a task, while stopping the WebUI process interrupts its owned active tasks. It is not a daemon and does not promise execution after Candy exits. A second client may inspect persisted state but cannot take over an active task without the existing recovery rules.
+
 ## V2 deferred scope
 
 The following are explicitly deferred and must not be reported as V1 failures or V1 passes:
@@ -157,4 +172,4 @@ Each candidate produces a local reviewable package containing the source revisio
 
 The package must not contain provider credentials, reversible credential fingerprints, unrelated source, unneeded prompts or sessions, browser authentication data, or full process environments.
 
-Candy V1 is accepted only when ACC-TUI-01 through ACC-TUI-08 pass on both required platforms, required live contracts pass for enabled providers, no P0/P1 defects remain, and the product owner approves the evidence package.
+Candy V1 local operator surfaces are accepted only when ACC-TUI-01 through ACC-TUI-08 pass on both required platforms, ACC-WEB-01 through ACC-WEB-03 pass for the loopback WebUI, required live contracts pass for enabled providers, no P0/P1 defects remain, and the product owner approves the evidence package. A macOS or deterministic fixture pass does not substitute for Windows or live-provider evidence.

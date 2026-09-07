@@ -2,7 +2,7 @@
 
 ## Product scope
 
-Candy is a standalone, DeepSeek-first coding product with one agent per task, a terminal UI, and an Electron desktop client. It provides a Codex-class core coding loop without depending on Codex, OpenCode, or a separately installed Pi CLI.
+Candy is a standalone, model-neutral local coding product with one agent per task. Its current self-iteration release provides a terminal UI and a local browser WebUI; the Electron desktop client remains a separate V2 surface. It provides a Codex-class core coding loop without depending on Codex, OpenCode, or a separately installed Pi CLI.
 
 Read `docs/product/candy-v1.md` before changing product scope or runtime architecture.
 Read `docs/product/acceptance-v1.md` before claiming an implementation slice or V1 release complete.
