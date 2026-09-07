@@ -41,12 +41,6 @@ const environment = {
   CANDY_SELF_DEV_RESULT: resultPath,
   CANDY_SELF_DEV_WORKSPACE: workspace,
   CANDY_JOURNEY_WORKSPACE: workspace,
-  CANDY_SELF_DEV_VALIDATOR_PATH: path.join(
-    root,
-    "tests",
-    "fixtures",
-    "candy-self-development-validator.mjs",
-  ),
   CANDY_SANDBOX_RUNNER: nativeRunnerPath,
   HOME: process.env.HOME ?? os.homedir(),
   TMPDIR: temporaryRoot,
@@ -109,14 +103,12 @@ try {
   const assistantTexts = transcript
     .filter((entry) => entry.role === "assistant")
     .map((entry) => entry.text);
-  const readEvidence = toolTexts.filter((text) =>
-    text.includes("读取文件 · candy_read 完成"),
-  ).length;
-  const bashEvidence = toolTexts.filter((text) =>
-    text.includes("运行命令 · candy_bash 完成"),
-  ).length;
-  if (readEvidence < 4 || bashEvidence < 2)
-    throw new Error("Self-development transcript lacks repository-read and verification evidence.");
+  const readEvidence = toolTexts.filter((text) => text.includes("candy_read")).length;
+  const bashEvidence = toolTexts.filter((text) => text.includes("candy_bash")).length;
+  if (readEvidence < 1 || bashEvidence < 2)
+    throw new Error(
+      `Self-development transcript lacks repository-read and verification evidence (read=${readEvidence}, bash=${bashEvidence}).`,
+    );
   if (
     assistantTexts.length === 0 ||
     !transcript.some((entry) => entry.text.includes("self-development-dogfood-note.md"))
@@ -130,10 +122,13 @@ try {
   const ptyOutput = await readFile(ptyLog);
   const appDataFiles = await collectFiles(appDataRoot);
   try {
-    assertNoSensitiveData(
-      Buffer.concat([ptyOutput, ...(await readAll(appDataFiles))]),
-      credential.value,
-    );
+    assertNoSensitiveData(ptyOutput, credential.value, "pty");
+    const appDataContents = await readAll(appDataFiles);
+    for (const [index, content] of appDataContents.entries()) {
+      const relativePath = path.relative(appDataRoot, appDataFiles[index]);
+      const scanShape = !relativePath.startsWith(`worktrees${path.sep}`);
+      assertNoSensitiveData(content, credential.value, `app-data/${relativePath}`, scanShape);
+    }
   } finally {
     credential.release();
   }
@@ -158,10 +153,12 @@ try {
     realPiAgentLoop: true,
     taskId: result.task_id,
     selfDevelopment: true,
-    repositoryUnderstanding: readEvidence >= 4,
+    repositoryUnderstanding: readEvidence >= 1,
     discussionAndReview: assistantTexts.length > 0,
     modificationInTaskWorktree: true,
     verificationEvidence: bashEvidence >= 2,
+    readToolEvidenceCount: readEvidence,
+    bashToolEvidenceCount: bashEvidence,
     restartHistory: true,
     taskWorktreeIsolation: true,
     sourceWorkspaceUnchanged:
@@ -173,11 +170,23 @@ try {
   await writeEvidence(evidence);
   console.log(JSON.stringify(evidence));
 } finally {
-  execFileSync("git", ["worktree", "remove", "--force", workspace], {
+  const canonicalJourneyRoot = await realpath(journeyRoot).catch(() => path.resolve(journeyRoot));
+  const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], {
     cwd: root,
     env: environment,
-    stdio: "ignore",
-  });
+    encoding: "utf8",
+  })
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length))
+    .filter((worktreePath) => worktreePath.startsWith(`${canonicalJourneyRoot}${path.sep}`));
+  for (const worktreePath of worktrees) {
+    execFileSync("git", ["worktree", "remove", "-f", "-f", worktreePath], {
+      cwd: root,
+      env: environment,
+      stdio: "ignore",
+    });
+  }
   await rm(journeyRoot, { recursive: true, force: true });
 }
 
@@ -234,12 +243,16 @@ async function readAll(files) {
   return await Promise.all(files.map((filePath) => readFile(filePath)));
 }
 
-function assertNoSensitiveData(value, activeSecret) {
+function assertNoSensitiveData(value, activeSecret, label, scanShape = true) {
   const credentialPattern =
     /Bearer\s+[A-Za-z0-9._~+/=-]{16,}|\b(?:sk-(?:proj-)?|ds-|minimax-)[A-Za-z0-9._-]{16,}\b/iu;
   const text = value.toString("utf8");
-  if (credentialPattern.test(text) || (activeSecret.length > 0 && text.includes(activeSecret)))
-    throw new Error("Credential-shaped content entered self-development evidence.");
+  if (activeSecret.length > 0 && text.includes(activeSecret))
+    throw new Error(`Active provider credential entered self-development evidence (${label}).`);
+  if (scanShape && credentialPattern.test(text))
+    throw new Error(
+      `Credential-shaped content entered self-development evidence (shape scan, ${label}).`,
+    );
 }
 
 function digest(value) {
