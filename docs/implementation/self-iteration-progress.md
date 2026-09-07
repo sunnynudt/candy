@@ -26,7 +26,7 @@ At current revision `67e4d090d858b0a90ce7f5505d450932d481e77d`, `npm run candy -
 
 ## Latest macOS acceptance checkpoint
 
-Source revision `6659ddc5e7ca6f78abb56ec95546930ad2e1857a` is pushed and matches `origin/codex/candy-v1-foundation`. On macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`, `npm run acceptance:macos` passed 14/14 steps: full `npm run check` (400/400), native check, ten-run TUI responsiveness, launcher, credential presence/revocation, Pi/tool/coding/cancellation journeys, task smoke, macOS TUI journey, and terminal matrix. This report is deterministic and uses controlled fixtures; it does not claim live provider, Windows, or real self-development dogfood evidence.
+Source revision `81c72cb6eb99b5c292501fc142c387e16c3bbc92` is pushed and matches `origin/codex/candy-v1-foundation`. On macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`, `npm run acceptance:macos` passed 14/14 steps: full `npm run check` (400/400), native check, ten-run TUI responsiveness, launcher, credential presence/revocation, Pi/tool/coding/cancellation journeys, task smoke, macOS TUI journey, and terminal matrix. This report is deterministic and uses controlled fixtures; it does not claim live provider, Windows, or real self-development dogfood evidence.
 
 ## Scope decisions
 
@@ -44,9 +44,9 @@ Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates sou
 | Batch                              | Status  | Current evidence                                                                                                                                                                                                                   |
 | ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P0 contract and baseline           | PASS    | This document and the product/acceptance contract updates                                                                                                                                                                          |
-| P1 launch and stop                 | PASS    | Acceptance revision `6659ddc`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
+| P1 launch and stop                 | PASS    | Acceptance revision `81c72cb`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
 | P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
-| P3 continuous execution and models | PARTIAL | Acceptance revision `6659ddc` passes bounded validator/model/cancellation and coding journeys; real DeepSeek Trusted Shell dogfood and Candy-self-source development now pass on macOS, but the complete live-provider matrix remains open |
+| P3 continuous execution and models | PARTIAL | Acceptance revision `81c72cb` passes bounded validator/model/cancellation and coding journeys; real DeepSeek Trusted Shell dogfood and Candy-self-source development now pass on macOS, but the complete live-provider matrix remains open |
 | P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence pending |
 
 ## P2 same-directory recommendation
