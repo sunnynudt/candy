@@ -699,6 +699,85 @@ test("interactive TUI restores the terminal after a task error and Ctrl+C", asyn
   }
 });
 
+test("interactive TUI interrupts a running task with Esc and preserves TUI session", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-escape-interrupt-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const calls: string[] = [];
+  const waitForAbortOrDelay = (signal: AbortSignal): Promise<void> =>
+    new Promise<void>((resolve: () => void, reject: (reason: unknown) => void): void => {
+      let settled = false;
+      const finish = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        clearTimeout(timer);
+        callback();
+      };
+      const onAbort = (): void => {
+        finish(() => reject(new Error("fixture interrupted")));
+      };
+      const timer = setTimeout((): void => {
+        finish(resolve);
+      }, 25);
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  const engine: TuiAgentEngine = {
+    async *runTurn(input, signal) {
+      calls.push(input.prompt);
+      yield { type: "turn.started", taskId: input.taskId };
+      if (input.prompt.includes("continue after interruption")) {
+        yield {
+          type: "assistant.delta",
+          taskId: input.taskId,
+          text: "resume output",
+        };
+        yield { type: "turn.completed", taskId: input.taskId };
+        return;
+      }
+      while (true) {
+        yield { type: "assistant.delta", taskId: input.taskId, text: "streaming " };
+        await waitForAbortOrDelay(signal);
+      }
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: root,
+      terminal,
+      engine,
+    }).run();
+    await new Promise<void>((resolve: () => void): void => {
+      setImmediate(resolve);
+    });
+    terminal.emitInput("run a long turn");
+    terminal.emitInput("\r");
+    const activeOutput = await waitForOutput(terminal, /streaming/u);
+    const taskId = activeOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(taskId);
+    terminal.emitInput("\x1b");
+    const interruptedOutput = await waitForOutput(terminal, /interrupted/u);
+    assert.match(interruptedOutput, /interrupted/u);
+    assert.equal(terminal.stopped, false);
+    terminal.emitInput("continue after interruption");
+    terminal.emitInput("\r");
+    const resumedOutput = await waitForOutput(terminal, /resume output/u);
+    assert.match(resumedOutput, /resume output/u);
+    assert.match(resumedOutput, /interruption requested for/);
+    assert.match(resumedOutput, new RegExp(`${taskId} completed`, "u"));
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+    assert.equal(terminal.stopped, true);
+    assert.equal(calls.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI exposes sanitized provider recovery actions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-provider-recovery-"));
   const terminal: FakeTerminal = new FakeTerminal();
@@ -3791,7 +3870,26 @@ test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", asyn
 test("Ctrl+V renders an attached image inline when iTerm2 graphics are available", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-inline-clipboard-image-"));
   const terminal = new FakeTerminal();
-  const previousItermSession = process.env.ITERM_SESSION_ID;
+  const capabilityEnvironmentNames = [
+    "TERM",
+    "TERM_PROGRAM",
+    "TERMINAL_EMULATOR",
+    "KITTY_WINDOW_ID",
+    "GHOSTTY_RESOURCES_DIR",
+    "WEZTERM_PANE",
+    "WARP_SESSION_ID",
+    "WARP_TERMINAL_SESSION_UUID",
+    "ITERM_SESSION_ID",
+    "WT_SESSION",
+  ] as const;
+  const previousCapabilityEnvironment = new Map(
+    capabilityEnvironmentNames.map((name) => [name, process.env[name]]),
+  );
+  process.env.TERM = "xterm-256color";
+  process.env.TERM_PROGRAM = "iTerm.app";
+  for (const name of capabilityEnvironmentNames) {
+    if (name !== "TERM" && name !== "TERM_PROGRAM") delete process.env[name];
+  }
   process.env.ITERM_SESSION_ID = "candy-inline-image-test";
   resetCapabilitiesCache();
   try {
@@ -3810,8 +3908,10 @@ test("Ctrl+V renders an attached image inline when iTerm2 graphics are available
     terminal.emitInput("\r");
     await runPromise;
   } finally {
-    if (previousItermSession === undefined) delete process.env.ITERM_SESSION_ID;
-    else process.env.ITERM_SESSION_ID = previousItermSession;
+    for (const [name, value] of previousCapabilityEnvironment) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     resetCapabilitiesCache();
     await rm(root, { recursive: true, force: true });
   }

@@ -581,7 +581,7 @@ export class InteractiveTui {
           this.write(`input rejected: ${safeError(error)}\n`);
         }
       },
-      onInterrupt: (): void => this.requestExit(),
+      onInterrupt: (): void => this.requestInterrupt(),
       onCopyLastAssistant: (): void => this.copyLastAssistant(),
       onOpenFullAccess: (): void => this.setAccess("full"),
       onConfirmFullAccess: (): void => this.setAccess("full confirm"),
@@ -770,6 +770,53 @@ export class InteractiveTui {
 
   private requestExit(): void {
     this.#resolveExit?.();
+  }
+
+  private requestInterrupt(): void {
+    const taskId = this.interruptibleTaskId();
+    if (taskId === undefined) {
+      this.requestExit();
+      return;
+    }
+    const task = this.#controllers.get(taskId) ?? this.ensureController(taskId);
+    const snapshot = task?.snapshot();
+    if (snapshot?.ownerId !== this.#ownerId) return;
+    if (snapshot.state !== "running" && snapshot.state !== "waiting_approval") {
+      this.write(`task ${taskId} is not actively running\n`);
+      return;
+    }
+    const abort = this.#abortControllers.get(taskId);
+    if (abort === undefined) {
+      this.#requestedStops.set(taskId, "interrupted");
+      this.write(`${taskId} interruption queued\n`);
+      return;
+    }
+    const wasAbortRequested = abort.signal.aborted;
+    this.#requestedStops.set(taskId, "interrupted");
+    abort.abort(new Error("User requested interruption."));
+    this.write(
+      wasAbortRequested
+        ? `task ${taskId} stop already requested\n`
+        : `interruption requested for ${taskId}; add context after review to continue\n`,
+    );
+  }
+
+  private interruptibleTaskId(): string | undefined {
+    const currentMetadata =
+      this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId);
+    if (
+      currentMetadata?.ownerId === this.#ownerId &&
+      (currentMetadata.state === "running" || currentMetadata.state === "waiting_approval")
+    )
+      return this.#currentTaskId;
+    const ownedActive = this.#store
+      .list()
+      .find(
+        (task) =>
+          task.ownerId === this.#ownerId &&
+          (task.state === "running" || task.state === "waiting_approval"),
+      );
+    return ownedActive?.taskId;
   }
 
   private create(

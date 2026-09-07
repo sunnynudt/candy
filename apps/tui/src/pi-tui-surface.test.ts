@@ -65,6 +65,32 @@ test("Candy TUI surface restores a fake terminal on normal stop and Ctrl+C", asy
   }
 });
 
+test("Candy TUI surface forwards Escape to the interrupt callback", async () => {
+  const root: string = await mkdtemp(path.join(tmpdir(), "candy-tui-surface-escape-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  let interrupted: number = 0;
+  const surface: CandyTuiSurface = new CandyTuiSurface({
+    appDataRoot: root,
+    terminal,
+    onSubmit: (): void => undefined,
+    onInterrupt: (): void => {
+      interrupted += 1;
+    },
+  });
+  try {
+    surface.start();
+    terminal.emitInput("\x1b");
+    await surface.stop();
+    assert.equal(interrupted, 1);
+    assert.equal(terminal.started, true);
+    assert.equal(terminal.stopped, true);
+    assert.equal(terminal.drainCalls, 1);
+    assert.equal(terminal.cursorShown, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Candy TUI surface keeps five core states clear at 80, 120, and 200 columns", async () => {
   for (const columns of [80, 120, 200]) {
     const root = await mkdtemp(path.join(tmpdir(), `candy-tui-design-${columns}-`));

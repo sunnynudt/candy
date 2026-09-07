@@ -493,7 +493,7 @@ export class CandyTuiSurface {
     this.#tui.setFocus(this.#editor);
     this.#removeInterruptListener = this.#tui.addInputListener(
       (data: string): { consume: boolean } | undefined => {
-        if (!matchesKey(data, "ctrl+c")) return undefined;
+        if (!matchesKey(data, "ctrl+c") && !matchesKey(data, "escape")) return undefined;
         this.#onInterrupt();
         return { consume: true };
       },
