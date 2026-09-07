@@ -29,9 +29,26 @@ send_command ":profile auto"
 wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
 wait_for {offline local commands on} "offline local command state"
 
-# Exercise a real provider-backed Esc interruption and explicit continuation
-# before starting the self-development task. The bounded sleep gives the PTY
-# a deterministic tool-execution window without touching the workspace.
+# Exercise a real provider-backed Esc interruption during a long model stream.
+send_command "Do not use tools, edit files, or use network. Write a very long, detailed explanation of Candy V1's runtime boundary and acceptance contract, at least 4000 words, and continue until complete. If this turn is interrupted, do not retry the explanation on continuation; instead confirm that the saved model context is ready to continue."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set model_escape_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for model Esc task creation" }
+  eof { fail "TUI exited while waiting for model Esc task creation" }
+}
+wait_for {正在回答} "model stream for Esc interruption"
+after 500
+send -- "\033"
+wait_for "${model_escape_task_id} interrupted:" "model-stream Esc interruption completion"
+send_command "Continue this same task after the model-stream interruption. Keep the saved context, do not use tools, edit files, or use network. Briefly confirm continuation readiness."
+wait_for "continuing ${model_escape_task_id}" "model-stream same-task continuation"
+wait_for "${model_escape_task_id} completed" "model-stream same-task continuation completion"
+
+# Exercise a real provider-backed Esc interruption during tool execution. The
+# bounded sleep gives the PTY a deterministic tool window without touching the
+# workspace.
+send_command ":new"
+wait_for {new task ready} "tool Esc task creation in the same TUI"
 send_command "For this task, first use candy_bash to run exactly the offline command sleep 30. If the turn is interrupted, do not retry the sleep on continuation; instead explain that the interrupted task kept its context and is ready to continue. Do not edit files or use network."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set escape_task_id $expect_out(1,string) }
@@ -92,7 +109,9 @@ expect eof
 spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
 wait_for {开始任务|继续任务} "TUI restart"
 send_command ":tasks"
-wait_for "${escape_task_id}" "persisted Esc task history"
+wait_for "${model_escape_task_id}" "persisted model Esc task history"
+send_command ":use $model_escape_task_id"
+wait_for "current task: ${model_escape_task_id} \\(completed\\)" "history switch to model-stream task"
 send_command ":use $escape_task_id"
 wait_for "current task: ${escape_task_id} \\(completed\\)" "history switch to interrupted-and-continued task"
 send_command ":use $task_id"
@@ -103,6 +122,7 @@ send_command ":quit"
 expect eof
 
 set result [open $env(CANDY_SELF_DEV_RESULT) w]
+puts $result "model_escape_task_id=$model_escape_task_id"
 puts $result "escape_task_id=$escape_task_id"
 puts $result "task_id=$task_id"
 close $result

@@ -66,14 +66,19 @@ const lockfileDigest = createHash("sha256")
 try {
   await runExpect();
   const result = parseResult(await readFile(resultPath, "utf8"));
+  if (!/^task-[a-z0-9]+$/u.test(result.model_escape_task_id ?? ""))
+    throw new Error("Model-stream Esc task id is invalid.");
   if (!/^task-[a-z0-9]+$/u.test(result.escape_task_id ?? ""))
     throw new Error("Esc continuation task id is invalid.");
   if (!/^task-[a-z0-9]+$/u.test(result.task_id ?? ""))
     throw new Error("Self-development task id is invalid.");
 
   const store = new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+  const modelEscapeTask = store.get(result.model_escape_task_id);
   const escapeTask = store.get(result.escape_task_id);
   const task = store.get(result.task_id);
+  if (modelEscapeTask?.state !== "completed")
+    throw new Error("Model-stream Esc task did not complete after explicit continuation.");
   if (escapeTask?.state !== "completed")
     throw new Error("Esc continuation task did not complete after explicit continuation.");
   const transcript = store.transcript(result.task_id) ?? [];
@@ -119,14 +124,23 @@ try {
     !transcript.some((entry) => entry.text.includes("self-development-dogfood-note.md"))
   )
     throw new Error("Self-development transcript lacks discussion or review evidence.");
+  const modelEscapeTranscript = store.transcript(result.model_escape_task_id) ?? [];
   const escapeTranscript = store.transcript(result.escape_task_id) ?? [];
   const ptyOutput = await readFile(ptyLog);
   const interactionEvidence = {
+    modelEscInterruption: ptyOutput.includes(
+      `interruption requested for ${result.model_escape_task_id}`,
+    ),
+    modelInterruptedState: ptyOutput.includes(`${result.model_escape_task_id} interrupted:`),
+    modelSameTaskContinuation: ptyOutput.includes(`continuing ${result.model_escape_task_id}`),
     escInterruption: ptyOutput.includes(`interruption requested for ${result.escape_task_id}`),
     interruptedState: ptyOutput.includes(`${result.escape_task_id} interrupted:`),
     sameTaskContinuation: ptyOutput.includes(`continuing ${result.escape_task_id}`),
     newTask: ptyOutput.includes("new task ready"),
-    taskList: ptyOutput.includes(result.escape_task_id),
+    taskList: ptyOutput.includes(result.model_escape_task_id),
+    modelHistorySwitch: ptyOutput.includes(
+      `current task: ${result.model_escape_task_id} (completed)`,
+    ),
     historySwitch: ptyOutput.includes(`current task: ${result.escape_task_id} (completed)`),
   };
   if (!Object.values(interactionEvidence).every(Boolean))
@@ -134,6 +148,8 @@ try {
       `Real TUI interaction evidence is incomplete: ${JSON.stringify(interactionEvidence)}`,
     );
   if (
+    !modelEscapeTranscript.some((entry) => entry.role === "assistant") ||
+    !modelEscapeTranscript.some((entry) => entry.role === "user") ||
     !escapeTranscript.some((entry) => entry.role === "assistant") ||
     !escapeTranscript.some((entry) => entry.role === "tool")
   )
@@ -297,7 +313,7 @@ async function writeEvidence(evidence) {
     `- npm: \`${evidence.npm}\``,
     "- Provider: real DeepSeek through the production Candy Pi Agent Engine",
     "- Scope: Candy source checkout selected as workspace; requested change remained in a Candy-owned Task Worktree",
-    "- Evidence: real Esc interruption and continuation, /new task creation, repository understanding, discussion, modification, verification, diff review, restart history, historical task switching, and credential-free isolation",
+    "- Evidence: real model-stream and tool-execution Esc interruption and continuation, /new task creation, repository understanding, discussion, modification, verification, diff review, restart history, historical task switching, and credential-free isolation",
     "- Credential values, prompts, raw provider payloads, and terminal logs are not retained in this report.",
     "",
   ].join("\n");
