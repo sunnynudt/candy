@@ -46,7 +46,7 @@ Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates sou
 | P0 contract and baseline           | PASS    | This document and the product/acceptance contract updates                                                                                                                                                                          |
 | P1 launch and stop                 | PASS    | Acceptance revision `6659ddc`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
 | P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
-| P3 continuous execution and models | PARTIAL | Acceptance revision `6659ddc` passes bounded validator/model/cancellation and coding journeys; the coding journey uses a controlled provider fixture, while real self-development dogfood and live-provider evidence remain pending |
+| P3 continuous execution and models | PARTIAL | Acceptance revision `6659ddc` passes bounded validator/model/cancellation and coding journeys; real DeepSeek Trusted Shell dogfood passes the three required categories in isolated Candy Task Worktrees, but Candy-self-source development and a complete live-provider matrix remain open |
 | P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence pending |
 
 ## P2 same-directory recommendation
@@ -58,3 +58,11 @@ This is the minimum behavior needed to keep task context and writes separate wit
 ## Local WebUI evidence
 
 On macOS Tahoe `26.6.1` arm64, `npm run webui` started a foreground loopback server with a per-process bearer URL. Unauthenticated API access returned `401`; a token-bearing cross-site request returned `403`; authenticated HTML/API access returned `200`. Chrome rendered the task list, completed task state, Conversation transcript, disabled owner-fenced Stop control, and Changed files and diff view. The browser tab was closed with the foreground process; no daemon or user-data cleanup was introduced.
+
+## Latest real-provider and dogfood evidence
+
+At source revision `14427683ff9232645ac77b8bfd069ed181d82bbe` on macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`, the real DeepSeek live gate passes **7/7** through Candy's production Pi Agent Engine. The real Trusted Shell dogfood also passes **3/3**: repository understanding, small repair, and failing-test diagnosis. All three tasks used Candy-owned Task Worktrees; the Local Workspace, Git HEAD, Git index, and external sentinel remained unchanged, with zero safety failures and credential-free evidence. The sanitized reports are [DeepSeek live gate](../../out/acceptance/live/deepseek-latest.md) and [Trusted Shell dogfood](../../out/acceptance/macos/trusted-shell-auto-dogfood-latest.md).
+
+The domestic MiniMax live gate at the same revision is **7/8**. Text, thinking/tool, cancellation, error contracts, policy, and credential lifecycle scenarios pass; the mandatory image scenario fails after bounded retry with a sanitized `provider_error`/`network_error`. The endpoint remains `https://api.minimaxi.com`; no global fallback was used. This is currently an open live-provider blocker, not a source-level pass. See the [MiniMax live report](../../out/acceptance/live/minimax-cn-latest.md).
+
+The additional Candy-self-source development loop is **NOT_RUN as acceptance evidence**: an isolated real TUI attempt was stopped after the inline PTY harness failed to deliver the initial command reliably, before a task was created. No Candy repository file, branch, index, or user-owned file was changed by that attempt. Windows 11 evidence remains **NOT_RUN** because no Windows host is available.
