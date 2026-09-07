@@ -168,3 +168,57 @@ test("local WebUI rejects non-loopback binding before opening a listener", () =>
     controller.close();
   }
 });
+
+test("closing the foreground WebUI interrupts its owned task without replay", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-web-ui-close-"));
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace);
+  const databasePath = path.join(root, "tasks.sqlite");
+  const owner = new AppServerController({
+    databasePath,
+    engine: waitingEngine(),
+    ownerId: "web-process-owner",
+    recoverActiveTasks: false,
+  });
+  const observer = new AppServerController({
+    databasePath,
+    engine: waitingEngine(),
+    ownerId: "web-process-observer",
+    recoverActiveTasks: false,
+  });
+  const ownerUi = new LocalWebUiServer({ controller: owner, token: "p".repeat(32) });
+  const observerUi = new LocalWebUiServer({ controller: observer, token: "q".repeat(32) });
+  await ownerUi.listen();
+  await observerUi.listen();
+  const ownerOrigin = `http://127.0.0.1:${ownerUi.port}`;
+  const observerOrigin = `http://127.0.0.1:${observerUi.port}`;
+  const ownerHeaders = { Authorization: `Bearer ${ownerUi.token}`, Origin: ownerOrigin };
+  const observerHeaders = { Authorization: `Bearer ${observerUi.token}`, Origin: observerOrigin };
+  try {
+    const created = await fetch(`${ownerOrigin}/api/tasks`, {
+      method: "POST",
+      headers: { ...ownerHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "wait for process close", workspacePath: workspace }),
+    });
+    const view = (await created.json()) as { taskId: string };
+    await waitFor(
+      async () =>
+        (await (
+          await fetch(`${observerOrigin}/api/tasks/${view.taskId}`, { headers: observerHeaders })
+        ).json()) as { state: string },
+      (current) => current.state === "running",
+    );
+    await ownerUi.close();
+    const interrupted = await waitFor(
+      async () =>
+        (await (
+          await fetch(`${observerOrigin}/api/tasks/${view.taskId}`, { headers: observerHeaders })
+        ).json()) as { state: string; run?: { stopReason: string } },
+      (current) => current.state === "interrupted",
+    );
+    assert.equal(interrupted.run?.stopReason, "crash_interrupted");
+  } finally {
+    await observerUi.close();
+    if (ownerUi.port !== undefined) await ownerUi.close();
+  }
+});
