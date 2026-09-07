@@ -18,6 +18,10 @@ Captured on 2026-09-07 from revision `8c69e26c86c486306d11ed86c3aacd4b407f2beb` 
 
 After the P0 edits, the latest deterministic checkpoint passed `npm run check`: 399 tests, format, lint, typecheck, boundary, Pi-version, and lifecycle checks all passed. The initial Prettier row above remains as the pre-change baseline observation.
 
+## Latest verified launcher checkpoint
+
+Source revision `66c89b2e4fb5ba135672464eb8f0530baaaf019b` is pushed and matches `origin/codex/candy-v1-foundation`. `npm run check` passes 399/399 after the launcher changes. `npm run smoke:tui:launcher` reports the current dirty checkout as `candidate`, including the exact revision, Node `22.23.2`, Pi `0.84.1`, and the stable upstream revision. A detached clean worktree at the same revision reports `channel=stable` under Node `22.23.2`; its printed recovery command uses a separate Git worktree and does not reset the active checkout.
+
 ## Scope decisions
 
 - Candy is model-neutral at the product boundary. DeepSeek and MiniMax domestic remain supported provider paths; MiniMax stays on the domestic endpoint and never falls back globally.
@@ -34,7 +38,7 @@ Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates sou
 | Batch                              | Status  | Current evidence                                                                                                                                                                                                                   |
 | ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P0 contract and baseline           | PASS    | This document and the product/acceptance contract updates                                                                                                                                                                          |
-| P1 launch and stop                 | PASS    | `npm run candy -- --smoke`, Pi cancellation smoke, and macOS 26.6.1 arm64 TUI journey pass; Esc preserves the session and provider abort is observed                                                                               |
+| P1 launch and stop                 | PASS    | `npm run smoke:tui:launcher`, `npm run candy -- --smoke`, Pi cancellation smoke, and macOS 26.6.1 arm64 TUI journey pass; Esc preserves the session, provider abort is observed, and stable/candidate source identity is visible |
 | P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
 | P3 continuous execution and models | PARTIAL | Bounded validator loop, model configuration, cancellation, and macOS long-running smoke pass; the coding journey uses a controlled provider fixture, while real self-development dogfood and live-provider evidence remain pending |
 | P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence pending                                                          |
