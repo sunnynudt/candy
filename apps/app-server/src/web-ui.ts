@@ -90,7 +90,7 @@ export class LocalWebUiServer {
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      const requestUrl = new URL(request.url ?? "/", `http://${this.#host}`);
+      const requestUrl = new URL(request.url ?? "/", `http://${this.urlHost()}`);
       if (!this.originAllowed(request.headers.origin)) {
         this.sendJson(response, 403, { error: "cross_site_request_denied" });
         return;
@@ -251,9 +251,13 @@ export class LocalWebUiServer {
     const port = this.#boundPort;
     if (port === undefined) return false;
     return (
-      origin === `http://${this.#host === "::1" ? "[::1]" : this.#host}:${port}` ||
+      origin === `http://${this.urlHost()}:${port}` ||
       (this.#host === "127.0.0.1" && origin === `http://localhost:${port}`)
     );
+  }
+
+  private urlHost(): string {
+    return this.#host === "::1" ? "[::1]" : this.#host;
   }
 
   private cookie(): string {
