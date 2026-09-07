@@ -1,0 +1,71 @@
+log_user 0
+set timeout 180
+log_file -a $env(CANDY_SELF_DEV_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "Candy self-development dogfood failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+cd $env(CANDY_SELF_DEV_LAUNCH_DIR)
+spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
+wait_for {开始任务|继续任务} "usable TUI input"
+
+send_command ":workspace $env(CANDY_SELF_DEV_WORKSPACE)"
+wait_for {workspace selected:} "Candy source workspace selection"
+send_command ":profile auto"
+wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
+wait_for {offline local commands on} "offline local command state"
+send_command ":validator $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_VALIDATOR_PATH)"
+wait_for {validator configured for new tasks:} "validator configuration"
+
+send_command "Work as a Candy maintainer on this Candy source checkout. First understand and discuss the relevant constraints by using candy_read on docs/product/candy-v1.md, docs/product/acceptance-v1.md, apps/tui/src/main.ts, and docs/implementation/self-iteration-progress.md. Explain the runtime boundary, Task Worktree rule, and the verification plan before changing anything. Then make one bounded self-development change only in the Task Worktree: create docs/implementation/self-development-dogfood-note.md with exactly two lines, the first line \"# Candy self-development dogfood\" and the second line \"Needs validator repair.\". Intentionally leave that second line wrong for this first turn so the configured validator fails; do not fix it yet. Use candy_bash to run git diff --check and git status --short after the edit. Do not modify, stage, commit, or push anything outside the Task Worktree, do not use network, and do not expose credentials. Report the files read, the discussion, the intentional failing verification, and the change."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for self-development task creation" }
+  eof { fail "TUI exited while waiting for self-development task creation" }
+}
+wait_for "${task_id} completed" "self-development task completion"
+send_command ":changes"
+wait_for "changed files: ${task_id}" "changed-file review"
+send_command ":diff"
+wait_for {self-development-dogfood-note.md} "self-development diff review"
+send_command ":validate"
+wait_for {validator running:} "self-development validator start"
+wait_for {validator fail:} "controlled self-development validator failure"
+send_command "The validator failed as expected because the second line is wrong. Now repair only docs/implementation/self-development-dogfood-note.md so its second line is exactly Verified by the real Candy TUI and DeepSeek Pi Agent Engine. Use candy_bash to rerun git diff --check and git status --short. Do not modify anything else, use network, stage, commit, or push."
+wait_for "continuing ${task_id}" "explicit failure-repair continuation"
+wait_for "${task_id} completed" "failure-repair completion"
+send_command ":validate"
+wait_for {validator running:} "failure-repair validator start"
+wait_for {validator pass:} "failure-repair validator pass"
+
+send_command ":quit"
+expect eof
+
+spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
+wait_for {开始任务|继续任务} "TUI restart"
+send_command ":tasks"
+wait_for "${task_id}.*completed" "persisted self-development history"
+send_command ":use $task_id"
+wait_for "current task: ${task_id} \\(completed\\)" "history selection"
+send_command ":changes"
+wait_for "changed files: ${task_id}" "history change review"
+send_command ":quit"
+expect eof
+
+set result [open $env(CANDY_SELF_DEV_RESULT) w]
+puts $result "task_id=$task_id"
+close $result
