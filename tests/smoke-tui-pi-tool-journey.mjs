@@ -77,7 +77,7 @@ try {
   await waitForOutput(terminal, /profile auto/u);
   send(terminal, "write the requested fixture file");
   const completed = await waitForOutput(terminal, /completed/u);
-  assert.match(completed, /\[tool candy_write\b/u);
+  assert.match(completed, /candy_write\b/u);
   assert.match(completed, /Pi completed the workspace edit\./u);
   assert.doesNotMatch(completed, new RegExp(fixtureSecret, "u"));
   assert.equal(

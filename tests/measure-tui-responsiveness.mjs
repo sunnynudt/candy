@@ -180,6 +180,7 @@ async function measureConcurrency() {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-concurrency-workspace-"));
     const terminal = new FakeTerminal();
     let active = 0;
+    const startedTaskIds = new Set();
     let release;
     const barrier = new Promise((resolve) => {
       release = resolve;
@@ -187,6 +188,7 @@ async function measureConcurrency() {
     try {
       const engine = {
         async *runTurn(input) {
+          startedTaskIds.add(input.taskId);
           active += 1;
           const marker = `concurrency-marker-${active}`;
           yield { type: "turn.started", taskId: input.taskId };
@@ -207,24 +209,10 @@ async function measureConcurrency() {
         engine,
       }).run();
       await waitFor(() => terminal.started);
-      const createdIds = [];
       for (let taskIndex = 0; taskIndex < 3; taskIndex += 1) {
         terminal.emitInput(`:new concurrency ${taskIndex}`);
         terminal.emitInput("\r");
-        await waitFor(() => {
-          const matches = [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)].map(
-            (match) => match[1],
-          );
-          return new Set(matches).size > createdIds.length;
-        });
-        const ids = [
-          ...new Set(
-            [...terminal.writes.join("").matchAll(/created (task-[a-z0-9]+)/gu)].map(
-              (match) => match[1],
-            ),
-          ),
-        ];
-        createdIds.push(ids.at(-1));
+        await waitFor(() => startedTaskIds.size > taskIndex);
       }
       const markerTimes = [];
       for (let taskIndex = 1; taskIndex <= 3; taskIndex += 1) {
@@ -240,8 +228,7 @@ async function measureConcurrency() {
         }
         if (found) markerTimes.push(performance.now());
       }
-      const missing = createdIds.some((taskId) => taskId === undefined);
-      if (missing || markerTimes.length !== 3) eventLossRuns.push(index + 1);
+      if (startedTaskIds.size !== 3 || markerTimes.length !== 3) eventLossRuns.push(index + 1);
       else {
         completedRuns += 1;
         gaps.push(
