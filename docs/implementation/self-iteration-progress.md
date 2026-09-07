@@ -10,7 +10,7 @@ Captured on 2026-09-07 from revision `8c69e26c86c486306d11ed86c3aacd4b407f2beb` 
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | Branch and remote     | `codex/candy-v1-foundation` matches `origin/codex/candy-v1-foundation` after fetch                                                                 | PASS    |
 | Runtime baseline      | Node `22.23.2`, npm `10.9.8`, TypeScript `5.9.3`, Pi family checked by the repository assertion                                                    | PASS    |
-| Lockfile              | `package-lock.json` SHA-256 `a5d7a3165c2b04551c36a8320fa856c4cf16411f6bcf3ef95dc80459f9ba`                                                         | PASS    |
+| Lockfile              | `package-lock.json` SHA-256 `a5d7a3165c2b04551c36a8320fa856c4cf164d08411f6bcf3ef95dc80459f9ba`                                                         | PASS    |
 | Existing user changes | `.gitignore`, `docs/product/candy-current-eli5.html`, and `docs/product/permission-experience-spec.md` preserved and excluded from this checkpoint | PASS    |
 | Deterministic check   | `npm run check` stopped at the pre-existing Prettier failure in `apps/tui/src/slash-commands.ts`                                                   | PARTIAL |
 | Windows 11            | No Windows host is available in this run                                                                                                           | NOT_RUN |
@@ -23,6 +23,10 @@ After the P0 edits, the latest deterministic checkpoint passed `npm run check`: 
 Source revision `3f0a9bc8a8c003cc336f96f634dd017de514e66c` is pushed and matches `origin/codex/candy-v1-foundation`. `npm run check` passes 400/400 after the launcher and WebUI lifecycle changes. `npm run smoke:tui:launcher` reports the current dirty checkout as `candidate`, including the exact revision, Node `22.23.2`, Pi `0.84.1`, and the stable upstream revision. A detached clean worktree at the same revision reports `channel=stable` under Node `22.23.2`; its printed recovery command uses a separate Git worktree and does not reset the active checkout.
 
 At current revision `67e4d090d858b0a90ce7f5505d450932d481e77d`, `npm run candy -- --smoke` and the launcher smoke pass. A foreground `npm run webui` run returned `401` for unauthenticated API access, `403` for a token-bearing cross-site request, and `200` for authenticated HTML and `/app.js`; Chrome rendered the current task list, conversation, disabled non-owner Stop action, and bounded changed-files/diff view. The process was stopped in the foreground and left no daemon claim.
+
+## Latest macOS acceptance checkpoint
+
+Source revision `6659ddc5e7ca6f78abb56ec95546930ad2e1857a` is pushed and matches `origin/codex/candy-v1-foundation`. On macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`, `npm run acceptance:macos` passed 14/14 steps: full `npm run check` (400/400), native check, ten-run TUI responsiveness, launcher, credential presence/revocation, Pi/tool/coding/cancellation journeys, task smoke, macOS TUI journey, and terminal matrix. This report is deterministic and uses controlled fixtures; it does not claim live provider, Windows, or real self-development dogfood evidence.
 
 ## Scope decisions
 
@@ -40,9 +44,9 @@ Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates sou
 | Batch                              | Status  | Current evidence                                                                                                                                                                                                                   |
 | ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P0 contract and baseline           | PASS    | This document and the product/acceptance contract updates                                                                                                                                                                          |
-| P1 launch and stop                 | PASS    | `npm run smoke:tui:launcher`, `npm run candy -- --smoke`, Pi cancellation smoke, and macOS 26.6.1 arm64 TUI journey pass; Esc preserves the session, provider abort is observed, and stable/candidate source identity is visible |
+| P1 launch and stop                 | PASS    | Acceptance revision `6659ddc`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
 | P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
-| P3 continuous execution and models | PARTIAL | Bounded validator loop, model configuration, cancellation, and macOS long-running smoke pass; the coding journey uses a controlled provider fixture, while real self-development dogfood and live-provider evidence remain pending |
+| P3 continuous execution and models | PARTIAL | Acceptance revision `6659ddc` passes bounded validator/model/cancellation and coding journeys; the coding journey uses a controlled provider fixture, while real self-development dogfood and live-provider evidence remain pending |
 | P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence pending |
 
 ## P2 same-directory recommendation
