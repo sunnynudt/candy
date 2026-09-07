@@ -30,10 +30,17 @@ function gitValue(args) {
 function launchMetadata() {
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
   const revision = gitValue(["rev-parse", "HEAD"]);
-  const stableRevision = gitValue(["rev-parse", "@{upstream}"]);
+  const upstreamRevision = gitValue(["rev-parse", "@{upstream}"]);
+  const canonicalRevision = gitValue(["rev-parse", "origin/codex/candy-v1-foundation"]);
+  const stableRevision = upstreamRevision ?? canonicalRevision;
   const dirty = gitValue(["status", "--porcelain"]) !== undefined;
   const stable =
-    revision !== undefined && stableRevision !== undefined && revision === stableRevision && !dirty;
+    revision !== undefined &&
+    !dirty &&
+    ((upstreamRevision !== undefined && revision === upstreamRevision) ||
+      (upstreamRevision === undefined &&
+        canonicalRevision !== undefined &&
+        revision === canonicalRevision));
   return {
     product: "candy",
     version: packageJson.version,
