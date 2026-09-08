@@ -65,6 +65,8 @@ On macOS Tahoe `26.6.1` arm64, `npm run webui` started a foreground loopback ser
 
 At source revision `5008846eab88bffa2cbad2ac8fb7f5c42d76818d`, the four WebUI contract tests also pass: shared task/history and bounded review data, owner-only stop, loopback-only binding, and foreground close interrupt with no replay. These are deterministic controller/server tests; the macOS browser rendering evidence above remains separately recorded.
 
+At source revision `93fcb5fd28b9ef602b4ffd1c3668903f56817004`, a fresh `npm run webui` foreground run loaded the local task list in Chrome on macOS. The process was then stopped with Ctrl+C and did not remain as a daemon. This confirms current-HEAD browser rendering and foreground lifecycle; Windows WebUI evidence remains **NOT_RUN**.
+
 ## Latest real-provider and dogfood evidence
 
 At source revision `e5d2ccddb05cb797516dbacde5e81f70bbc8a8c1` on macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`, the latest real DeepSeek live gate remains **7/7** through Candy's production Pi Agent Engine; the source-only revisions after `81c72cb` contain documentation changes, so the earlier passing acceptance remains valid. An earlier real Trusted Shell dogfood at source revision `14427683ff9232645ac77b8bfd069ed181d82bbe` also passed **3/3**: repository understanding, small repair, and failing-test diagnosis. All three Trusted Shell tasks used Candy-owned Task Worktrees; the Local Workspace, Git HEAD, Git index, and external sentinel remained unchanged, with zero safety failures and credential-free evidence. The sanitized reports are [DeepSeek live gate](../../out/acceptance/live/deepseek-latest.md) and [Trusted Shell dogfood](../../out/acceptance/macos/trusted-shell-auto-dogfood-latest.md).
