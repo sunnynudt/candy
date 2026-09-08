@@ -31,6 +31,8 @@ export type CandyTranscriptKind = "assistant" | "thinking" | "user" | "tool" | "
 
 /** Bound on live transcript bytes kept for rendering and scrollback. */
 const MAX_LIVE_TRANSCRIPT_BYTES = 192 * 1024;
+/** Bound on live segments so many short tool/model events stay responsive. */
+const MAX_LIVE_TRANSCRIPT_SEGMENTS = 512;
 /** Bound on one coalesced segment before a new segment starts. */
 const MAX_SEGMENT_BYTES = 64 * 1024;
 /** Horizontal padding matching the plain Text widget this replaces. */
@@ -77,6 +79,9 @@ interface CandyTranscriptSegment {
   readonly markdown: Markdown | undefined;
   /** A terminal-native image preview for an explicitly attached raster image. */
   readonly image: Image | undefined;
+  /** Cached render for an unchanged segment at the last requested width. */
+  renderedWidth: number | undefined;
+  renderedLines: readonly string[] | undefined;
 }
 
 const THINKING_COLLAPSED_HINT = "▸ 思考过程 · Ctrl+T 展开";
@@ -111,6 +116,8 @@ export class CandyTranscript implements Component {
       last.text += value;
       last.byteLength += value.length;
       last.markdown?.setText(last.text);
+      last.renderedWidth = undefined;
+      last.renderedLines = undefined;
     } else {
       this.#segments.push({
         kind,
@@ -122,6 +129,8 @@ export class CandyTranscript implements Component {
             ? new Markdown(value, CONTENT_PADDING_X, 0, CANDY_TRANSCRIPT_THEME)
             : undefined,
         image: undefined,
+        renderedWidth: undefined,
+        renderedLines: undefined,
       });
     }
     this.#dropOldest();
@@ -136,6 +145,8 @@ export class CandyTranscript implements Component {
     if (existing !== undefined) {
       existing.text = value;
       existing.byteLength = value.length;
+      existing.renderedWidth = undefined;
+      existing.renderedLines = undefined;
     } else {
       this.#segments.push({
         kind: "tool",
@@ -144,6 +155,8 @@ export class CandyTranscript implements Component {
         key,
         markdown: undefined,
         image: undefined,
+        renderedWidth: undefined,
+        renderedLines: undefined,
       });
     }
     this.#dropOldest();
@@ -168,12 +181,18 @@ export class CandyTranscript implements Component {
         { fallbackColor: DIM },
         { maxWidthCells: 72, maxHeightCells: 24 },
       ),
+      renderedWidth: undefined,
+      renderedLines: undefined,
     });
     this.#dropOldest();
   }
 
   public invalidate(): void {
-    for (const segment of this.#segments) segment.markdown?.invalidate();
+    for (const segment of this.#segments) {
+      segment.markdown?.invalidate();
+      segment.renderedWidth = undefined;
+      segment.renderedLines = undefined;
+    }
   }
 
   public render(width: number): string[] {
@@ -184,7 +203,11 @@ export class CandyTranscript implements Component {
         if (markdown !== undefined) {
           appendBlockSeparator(lines, width);
           lines.push(roleLabel("Candy", width, "assistant"));
-          lines.push(...markdown.render(width));
+          if (segment.renderedWidth !== width || segment.renderedLines === undefined) {
+            segment.renderedWidth = width;
+            segment.renderedLines = markdown.render(width);
+          }
+          lines.push(...segment.renderedLines);
         }
       } else if (segment.kind === "user") {
         appendBlockSeparator(lines, width);
@@ -211,7 +234,10 @@ export class CandyTranscript implements Component {
   /** Drop oldest segments until the live window fits the byte bound. */
   #dropOldest(): void {
     let bytes = this.#segments.reduce((total, segment) => total + segment.byteLength, 0);
-    while (this.#segments.length > 1 && bytes > MAX_LIVE_TRANSCRIPT_BYTES) {
+    while (
+      this.#segments.length > 1 &&
+      (bytes > MAX_LIVE_TRANSCRIPT_BYTES || this.#segments.length > MAX_LIVE_TRANSCRIPT_SEGMENTS)
+    ) {
       const dropped = this.#segments.shift();
       if (dropped !== undefined) bytes -= dropped.byteLength;
     }

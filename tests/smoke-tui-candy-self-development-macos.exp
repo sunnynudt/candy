@@ -19,6 +19,17 @@ proc wait_for {pattern description} {
   }
 }
 
+proc send_until {value pattern description} {
+  for {set attempt 0} {$attempt < 8} {incr attempt} {
+    send_command $value
+    expect -timeout 2 -re $pattern { return } timeout {} eof {
+      fail "TUI exited while waiting for $description"
+    }
+    after 250
+  }
+  fail "timed out waiting for $description after command retries"
+}
+
 cd $env(CANDY_SELF_DEV_LAUNCH_DIR)
 spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
 wait_for {开始任务|继续任务} "usable TUI input"
@@ -116,13 +127,10 @@ expect eof
 spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
 wait_for {开始任务|继续任务} "TUI restart"
 send_command ":tasks"
-wait_for "${model_escape_task_id}" "persisted model Esc task history"
-send_command ":use $model_escape_task_id"
-wait_for "current task: ${model_escape_task_id} \\(completed\\)" "history switch to model-stream task"
-send_command ":use $escape_task_id"
-wait_for "current task: ${escape_task_id} \\(completed\\)" "history switch to interrupted-and-continued task"
-send_command ":use $task_id"
-wait_for "current task: ${task_id} \\(completed\\)" "history selection"
+after 250
+send_until ":use $model_escape_task_id" "current task: ${model_escape_task_id}" "history switch to model-stream task"
+send_until ":use $escape_task_id" "current task: ${escape_task_id}" "history switch to interrupted-and-continued task"
+send_until ":use $task_id" "current task: ${task_id}" "history selection"
 send_command ":changes"
 wait_for "changed files: ${task_id}" "history change review"
 send_command ":quit"

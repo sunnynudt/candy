@@ -102,6 +102,17 @@ test("live transcript window is bounded and drops the oldest segment", () => {
   assert.ok(!output.includes("A".repeat(64)));
 });
 
+test("live transcript window also bounds many short segments", () => {
+  const transcript = new CandyTranscript();
+  for (let index = 0; index < 600; index += 1) {
+    transcript.append(`segment ${index}\n`, "assistant");
+    transcript.append(`✓ tool ${index}\n`, "tool");
+  }
+  const output = renderLines(transcript, 80).join("\n");
+  assert.doesNotMatch(output, /segment 0/u);
+  assert.match(output, /segment 599/u);
+});
+
 test("empty appends are ignored and an empty transcript renders nothing", () => {
   const transcript = new CandyTranscript();
   transcript.append("");
