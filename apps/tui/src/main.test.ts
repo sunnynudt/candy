@@ -82,6 +82,22 @@ async function waitForNewOutput(
   return terminal.writes.slice(firstWriteIndex).join("");
 }
 
+async function waitForTerminalTail(
+  terminal: FakeTerminal,
+  pattern: RegExp,
+  tailWrites: number = 4,
+  maxAttempts: number = 1_000,
+): Promise<string> {
+  for (let attempt: number = 0; attempt < maxAttempts; attempt += 1) {
+    const tail: string = terminal.writes.slice(-tailWrites).join("");
+    if (pattern.test(tail)) return tail;
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 1);
+    });
+  }
+  return terminal.writes.slice(-tailWrites).join("");
+}
+
 function terminalText(terminal: FakeTerminal): string {
   const escape = String.fromCharCode(0x1b);
   const bell = String.fromCharCode(0x07);
@@ -2036,7 +2052,8 @@ test("approval anchors stay visible in a long transcript", async () => {
     assert.match(output, /\/approve network-[a-z0-9]+/u);
     // The actionable summary must be rendered in the visible tail, not
     // scrolled out by the long streamed filler and wrapped details.
-    assert.match(terminal.writes.slice(-4).join(""), /操作：执行受限网络命令/u);
+    const visibleTail = await waitForTerminalTail(terminal, /操作：执行受限网络命令/u);
+    assert.match(visibleTail, /操作：执行受限网络命令/u);
     const approvalId = output.match(/\/deny (network-[a-z0-9]+)/u)?.[1];
     assert.ok(approvalId);
     terminal.emitInput(`:deny ${approvalId}`);
