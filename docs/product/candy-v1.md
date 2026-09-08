@@ -69,6 +69,8 @@ The TUI persists completed messages, bounded tool evidence, task state, revision
 
 Independent tasks may execute concurrently within the configured global limit. File mutations and shell commands are sequential within a task by default. A task that loses ownership becomes resumable only through the explicit recovery rules; stale owners must not mutate current task state.
 
+In the foreground TUI, `/new` is a fresh-task boundary rather than an implicit background-task command. If the current TUI task is running or waiting for approval, Candy rejects `/new` with an actionable instruction to use Esc and wait for the interrupted state first. Candy never silently detaches the current foreground task when the user asks for a new task. Independent tasks and Task Worktrees remain supported by the runtime and other explicit operator controls within the bounded concurrency limit.
+
 ## Workspace and changes
 
 Candy supports a selected Local Workspace and, where the task policy requires isolation, a Candy-owned Task Worktree. Concurrent writable tasks for the same Git repository use separate worktrees. Candy does not silently commit, push, merge, release, deploy, or initialize Git. Model-issued Git commits run only through the dedicated `candy_git_commit` tool in writable tasks, giving Codex-style granular checkpoints with a bounded, credential-scanned message; pushing requires the user's explicit per-task authorization (`/push allow` at task start) and is never silent.

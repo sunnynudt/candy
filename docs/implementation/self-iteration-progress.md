@@ -49,15 +49,17 @@ The current development and acceptance scope is the macOS Tahoe `26.6.1` arm64 h
 | ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P0 contract and baseline           | PASS    | This document and the product/acceptance contract updates                                                                                                                                                                          |
 | P1 launch and stop                 | PASS    | Acceptance revision `aad9d8a`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
-| P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
+| P2 new task and history            | PASS    | At source revision `3dabb94`, current-TUI `/new` rejects an active task until Esc settles it, then creates a distinct task; persistence, explicit continuation, task isolation, and history tests pass on macOS |
 | P3 continuous execution and models | PARTIAL | Acceptance revision `aad9d8a` passes bounded validator/model/cancellation and coding journeys; real DeepSeek Trusted Shell dogfood and Candy-self-source development pass on macOS, and the current DeepSeek/MiniMax live gates pass; configured-model and Windows continuation evidence remain separate |
 | P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence is deferred to the Windows-host continuation |
 
-## P2 same-directory recommendation
+## P2 new-task and same-directory policy
 
-`/new` always creates a distinct task in the current Candy interface. A safe Git task uses its own Candy-owned Task Worktree, so an older task may continue while the new task is queued or runs. A current-workspace task is deliberately single-writer: if another queued, running, approval-waiting, or paused direct task targets the same workspace, creation is rejected with an actionable message to finish or cancel the older task first. Candy does not silently stop, merge, or interleave direct-workspace writers. The task list exposes state and workspace mode so the conflict is understandable.
+In the foreground TUI, `/new` is a fresh-task boundary. If the current TUI task is running or waiting for approval, Candy rejects the command and tells the user to press Esc, wait for the interrupted state, and then use `/new`. This prevents a new foreground task from silently leaving the previous task running in the background. The new-task regression test also verifies that the rejected command creates no task, and that after interruption the next `/new` creates a separate completed task.
 
-This is the minimum behavior needed to keep task context and writes separate without adding a new user permission choice. Parallel work remains available through isolated Task Worktrees.
+Independent tasks may still execute concurrently through the bounded runtime and explicit operator controls. A safe Git task uses its own Candy-owned Task Worktree. A current-workspace task remains deliberately single-writer: if another queued, running, approval-waiting, or paused direct task targets the same workspace, creation is rejected with an actionable message to finish or cancel the older task first. Candy does not silently stop, merge, or interleave direct-workspace writers. The task list exposes state and workspace mode so the conflict is understandable.
+
+This is the minimum behavior needed to keep foreground task context and writes separate without adding a new user permission choice. Parallel work remains available through isolated Task Worktrees when explicitly controlled outside the foreground `/new` shortcut.
 
 ## Local WebUI evidence
 

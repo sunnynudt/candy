@@ -83,6 +83,7 @@ Required outcomes:
 - Retry and compaction observations are projected as bounded lifecycle status; a retry does not settle the task early.
 - Full-turn cancellation stops the provider/model operation and active tool work without reporting false completion.
 - Steering and follow-up messages are accepted only for the current TUI-owned active task and are bounded and redacted. Ordinary input submitted while that task is running is queued by default as a bounded, redacted follow-up; `/steer <text>` remains the explicit path to inject into the active turn.
+- `/new` is rejected while the current TUI task is running or waiting for approval; the TUI tells the user to use Esc, wait for the interrupted state, and then create the fresh task. `/new` never silently backgrounds the current foreground task.
 - A task waiting for approval cannot be controlled through a bypass path.
 - Restart never silently resumes and never replays an interrupted prompt, uncertain tool call, or side effect.
 - `:resume` without a new continuation displays persisted evidence and requires an explicit new continuation.
