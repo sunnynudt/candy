@@ -8,6 +8,14 @@ At source revision `9f2cc02ba32b8256940cd8c41acd0f7f20fa891a`, the macOS local r
 
 Evidence on macOS arm64 with Node `22.23.2`/npm `10.9.8`: setup rerun is idempotent; a README-only commit range reports `no runtime-relevant file changes; skip release build/update`; the managed hook was exercised against the current runtime-relevant checkpoint and produced/installed a release; `PATH="$HOME/.candy/bin:$PATH" candy --version` reports release `0.0.0-darwin-arm64.6331253244da`, `dirty:false`, and `piVersion=0.84.1`. The checkpoint commit is pushed and matches `origin/codex/candy-v1-foundation`. Existing unrelated untracked product documents remain preserved and excluded.
 
+## Current macOS acceptance checkpoint
+
+At clean source revision `3315813b5fb84dc3a6916336125324d7e5baf119`, `npm run check` passed **402/402** and `npm run acceptance:macos` passed **14/14** on macOS Tahoe `26.6.1` arm64 with Node `22.23.2` and npm `10.9.8`. The run includes the real-PTY TUI journey and terminal matrix, launcher, credential presence/revocation, Pi/tool/coding/cancellation journeys, task smoke, native check, and responsiveness checks. The local report is `out/acceptance/macos/latest.md`; it is ignored local evidence and records the same source revision.
+
+The approval-anchor acceptance assertion was made stable by waiting for the visible terminal tail within the existing one-second bound before checking the rendered approval controls. The managed post-commit updater now also enforces the repository-pinned Node runtime: when invoked from a non-pinned shell, it selects Node `22.23.2` from the local nvm installation and produces the release for the committed revision. The installed release manifest reports Node `v22.23.2`, pinned Node `22.23.2`, Pi `0.84.1`, and revision `3315813b5fb8`.
+
+Windows 11 acceptance, live-provider reruns requiring credentials, signed-release approval, and final product-owner approval remain separate **NOT_RUN** or external gates. They are not inferred from this macOS checkpoint.
+
 ## P0 baseline
 
 Captured on 2026-09-07 from revision `8c69e26c86c486306d11ed86c3aacd4b407f2beb` on macOS Tahoe `26.6.1` arm64.
