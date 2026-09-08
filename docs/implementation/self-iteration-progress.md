@@ -55,7 +55,7 @@ The current development and acceptance scope is the macOS Tahoe `26.6.1` arm64 h
 | P1 launch and stop                 | PASS    | Acceptance revision `aad9d8a`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
 | P2 new task and history            | PASS    | At source revision `3dabb94`, current-TUI `/new` rejects an active task until Esc settles it, then creates a distinct task; persistence, explicit continuation, task isolation, and history tests pass on macOS |
 | P3 continuous execution and models | PASS (macOS) | Revision `34ec232` passes deterministic acceptance and the real Candy self-development dogfood, including model-stream/tool Esc continuation, same-TUI `/new`, repository discussion, bounded change, validator repair, review, restart, and historical task switching. DeepSeek/MiniMax live gates remain separate evidence; other configured models and Windows continuation are intentionally outside this run |
-| P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and current macOS Chrome rendering pass; Windows evidence and the formal release package remain pending |
+| P4 local WebUI                     | PASS (macOS) | Current macOS candidate package `docs/evidence/acceptance-v1-macos-34ec232.md` records ACC-WEB-01..03, loopback/auth/lifecycle evidence, and the sanitized WebUI contract tests; Windows continuation and final V1 approval remain pending |
 
 ## P2 new-task and same-directory policy
 
@@ -90,8 +90,8 @@ The current-refresh attempt initially exposed a PTY/Expect harness failure while
 ## Why the remaining scope is not complete
 
 - The macOS implementation, deterministic acceptance, and real self-development loop are now **PASS** at revision `34ec232`: current-scope check 402/402, macOS acceptance 14/14, and current-revision dogfood with restart history switching.
-- WebUI is implemented and has current macOS browser, authentication, loopback, and foreground-lifecycle evidence. The full P4 target still needs its formal evidence package and Windows-host evidence; it must not be inferred from the existing `apps/app-server` or from one browser smoke run.
+- WebUI is implemented and has current macOS browser, authentication, loopback, and foreground-lifecycle evidence. The current macOS candidate evidence package is [acceptance-v1-macos-34ec232](../evidence/acceptance-v1-macos-34ec232.md); it does not substitute for Windows evidence or final V1 approval, and it is not inferred merely from the existing `apps/app-server`.
 - Windows 11 platform/native and cross-platform acceptance is **NOT_RUN** by explicit scope. It is an external host gate, not a macOS code task to silently mark complete.
 - Product-owner approval and any live-provider run requiring credentials remain external gates. Other configured models are intentionally not expanded in this iteration.
 
-The macOS P0-P3 code, deterministic tests, real self-development evidence, and bounded PTY harness issue are now closed for this checkpoint. P4 formalization, Windows acceptance, missing live credentials, and an explicit release-complete decision cannot be closed by macOS automation; they remain clearly recorded as **PARTIAL**, **NOT_RUN**, or **BLOCKED** until their required environment or decision exists.
+The macOS P0-P4 candidate code, deterministic tests, real self-development evidence, bounded PTY harness issue, and sanitized candidate package are now closed for this checkpoint. Windows acceptance, release-candidate live-provider revalidation, and an explicit release-complete decision remain clearly recorded as **NOT_RUN** or **BLOCKED** until their required environment or decision exists.
