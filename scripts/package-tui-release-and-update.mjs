@@ -10,11 +10,7 @@ const packageScript = path.join(root, "scripts", "package-tui-release.mjs");
 
 const args = parseArgs(process.argv.slice(2));
 
-const releaseCommand = [
-  process.execPath,
-  packageScript,
-  ...args.packageArgs,
-];
+const releaseCommand = [process.execPath, packageScript, ...args.packageArgs];
 
 let packageOutput;
 try {
@@ -23,9 +19,10 @@ try {
     encoding: "utf8",
   });
 } catch (error) {
-  const message = error.status === undefined
-    ? error.message
-    : `package script exited with status ${error.status}`;
+  const message =
+    error.status === undefined
+      ? error.message
+      : `package script exited with status ${error.status}`;
   console.error(message);
   process.exit(1);
 }
@@ -122,7 +119,9 @@ function parseArgs(rawArgs) {
 
 function commandHelp() {
   process.stdout.write(`Usage:\n`);
-  process.stdout.write(`  node scripts/package-tui-release-and-update.mjs [package options] [--home <path>] [--force]\n`);
+  process.stdout.write(
+    `  node scripts/package-tui-release-and-update.mjs [package options] [--home <path>] [--force]\n`,
+  );
   process.stdout.write(`\n`);
   process.stdout.write(`package options: --version --platform --arch --output\n`);
   process.stdout.write(`release options: --home <path> --force\n`);

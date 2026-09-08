@@ -77,7 +77,10 @@ function listChangedFiles(base, head) {
     if (output.length === 0) {
       return [];
     }
-    return output.split("\n").map((line) => line.trim()).filter(Boolean);
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
   } catch {
     // If diff fails (for example unavailable history), force a safe default to rebuild.
     return ["all"];

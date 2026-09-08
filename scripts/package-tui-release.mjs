@@ -42,7 +42,9 @@ await rename(stagingRoot, releaseRoot);
 
 process.stdout.write(`package complete: ${releaseRoot}\n`);
 process.stdout.write(`release version: ${releaseVersion}\n`);
-process.stdout.write(`install: ${path.join(releaseRoot, process.platform === "win32" ? "install.cmd" : "install.sh")}\n`);
+process.stdout.write(
+  `install: ${path.join(releaseRoot, process.platform === "win32" ? "install.cmd" : "install.sh")}\n`,
+);
 
 function parseArgs(rawArgs) {
   const options = {
@@ -109,9 +111,13 @@ function parseArgs(rawArgs) {
 
 function commandHelp() {
   process.stdout.write(`Usage:\n`);
-  process.stdout.write(`  node scripts/package-tui-release.mjs [--version <version>] [--platform <platform>] [--arch <arch>] [--output <path>]\n`);
+  process.stdout.write(
+    `  node scripts/package-tui-release.mjs [--version <version>] [--platform <platform>] [--arch <arch>] [--output <path>]\n`,
+  );
   process.stdout.write(`\n`);
-  process.stdout.write(`--version  Version string for the release payload (defaults to package version + sha)\n`);
+  process.stdout.write(
+    `--version  Version string for the release payload (defaults to package version + sha)\n`,
+  );
   process.stdout.write(`--platform platform    e.g. darwin / win32\n`);
   process.stdout.write(`--arch architecture    e.g. arm64 / x64\n`);
   process.stdout.write(`--output path         Output root (default: out/tui-release)\n`);
@@ -233,6 +239,10 @@ node "$SCRIPT_DIR/bin/candy.mjs" update --from "$SCRIPT_DIR"\n`;
 }
 
 function sanitizeVersion(value) {
-  const safe = `${value}`.trim().toLowerCase().replace(/[^a-z0-9.+_-]/gu, "-").replace(/-+/gu, "-");
+  const safe = `${value}`
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.+_-]/gu, "-")
+    .replace(/-+/gu, "-");
   return safe.replace(/^-+|-+$/gu, "").replace(/\.+$/u, "");
 }

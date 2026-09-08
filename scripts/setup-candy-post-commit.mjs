@@ -39,13 +39,13 @@ if (existingHooksPath && existingHooksPath !== ".githooks") {
   console.log(`Candy hook installed at ${path.relative(repoRoot, postCommitPath)}`);
 } else {
   console.log("installed candy local hook path at .githooks");
-  console.log("installed post-commit hook. Commit 后会自动执行 runtime-relevant 变更检测和可用时自动更新。当前会跳过 CI/环境变量禁用场景，不会阻塞 commit。");
+  console.log(
+    "installed post-commit hook. Commit 后会自动执行 runtime-relevant 变更检测和可用时自动更新。当前会跳过 CI/环境变量禁用场景，不会阻塞 commit。",
+  );
 }
 
 function writeHook(targetPath, legacyFileName) {
-  const legacyInvocation = legacyFileName
-    ? `"$(dirname \"$0\")/${legacyFileName}" "$@" || true`
-    : "";
+  const legacyInvocation = legacyFileName ? `"$(dirname "$0")/${legacyFileName}" "$@" || true` : "";
   const script = `#!/usr/bin/env sh
 set -eu
 

@@ -194,7 +194,11 @@ function rebuildDirSymlink(target, link) {
 }
 
 function ensureCommandShim(installRoot) {
-  const shellPath = path.join(installRoot, "bin", process.platform === "win32" ? "candy.cmd" : "candy");
+  const shellPath = path.join(
+    installRoot,
+    "bin",
+    process.platform === "win32" ? "candy.cmd" : "candy",
+  );
   ensureDir(path.dirname(shellPath));
   if (existsSync(shellPath)) {
     rmSync(shellPath, { recursive: true, force: true });
@@ -275,7 +279,9 @@ function commandUpdate(rawArgs) {
 
   process.stdout.write(`installed candy ${version}\n`);
   process.stdout.write(`location: ${targetRoot}\n`);
-  process.stdout.write(`release command: ${path.join(installRoot, "bin", process.platform === "win32" ? "candy.cmd" : "candy")}\n`);
+  process.stdout.write(
+    `release command: ${path.join(installRoot, "bin", process.platform === "win32" ? "candy.cmd" : "candy")}\n`,
+  );
   return 0;
 }
 
@@ -308,7 +314,9 @@ function runWithPinnedNode(args, options = {}) {
   const nodePath = process.env.CANDY_NODE?.trim() ?? undefined;
   const resolved = nodePath && existsSync(nodePath) ? nodePath : pinnedNodePath();
   if (resolved === undefined) {
-    console.error(`Candy requires Node ${pinnedNode}; received ${process.version}. Run \`nvm use ${pinnedNode}\` first.`);
+    console.error(
+      `Candy requires Node ${pinnedNode}; received ${process.version}. Run \`nvm use ${pinnedNode}\` first.`,
+    );
     return 1;
   }
 
@@ -318,7 +326,12 @@ function runWithPinnedNode(args, options = {}) {
 }
 
 function pinnedNodePath() {
-  const releaseNode = path.join(root, "node", "bin", process.platform === "win32" ? "node.exe" : "node");
+  const releaseNode = path.join(
+    root,
+    "node",
+    "bin",
+    process.platform === "win32" ? "node.exe" : "node",
+  );
   if (existsSync(releaseNode)) {
     return releaseNode;
   }
