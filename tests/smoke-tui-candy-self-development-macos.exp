@@ -67,17 +67,24 @@ wait_for {new task ready} "self-development task creation in the same TUI"
 send_command ":validator $env(CANDY_SELF_DEV_NODE) tests/fixtures/candy-self-development-validator.mjs"
 wait_for {validator configured for new tasks:} "validator configuration"
 
-send_command "Candy maintainer task. Do not edit yet. Your next four actions must be four separate successful candy_read tool calls, in exactly this order, one path per call: docs/product/candy-v1.md; docs/product/acceptance-v1.md; apps/tui/src/main.ts; docs/implementation/self-iteration-progress.md. Do not combine paths and do not substitute candy_bash. After all four reads, briefly discuss the runtime boundary, Task Worktree rule, and verification plan. Then create only docs/implementation/self-development-dogfood-note.md in the Task Worktree with exactly two lines: # Candy self-development dogfood and Needs validator repair. Leave the second line wrong for this first turn so the configured validator fails; do not fix it yet. Finally use candy_bash for git diff --check and git status --short. No network, no staging, commit, push, or other file changes; report the four reads and results."
+send_command "Candy maintainer task, first phase only. Your next four actions must be four separate successful candy_read tool calls, in exactly this order, one path per call: docs/product/candy-v1.md; docs/product/acceptance-v1.md; apps/tui/src/main.ts; docs/implementation/self-iteration-progress.md. Do not combine paths, do not substitute candy_bash, and do not use any other tool. After all four reads, briefly discuss the runtime boundary, Task Worktree rule, and verification plan. Stop after the discussion and end your reply with the exact marker SELF_DEV_READ_PHASE_READY_20260908. Do not create, edit, delete, stage, commit, push, or validate any file; do not use network."
 expect {
   -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
   timeout { fail "timed out waiting for self-development task creation" }
   eof { fail "TUI exited while waiting for self-development task creation" }
 }
+wait_for {SELF_DEV_READ_PHASE_READY_20260908} "self-development read phase marker"
 wait_for "${task_id} completed" "self-development task completion"
+send_command "Second phase: now implement the bounded change discussed above. Create only docs/implementation/self-development-dogfood-note.md in the Task Worktree with exactly two lines: # Candy self-development dogfood and Needs validator repair. Leave the second line wrong for this first turn so the configured validator fails; do not fix it yet. Finally use candy_bash for git diff --check and git status --short. No network, no staging, commit, push, or other file changes; report the change and results. End your reply with the exact marker SELF_DEV_IMPLEMENT_PHASE_READY_20260908."
+wait_for {SELF_DEV_IMPLEMENT_PHASE_READY_20260908} "self-development implementation phase marker"
+wait_for "continuing ${task_id}" "self-development implementation continuation"
+wait_for "${task_id} completed" "self-development implementation completion"
 send_command ":changes"
 wait_for "changed files: ${task_id}" "changed-file review"
 send_command ":diff"
+wait_for "diff ${task_id}" "self-development diff header"
 wait_for {self-development-dogfood-note.md} "self-development diff review"
+after 500
 send_command ":validate"
 wait_for {validator running:} "self-development validator start"
 wait_for {validator fail:} "controlled self-development validator failure"
