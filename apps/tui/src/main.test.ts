@@ -778,6 +778,79 @@ test("interactive TUI interrupts a running task with Esc and preserves TUI sessi
   }
 });
 
+test("interactive TUI requires Esc before /new can replace a running task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-new-running-task-"));
+  const terminal: FakeTerminal = new FakeTerminal();
+  const calls: string[] = [];
+  const waitForAbort = (signal: AbortSignal): Promise<never> =>
+    new Promise<never>((_resolve, reject) => {
+      const onAbort = (): void => reject(new Error("fixture interrupted"));
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  const engine: TuiAgentEngine = {
+    async *runTurn(input, signal) {
+      calls.push(input.prompt);
+      yield { type: "turn.started", taskId: input.taskId };
+      if (input.prompt === "long task") {
+        yield { type: "assistant.delta", taskId: input.taskId, text: "long task active" };
+        await waitForAbort(signal);
+      }
+      yield { type: "assistant.delta", taskId: input.taskId, text: "new task completed" };
+      yield { type: "turn.completed", taskId: input.taskId };
+    },
+  };
+  try {
+    const runPromise = new TestInteractiveTui({ appDataRoot: root, engine, terminal }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    terminal.emitInput("long task");
+    terminal.emitInput("\r");
+    const activeOutput = await waitForOutput(terminal, /long task active/u);
+    const firstTaskId = activeOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(firstTaskId);
+
+    terminal.emitInput("/new replacement task");
+    terminal.emitInput("\r");
+    const rejectedOutput = await waitForOutput(
+      terminal,
+      new RegExp(`task ${firstTaskId} is still running; press Esc to interrupt it`, "u"),
+    );
+    assert.match(rejectedOutput, /then use \/new/u);
+    assert.equal(calls.length, 1);
+
+    terminal.emitInput("\x1b");
+    await waitForOutput(terminal, new RegExp(`${firstTaskId} interrupted:`, "u"));
+
+    const newTaskOutputStart = terminal.writes.length;
+    terminal.emitInput("/new replacement task");
+    terminal.emitInput("\r");
+    const newTaskOutput = await waitForNewOutput(
+      terminal,
+      newTaskOutputStart,
+      /new task completed/u,
+    );
+    const secondTaskId = newTaskOutput.match(/created (task-[a-z0-9]+)/u)?.[1];
+    assert.ok(secondTaskId);
+    assert.notEqual(firstTaskId, secondTaskId);
+    assert.equal(calls.length, 2);
+
+    const store = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
+    assert.equal(store.get(firstTaskId)?.state, "interrupted");
+    assert.equal(store.get(secondTaskId)?.state, "completed");
+    store.close();
+
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interactive TUI exposes sanitized provider recovery actions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-provider-recovery-"));
   const terminal: FakeTerminal = new FakeTerminal();

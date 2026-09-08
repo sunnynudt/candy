@@ -1222,6 +1222,18 @@ export class InteractiveTui {
       );
       return;
     }
+    const currentTask =
+      this.#currentTaskId === undefined ? undefined : this.#store.get(this.#currentTaskId);
+    if (
+      currentTask !== undefined &&
+      (currentTask.state === "running" || currentTask.state === "waiting_approval")
+    ) {
+      const stateLabel = currentTask.state === "running" ? "running" : "waiting for approval";
+      this.write(
+        `task ${currentTask.taskId} is still ${stateLabel}; press Esc to interrupt it, wait for the interrupted state, then use /new\n`,
+      );
+      return;
+    }
     // An explicit /new supersedes a bare /plan or /debug that armed the next prompt.
     this.#planPending = false;
     this.#debugPending = false;
