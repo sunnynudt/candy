@@ -178,7 +178,8 @@ async function measureConcurrency() {
   for (let index = 0; index < runs; index += 1) {
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-concurrency-"));
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "candy-tui-concurrency-workspace-"));
-    const terminal = new FakeTerminal();
+    const terminals = Array.from({ length: 3 }, () => new FakeTerminal());
+    const runPromises = [];
     let active = 0;
     const startedTaskIds = new Set();
     let release;
@@ -202,15 +203,19 @@ async function measureConcurrency() {
           yield { type: "turn.completed", taskId: input.taskId };
         },
       };
-      const runPromise = new InteractiveTui({
-        appDataRoot: rootPath,
-        workspacePath,
-        terminal,
-        engine,
-      }).run();
-      await waitFor(() => terminal.started);
-      for (let taskIndex = 0; taskIndex < 3; taskIndex += 1) {
-        terminal.emitInput(`:new concurrency ${taskIndex}`);
+      for (const terminal of terminals) {
+        runPromises.push(
+          new InteractiveTui({
+            appDataRoot: rootPath,
+            workspacePath,
+            terminal,
+            engine,
+          }).run(),
+        );
+      }
+      await Promise.all(terminals.map((terminal) => waitFor(() => terminal.started)));
+      for (const [taskIndex, terminal] of terminals.entries()) {
+        terminal.emitInput(`concurrency ${taskIndex}`);
         terminal.emitInput("\r");
         await waitFor(() => startedTaskIds.size > taskIndex);
       }
@@ -219,10 +224,12 @@ async function measureConcurrency() {
         const marker = `concurrency-marker-${taskIndex}`;
         let found = false;
         try {
-          found = await waitFor(() => terminal.writes.join("").includes(marker));
+          found = await waitFor(() =>
+            terminals.some((terminal) => terminal.writes.join("").includes(marker)),
+          );
         } catch (error) {
           throw new Error(
-            `Concurrency marker ${marker} missing; active=${active}; output=${terminal.writes.join("")}`,
+            `Concurrency marker ${marker} missing; active=${active}; output=${terminals.map((terminal) => terminal.writes.join("")).join("\n")}`,
             { cause: error },
           );
         }
@@ -240,9 +247,9 @@ async function measureConcurrency() {
           ),
         );
       }
-      terminal.emitInput("\x03");
-      await runPromise;
     } finally {
+      for (const terminal of terminals) terminal.emitInput("\x03");
+      await Promise.allSettled(runPromises);
       await rm(rootPath, { recursive: true, force: true });
       await rm(workspacePath, { recursive: true, force: true });
     }

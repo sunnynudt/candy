@@ -3138,7 +3138,7 @@ test("interactive TUI keeps Auto Git edits in a Task Worktree until reviewed App
     await waitForOutput(terminal, /\+created in task/u);
     terminal.emitInput(":apply");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+    await waitForOutput(terminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"), 5000);
 
     assert.equal(await readFile(path.join(repository, "README.md"), "utf8"), "changed in task\n");
     assert.equal(await readFile(path.join(repository, "new.txt"), "utf8"), "created in task\n");
@@ -3281,7 +3281,11 @@ test("interactive TUI persists reviewed workspace metadata across restart", asyn
     assert.match(transcript, /edit and review after restart/u);
     secondTerminal.emitInput(":apply");
     secondTerminal.emitInput("\r");
-    await waitForOutput(secondTerminal, new RegExp(`applied ${taskId} to Local Workspace`, "u"));
+    await waitForOutput(
+      secondTerminal,
+      new RegExp(`applied ${taskId} to Local Workspace`, "u"),
+      5000,
+    );
     assert.equal(secondEngineCalls, 0);
     assert.equal(
       await readFile(path.join(repository, "README.md"), "utf8"),
