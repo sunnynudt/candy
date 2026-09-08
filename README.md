@@ -37,13 +37,14 @@ npm run package:tui:release
 ./out/tui-release/candy-<version>/install.sh
 ```
 
-安装脚本会把版本放到 `~/.candy/versions/<version>`，并在 `~/.candy/bin` 下写入启动入口。将 `~/.candy/bin` 加入 PATH 后即可在任意目录运行 `candy`：
+安装脚本会把版本放到 `~/.candy/versions/<version>`，在 `~/.candy/bin` 下写入启动入口，并在 macOS 的当前 shell 启动文件中幂等加入 `~/.candy/bin`。重新打开一个终端后即可在任意目录运行 `candy`：
 
 ```bash
-export PATH="$HOME/.candy/bin:$PATH"
 candy --version
 candy update --from ~/.candy/versions/<version>
 ```
+
+如果不希望安装脚本修改 shell 启动文件，可设置 `CANDY_SKIP_SHELL_SETUP=1`；也可以手动执行 `export PATH="$HOME/.candy/bin:$PATH"` 立即应用到当前 shell。
 
 源码改动后想直接一键更新本机，使用：
 

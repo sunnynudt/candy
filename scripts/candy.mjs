@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {
+  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -25,6 +26,8 @@ const releaseMetadata = readReleaseMetadata(path.join(root, "candy-release.json"
 
 const RELEASE_BINARY = path.join("..", "current", "bin", "candy.mjs");
 const RELEASE_MANIFEST_NAME = "candy-release.json";
+const CANDY_PATH_START = "# >>> candy managed path >>>";
+const CANDY_PATH_END = "# <<< candy managed path <<<";
 
 function readReleaseMetadata(manifestPath) {
   try {
@@ -276,6 +279,7 @@ function commandUpdate(rawArgs) {
 
   rebuildDirSymlink(path.resolve(targetRoot), currentLink);
   ensureCommandShim(installRoot);
+  ensureShellPath(installRoot);
 
   process.stdout.write(`installed candy ${version}\n`);
   process.stdout.write(`location: ${targetRoot}\n`);
@@ -283,6 +287,31 @@ function commandUpdate(rawArgs) {
     `release command: ${path.join(installRoot, "bin", process.platform === "win32" ? "candy.cmd" : "candy")}\n`,
   );
   return 0;
+}
+
+function ensureShellPath(installRoot) {
+  if (
+    process.platform !== "darwin" ||
+    process.env.CANDY_SKIP_SHELL_SETUP === "1" ||
+    path.resolve(installRoot) !== path.join(os.homedir(), ".candy")
+  ) {
+    return;
+  }
+
+  const shellName = path.basename(process.env.SHELL ?? "zsh");
+  const startupFileName =
+    shellName === "bash" ? ".bashrc" : shellName === "zsh" ? ".zshrc" : ".profile";
+  const startupFile = path.join(os.homedir(), startupFileName);
+  const existing = existsSync(startupFile) ? readFileSync(startupFile, "utf8") : "";
+  if (existing.includes(CANDY_PATH_START)) {
+    return;
+  }
+
+  const block = `\n${CANDY_PATH_START}\nif [ -d "$HOME/.candy/bin" ]; then\n  case ":${"$"}{PATH:-}:" in\n    *":$HOME/.candy/bin:"*) ;;\n    *) export PATH="$HOME/.candy/bin${"$"}{PATH:+:$PATH}" ;;\n  esac\nfi\n${CANDY_PATH_END}\n`;
+  appendFileSync(startupFile, block, "utf8");
+  process.stdout.write(
+    `configured ${startupFile} to include ~/.candy/bin; restart the shell to apply\n`,
+  );
 }
 
 function commandRollback() {
