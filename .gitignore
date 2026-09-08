@@ -25,6 +25,7 @@ pnpm-debug.log*
 !.env.example
 .candy/
 /.omo/
+/.githooks/
 *.pem
 *.key
 
