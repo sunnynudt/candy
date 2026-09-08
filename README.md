@@ -74,12 +74,17 @@ npm run package:tui:release:local:changed -- --show-diff       # 输出触发更
 npm run package:tui:release:local:changed -- --base <refA> --head <refB>
 ```
 
-要做到“提交后自动执行”，只需把该命令放进你的 `post-commit` 钩子（当前不启用 daemon）：
+要做到“提交后自动执行”，执行一次就行，不用再记住长命令：
 
 ```bash
-repo_root="$(git rev-parse --show-toplevel)"
-node "$repo_root/scripts/package-tui-release-if-changed.mjs"
+npm run candy:hooks
 ```
+
+它会帮你：
+
+1. 写入/更新 `post-commit` 本地钩子（不阻塞提交）；
+2. 自动处理已有 `post-commit`（保留历史版本）；
+3. 每次 commit 后按变更范围自动判断是否重建并更新本机 candy。
 
 `candy --version` 在源码态和已安装态都可用；源码态仍可看到 `revision` / `stable` 信息，发布态显示当前安装包版本与 manifest 信息。  
 
