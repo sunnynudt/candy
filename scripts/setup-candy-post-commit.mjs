@@ -22,6 +22,7 @@ if (existsSync(postCommitPath)) {
     renameSync(postCommitPath, backupName);
     writeHook(postCommitPath, path.basename(backupName));
   } else {
+    writeHook(postCommitPath, extractLegacyFileName(current));
     console.log("post-commit hook already managed by Candy.");
   }
 } else {
@@ -60,7 +61,31 @@ if [ -z "\${repo_root}" ]; then
 fi
 
 cd "$repo_root"
-node scripts/package-tui-release-if-changed.mjs || true
+
+pinned_node="$(tr -d '[:space:]' < .nvmrc 2>/dev/null || true)"
+node_bin="\${CANDY_NODE:-}"
+if [ -n "\${node_bin}" ] && [ "$("\${node_bin}" --version 2>/dev/null || true)" != "v\${pinned_node}" ]; then
+  node_bin=""
+fi
+if [ -z "\${node_bin}" ] && [ -n "\${pinned_node}" ]; then
+  nvm_root="\${NVM_DIR:-$HOME/.nvm}"
+  pinned_node_bin="\${nvm_root}/versions/node/v\${pinned_node}/bin/node"
+  if [ -x "\${pinned_node_bin}" ]; then
+    node_bin="\${pinned_node_bin}"
+  fi
+fi
+if [ -z "\${node_bin}" ]; then
+  current_node="$(command -v node 2>/dev/null || true)"
+  if [ -n "\${current_node}" ] && [ "$("\${current_node}" --version 2>/dev/null || true)" = "v\${pinned_node}" ]; then
+    node_bin="\${current_node}"
+  fi
+fi
+if [ -z "\${node_bin}" ]; then
+  echo "candy auto-update skipped: pinned Node \${pinned_node:-from .nvmrc} is unavailable" >&2
+  exit 0
+fi
+
+"\${node_bin}" scripts/package-tui-release-if-changed.mjs || true
 ${legacyInvocation}
 `;
   writeFileSync(targetPath, script, "utf8");
@@ -100,6 +125,11 @@ function getAvailableBackupPath(candidate) {
     index += 1;
   }
   return `${candidate}.${index}`;
+}
+
+function extractLegacyFileName(script) {
+  const match = script.match(/\$\(dirname "\$0"\)\/([^"]+)/u);
+  return match?.[1];
 }
 
 function execSyncGit(args, cwd) {
