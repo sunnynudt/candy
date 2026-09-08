@@ -45,6 +45,15 @@ candy --version
 candy update --from ~/.candy/versions/<version>
 ```
 
+源码改动后想直接一键更新本机，使用：
+
+```bash
+npm run package:tui:release:local
+```
+
+它会执行：构建发布包（默认放在 `out/tui-release`）并自动调用 `candy update --from <新包路径> --home ~/.candy --force`（无需手工找路径）。
+`candy update` 若目标版本已是当前版本，会自然返回 `already current`；如需覆盖当前同版本安装，可追加 `-- --force`。
+
 `candy --version` 在源码态和已安装态都可用；源码态仍可看到 `revision` / `stable` 信息，发布态显示当前安装包版本与 manifest 信息。  
 
 补充运维命令（发布态）:
