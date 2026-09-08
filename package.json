@@ -28,6 +28,7 @@
     "check:windows-toolchain": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-toolchain.ps1",
     "package:tui:release": "node scripts/package-tui-release.mjs",
     "package:tui:release:local": "node scripts/package-tui-release-and-update.mjs",
+    "package:tui:release:local:changed": "node scripts/package-tui-release-if-changed.mjs",
     "check:native": "node scripts/check-native.mjs",
     "smoke:sandbox:macos": "npm run build && node tests/smoke-sandbox-macos.mjs",
     "smoke:full-access:macos": "npm run build && node tests/smoke-full-access-macos.mjs",

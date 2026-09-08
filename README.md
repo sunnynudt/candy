@@ -54,6 +54,32 @@ npm run package:tui:release:local
 它会执行：构建发布包（默认放在 `out/tui-release`）并自动调用 `candy update --from <新包路径> --home ~/.candy --force`（无需手工找路径）。
 `candy update` 若目标版本已是当前版本，会自然返回 `already current`；如需覆盖当前同版本安装，可追加 `-- --force`。
 
+如果你希望“每次 commit 后自动判断是否需要更新”，可以用变化范围过滤版：
+
+```bash
+npm run package:tui:release:local:changed
+```
+
+默认它比较 `HEAD^..HEAD` 的改动，只在以下路径有变更时触发构建和更新：
+- `apps/tui/**`
+- `packages/**`
+- `scripts/**`
+- `package.json` / `package-lock.json` / `tsconfig*.json` / `.prettierrc.json` / `eslint.config.js`
+
+可选参数：
+
+```bash
+npm run package:tui:release:local:changed -- --all             # 不过滤，任何 commit 都重建更新一次
+npm run package:tui:release:local:changed -- --show-diff       # 输出触发更新的文件列表
+npm run package:tui:release:local:changed -- --base <refA> --head <refB>
+```
+
+要做到“提交后自动执行”，只需把该命令放进你的 `post-commit` 钩子（当前不启用 daemon）：
+
+```bash
+node /Users/sunny/ai/github/candy/scripts/package-tui-release-if-changed.mjs
+```
+
 `candy --version` 在源码态和已安装态都可用；源码态仍可看到 `revision` / `stable` 信息，发布态显示当前安装包版本与 manifest 信息。  
 
 补充运维命令（发布态）:
