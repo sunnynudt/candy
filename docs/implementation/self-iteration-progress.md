@@ -39,6 +39,10 @@ Source revision `81c72cb6eb99b5c292501fc142c387e16c3bbc92` is pushed and matches
 
 Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates source/test evidence from macOS interaction, Windows evidence, and live-provider evidence. A passing deterministic test does not substitute for a missing platform or live-provider gate.
 
+## Current execution scope
+
+The current development and acceptance scope is the macOS Tahoe `26.6.1` arm64 host. Windows 11 execution is intentionally deferred to the continuation on a Windows host and is not a blocker for the current macOS iteration. This scope decision does not weaken the formal V1 release contract: a future cross-platform release claim still requires Windows evidence.
+
 ## Batch status
 
 | Batch                              | Status  | Current evidence                                                                                                                                                                                                                   |
@@ -47,7 +51,7 @@ Every batch reports `PASS`, `PARTIAL`, `BLOCKED`, or `NOT_RUN` and separates sou
 | P1 launch and stop                 | PASS    | Acceptance revision `81c72cb`; launcher identity, `npm run candy -- --smoke`, Pi cancellation, Esc/session preservation, provider abort observation, and macOS 26.6.1 arm64 TUI journey pass |
 | P2 new task and history            | PARTIAL | Existing TUI tests cover `/new`, task isolation, persistence, explicit continuation; same-directory policy is documented below and shared WebUI state is implemented                                                               |
 | P3 continuous execution and models | PARTIAL | Acceptance revision `81c72cb` passes bounded validator/model/cancellation and coding journeys; real DeepSeek Trusted Shell dogfood and Candy-self-source development now pass on macOS, but the complete live-provider matrix remains open |
-| P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence pending |
+| P4 local WebUI                     | PARTIAL | Loopback server, shared task/history/review API, owner-fenced stop, foreground-process recovery, static operator UI, HTTP security tests, and Chrome rendering on macOS pass; Windows evidence is deferred to the Windows-host continuation |
 
 ## P2 same-directory recommendation
 
@@ -67,4 +71,4 @@ The domestic MiniMax live gate at the current revision is **7/8**. Text, thinkin
 
 The MiniMax gate was retried at the current source revision `e5d2ccddb05cb797516dbacde5e81f70bbc8a8c1`; the latest run is **7/8**, with the mandatory image scenario still returning `provider_error` after bounded retry. The latest exact-current run passed the thinking delta in LIVE-MM-03. The open item remains a live provider/image-path gate, not a deterministic Candy test failure.
 
-The Candy-self-source development loop now passes on source revision `08b03835719639b51e4a59589cb55f8f8eb597db`: real DeepSeek and the production Candy Pi Agent Engine exercised Esc interruption during both a model stream and tool execution, continued both tasks explicitly, created a second task with `/new` in the same TUI, selected a clean Candy source checkout, discussed the runtime and acceptance constraints, modified only a Candy-owned Task Worktree, produced a controlled validator failure, repaired the file through an explicit continuation, passed revalidation, reviewed the diff, restarted, and switched historical tasks with `/tasks` and `/use`. The selected source workspace, Git HEAD/index/status, and an external sentinel remained unchanged; the sanitized report is [Candy self-development dogfood](../../out/acceptance/macos/candy-self-development-latest.md). This is macOS evidence only. Windows 11 evidence remains **NOT_RUN** because no Windows host is available.
+The Candy-self-source development loop now passes on source revision `08b03835719639b51e4a59589cb55f8f8eb597db`: real DeepSeek and the production Candy Pi Agent Engine exercised Esc interruption during both a model stream and tool execution, continued both tasks explicitly, created a second task with `/new` in the same TUI, selected a clean Candy source checkout, discussed the runtime and acceptance constraints, modified only a Candy-owned Task Worktree, produced a controlled validator failure, repaired the file through an explicit continuation, passed revalidation, reviewed the diff, restarted, and switched historical tasks with `/tasks` and `/use`. The selected source workspace, Git HEAD/index/status, and an external sentinel remained unchanged; the sanitized report is [Candy self-development dogfood](../../out/acceptance/macos/candy-self-development-latest.md). This is macOS evidence only. Windows 11 evidence remains **NOT_RUN** and is intentionally deferred to the Windows-host continuation.
