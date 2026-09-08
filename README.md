@@ -77,7 +77,8 @@ npm run package:tui:release:local:changed -- --base <refA> --head <refB>
 要做到“提交后自动执行”，只需把该命令放进你的 `post-commit` 钩子（当前不启用 daemon）：
 
 ```bash
-node /Users/sunny/ai/github/candy/scripts/package-tui-release-if-changed.mjs
+repo_root="$(git rev-parse --show-toplevel)"
+node "$repo_root/scripts/package-tui-release-if-changed.mjs"
 ```
 
 `candy --version` 在源码态和已安装态都可用；源码态仍可看到 `revision` / `stable` 信息，发布态显示当前安装包版本与 manifest 信息。  
