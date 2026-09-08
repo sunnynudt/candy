@@ -19,17 +19,55 @@ npm run check
 
 ## Personal Preview TUI
 
-Install the local command once and launch the TUI on macOS or Windows with:
+开发态（源码）使用方式：
 
 ```bash
 nvm use
+npm ci --ignore-scripts
 npm link
 candy
 ```
 
-The npm link creates the platform-appropriate command shim (`candy` on macOS and `candy.cmd` on Windows). Each `candy` launch rebuilds the repository and starts the latest TUI, so it is the iteration command while developing Candy; pass TUI smoke flags directly when verifying the launcher, for example `candy --smoke`. When launched from another directory, that directory is the default workspace; use `/workspace <path>` to switch explicitly. If you prefer not to install a global command, `npm run candy` in the repository works the same way.
+`npm link` 创建可执行命令 `candy`（Windows 为 `candy.cmd`）。`candy` 每次启动会先增量构建仓库并启动当前 checkout 的 TUI，所以这是本地开发迭代的主要入口。每次启动的运行行为与源码修改保持一致；不想装全局命令时，用 `npm run candy`。
 
-Use `candy --version` (or `npm run candy -- --version`) to print the exact source revision, pinned runtime baseline, and whether the checkout is `stable` (clean and equal to its upstream revision) or `candidate` (dirty or unpublished). The output also names the stable upstream revision and a safe recovery command. To try that recovery version without touching the current checkout, create a separate Git worktree at the reported revision, install its dependencies, and run `candy` there; do not reset a worktree containing user changes.
+本机发布体验（仓库更新后可离线更新）:
+
+```bash
+npm run package:tui:release
+./out/tui-release/candy-<version>/install.sh
+```
+
+安装脚本会把版本放到 `~/.candy/versions/<version>`，并在 `~/.candy/bin` 下写入启动入口。将 `~/.candy/bin` 加入 PATH 后即可在任意目录运行 `candy`：
+
+```bash
+export PATH="$HOME/.candy/bin:$PATH"
+candy --version
+candy update --from ~/.candy/versions/<version>
+```
+
+`candy --version` 在源码态和已安装态都可用；源码态仍可看到 `revision` / `stable` 信息，发布态显示当前安装包版本与 manifest 信息。  
+
+补充运维命令（发布态）:
+
+```bash
+# 回滚到上一个版本（在 ~/.candy/previous 存在时）
+candy rollback
+
+# 清理并重装：先移除本地目录，再重复 install.sh
+rm -rf ~/.candy
+./out/tui-release/candy-<version>/install.sh
+```
+
+可选：使用自定义安装目录（便于 A/B 测试或脚本化）：
+
+```bash
+candy update --from ~/.candy/versions/<version> --home /tmp/candy-test
+export PATH="/tmp/candy-test/bin:$PATH"
+```
+
+发布产物不要求上传到 npm；把新版本目录放到目标机后执行 `install.sh`，即可按同一机制更新。下一版只需重复 `npm run package:tui:release` 并替换新目录即可，和你用 pi/opencode/codex 的本地更新体验一致。
+
+`candy` 启动是“源码优先”：有源码目录时会按源码路径启动，开发者迭代建议走 `npm link`；无源码时会按 `~/.candy/bin` 下的 shim 启动当前可用已安装版本。
 
 Candy reads only Candy-owned DeepSeek or MiniMax credentials from the operating-system credential store (or the documented temporary development environment). Select a workspace with `:workspace /absolute/path`, enter a prompt, and Candy starts in the default **safe workspace** access mode: it makes containment-checked changes in an isolated copy, then lets you review them with `:changes` and `:diff` before the explicit `:apply` or `:discard`. `/access` shows the three plain-language choices: `review` only analyzes, `safe` is the default isolated workflow, and `current` works directly in the current workspace. On approved macOS hosts, `safe` and `current` both run ordinary existing local checks such as `npm run check` offline without per-command prompts; Candy never downloads dependencies automatically. In `safe`, a network command still needs one-command approval; `current` does not expose network commands. Credentials, commits, pushes, publishing, and deployment remain protected.
 

@@ -12,13 +12,21 @@ const metadata = JSON.parse(output);
 
 assert.equal(metadata.product, "candy");
 assert.equal(typeof metadata.version, "string");
-assert.ok(["stable", "candidate"].includes(metadata.channel));
+assert.ok(["stable", "candidate", "release"].includes(metadata.channel));
 assert.match(metadata.revision ?? "", /^[0-9a-f]{40}$/u);
-assert.match(metadata.stableRevision ?? "", /^[0-9a-f]{40}$/u);
+if (metadata.stableRevision !== null) {
+  assert.match(metadata.stableRevision, /^[0-9a-f]{40}$/u);
+}
 assert.equal(metadata.pinnedNode, "22.23.2");
 assert.equal(metadata.piVersion, "0.84.1");
 assert.equal(typeof metadata.dirty, "boolean");
-assert.match(metadata.rollback, /^git worktree add <recovery-path> [0-9a-f]{40}$/u);
+assert.ok(
+  metadata.rollback === "unavailable-without-an-upstream-revision" ||
+    metadata.rollback === "release-revision-not-recorded" ||
+    /^git worktree add <recovery-path> [0-9a-f]{40}$/u.test(metadata.rollback) ||
+    /^rollback to [0-9a-f]{40} by git worktree$/u.test(metadata.rollback),
+  `unexpected rollback guidance: ${JSON.stringify(metadata.rollback)}`,
+);
 
 console.log(
   JSON.stringify({
