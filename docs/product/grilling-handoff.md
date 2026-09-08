@@ -6,6 +6,8 @@ This document records the accepted product decisions and the remaining grilling 
 
 Scope note (2026-08-17): this is a historical handoff snapshot. The current V1 contract is the TUI-only scope in [`candy-v1.md`](candy-v1.md) and [`acceptance-v1.md`](acceptance-v1.md); Desktop, Browser Workspace, and their dependent workflows are V2 and the older requirements below are not V1 acceptance criteria.
 
+Scope note (2026-09-08): ADR-0015 supersedes the older DeepSeek-first and MiniMax-native-image decisions below. The current direction is a model-neutral provider catalog; MiniMax M3 is an ordinary selectable model, and image attachments follow the selected model capability rather than a provider-specific route.
+
 ## Accepted decisions
 
 ### Product foundation

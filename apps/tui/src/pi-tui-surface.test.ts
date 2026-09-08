@@ -324,7 +324,7 @@ test("Candy slash autocomplete keeps bare /model as an explicit query before mod
       label: "deepseek-flash-vision",
       description: "DeepSeek V4 Flash Vision (experimental, multimodal)",
     },
-    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3 (native image)" },
+    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3" },
   ]);
   assert.equal(suggestions?.prefix, "/model");
 });
@@ -352,7 +352,7 @@ test("Candy slash autocomplete marks the current model and surfaces it in the ba
       label: "deepseek-flash-vision",
       description: "DeepSeek V4 Flash Vision (experimental, multimodal)",
     },
-    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3 (native image)" },
+    { value: "minimax-m3", label: "minimax-m3", description: "MiniMax M3" },
   ]);
   assert.equal(suggestions?.prefix, "/model");
 });

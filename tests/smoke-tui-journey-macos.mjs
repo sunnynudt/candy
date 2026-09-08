@@ -135,7 +135,8 @@ try {
   if (metadata?.state !== "completed") throw new Error("The task did not recover as completed.");
   if (metadata.workspacePath !== (await realpath(workspace)))
     throw new Error("The TUI did not persist the selected workspace.");
-  if (metadata.model !== "MiniMax-M3") throw new Error("The task model was not persisted.");
+  if (metadata.model !== "deepseek-v4-flash-vision-exp")
+    throw new Error("The task model was not persisted.");
   if (metadata.approvalProfile !== "auto") throw new Error("The Auto profile was not persisted.");
   if (metadata.attachmentIds.length !== 1 || metadata.attachmentIds[0] !== attachmentId)
     throw new Error("The attachment id was not persisted.");

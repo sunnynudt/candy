@@ -35,7 +35,7 @@ V1 does not include:
 - Credentials must never enter sessions, prompts, logs, diagnostics, analytics, crash reports, command/event messages, tool arguments, or tool subprocess environments.
 - Credentials may only come from a temporary process environment or the operating system's local credential store.
 - Credentials may only be transmitted as authentication to their approved provider HTTPS endpoint.
-- MiniMax requests, multimodal attachments, and credentials must use the domestic endpoint `https://api.minimaxi.com`; Candy must not fail over to the global MiniMax endpoint.
+- MiniMax model requests and credentials must use the domestic endpoint `https://api.minimaxi.com`; any attachment follows the selected model's declared capability, and Candy must not fail over to the global MiniMax endpoint.
 - Candy V1 must not upload credentials, sessions, source code, or telemetry to a Candy-operated service.
 - The Electron renderer may set, replace, delete, or query the presence of a credential, but must never read back the complete credential.
 - Block Candy-managed writes, commits, and pushes when they contain any active provider credential.

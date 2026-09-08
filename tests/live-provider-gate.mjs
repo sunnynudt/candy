@@ -6,17 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   DeepSeekClient,
   MiniMaxClient,
-  MiniMaxPiAgentEngine,
   PiAgentEngine,
   ProviderContractError,
 } from "@candy/pi-adapter";
 import { KeyringCredentialStore } from "@candy/platform";
-
-// Declared before the top-level `await runGate(...)` below: module evaluation
-// pauses at that await, so constants used inside `runGate` must be initialized
-// first or image turns fail with a TDZ ReferenceError.
-const ONE_PIXEL_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const resultRoot = path.join(root, "out", "acceptance", "live");
@@ -90,7 +83,7 @@ async function runGate(selectedProvider) {
     const engine =
       selectedProvider === "deepseek"
         ? new PiAgentEngine(sessionRoot, acquireSecret)
-        : new MiniMaxPiAgentEngine(sessionRoot, acquireSecret);
+        : new PiAgentEngine(sessionRoot, acquireSecret, "minimax-cn");
 
     if (selectedProvider === "deepseek") {
       results.push(
@@ -173,12 +166,12 @@ async function runGate(selectedProvider) {
           async () =>
             runTurn(engine, {
               taskId: "live-mm-02",
-              prompt: "Describe the attached test image in one short sentence.",
+              prompt:
+                "Use the read tool to inspect src-value.ts, then state the exported fixture value.",
               model: "MiniMax-M3",
               cwd: temporaryRoot,
-              images: [{ mimeType: "image/png", data: ONE_PIXEL_PNG }],
             }),
-          (outcome) => hasCompletedTextTurn(outcome),
+          (outcome) => hasCompletedToolTurn(outcome),
         ),
       );
       results.push(

@@ -105,15 +105,15 @@ Work packets:
 
 1. Implement the code-owned model catalog and per-provider concurrency/rate-limit gates.
 2. Add `deepseek-v4-pro` through the same verified Chat Completions path without silent fallback.
-3. Add Pi provider `minimax-cn` with model `MiniMax-M3` through `https://api.minimaxi.com/anthropic/v1/messages` after image schema, thinking/tool replay, cancellation, and controlled provider errors pass live verification; no separate provider-console entitlement confirmation is required.
+3. Add Pi provider `minimax-cn` with ordinary model `MiniMax-M3` through `https://api.minimaxi.com/anthropic/v1/messages` after text, thinking/tool replay, cancellation, and controlled provider errors pass live verification; no provider-specific image route is required.
 4. Add attachment ingestion, content hashing, metadata, storage outside session JSONL, and retention cleanup.
-5. Add between-turn model switching and an explicit switch prompt when an attachment is incompatible with the selected model.
+5. Add between-turn model switching and an explicit capability message when an attachment is incompatible with the selected model.
 
 Exit criteria:
 
 - UI labels map to verified official identifiers and approved hosts;
 - provider `429` handling does not block unrelated local tools or the other provider;
-- image paste, drag, selection, and stored browser screenshot reach MiniMax through the domestic host only;
+- image paste, drag, and selection reach only the selected model that declares image input capability;
 - provider failure offers retry, explicit model change, or cancel and never silently reroutes;
 - video UI remains disabled unless its separate contract gate passes.
 

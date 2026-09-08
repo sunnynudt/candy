@@ -3823,7 +3823,7 @@ test("interactive TUI rejects a model switch during an active turn", async () =>
   }
 });
 
-test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", async () => {
+test("Ctrl+V stages a clipboard image for an image-capable model", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-clipboard-image-"));
   const terminal = new FakeTerminal();
   const images: (readonly { readonly mimeType: string; readonly data: string }[])[] = [];
@@ -3848,10 +3848,10 @@ test("Ctrl+V stages a clipboard image as a Candy-owned MiniMax attachment", asyn
     await new Promise<void>((resolve) => setImmediate(resolve));
     terminal.emitInput("\x16"); // Ctrl+V
     await waitForOutput(terminal, /clipboard image staged: att_[a-f0-9]{64}/u);
-    await waitForOutput(terminal, /image attachment requires \/model minimax-m3/u);
-    terminal.emitInput("/model minimax-m3");
+    await waitForOutput(terminal, /image attachment requires \/model deepseek-flash-vision/u);
+    terminal.emitInput("/model deepseek-flash-vision");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /model selected: MiniMax-M3/u);
+    await waitForOutput(terminal, /model selected: deepseek-v4-flash-vision-exp/u);
     terminal.emitInput("describe the pasted image");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /clipboard image accepted/u);
@@ -3981,9 +3981,9 @@ test("interactive TUI sends Candy-owned image attachments and recovers them afte
     firstTerminal.emitInput(`:attach ${imagePath}`);
     firstTerminal.emitInput("\r");
     await waitForOutput(firstTerminal, /attachment staged: att_[a-f0-9]{64}/u);
-    firstTerminal.emitInput(":model minimax-m3");
+    firstTerminal.emitInput(":model deepseek-flash-vision");
     firstTerminal.emitInput("\r");
-    await waitForOutput(firstTerminal, /model selected: MiniMax-M3/u);
+    await waitForOutput(firstTerminal, /model selected: deepseek-v4-flash-vision-exp/u);
     firstTerminal.emitInput(":new");
     firstTerminal.emitInput("\r");
     await waitForOutput(firstTerminal, /new task ready/u);
@@ -3998,7 +3998,7 @@ test("interactive TUI sends Candy-owned image attachments and recovers them afte
     const firstStore = new SQLiteTaskStore(path.join(resolveAppPaths(root).state, "tasks.sqlite"));
     const saved = firstStore.get(taskId);
     assert.ok(saved);
-    assert.equal(saved.model, "MiniMax-M3");
+    assert.equal(saved.model, "deepseek-v4-flash-vision-exp");
     assert.equal(saved.attachmentIds.length, 1);
     const attachmentId = saved.attachmentIds[0];
     assert.ok(attachmentId);

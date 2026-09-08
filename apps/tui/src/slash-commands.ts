@@ -45,7 +45,7 @@ export const CANDY_MODEL_CHOICES: readonly AutocompleteItem[] = [
   {
     value: "minimax-m3",
     label: "minimax-m3",
-    description: "MiniMax M3 (native image)",
+    description: "MiniMax M3",
   },
 ];
 

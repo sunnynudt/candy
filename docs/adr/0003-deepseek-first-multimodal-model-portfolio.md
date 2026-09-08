@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0015
 ---
 
 # Use a DeepSeek-first model portfolio with MiniMax M3 multimodal

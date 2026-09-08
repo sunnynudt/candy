@@ -1613,7 +1613,7 @@ test("app-server rejects a secret before it can become an event", async () => {
   }
 });
 
-test("app-server Pi bridge preserves image input for the selected provider", async () => {
+test("app-server Pi bridge preserves image input for the selected model", async () => {
   const received: PiAgentEngineInput[] = [];
   const engine = {
     async *runTurn(input: PiAgentEngineInput) {
@@ -1629,7 +1629,7 @@ test("app-server Pi bridge preserves image input for the selected provider", asy
     {
       taskId: "task-image-bridge",
       prompt: "describe",
-      model: "MiniMax-M3",
+      model: "deepseek-v4-flash-vision-exp",
       cwd: "/tmp/candy-workspace",
       approvalProfile: "auto",
       images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
@@ -1924,7 +1924,7 @@ test("app-server rejects a second owner approval response without resolving the 
   }
 });
 
-test("app-server resolves Candy-owned image attachments into the selected MiniMax turn", async () => {
+test("app-server resolves Candy-owned image attachments into the selected model turn", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-attachments-"));
   const attachmentStore = new AttachmentStore(path.join(root, "attachments"));
   let observedImages = 0;
@@ -1956,7 +1956,7 @@ test("app-server resolves Candy-owned image attachments into the selected MiniMa
         prompt: "describe image",
         approvalProfile: "read-only",
         workspacePath: root,
-        model: "MiniMax-M3",
+        model: "deepseek-v4-flash-vision-exp",
         attachmentIds: [attachment.id],
       }),
     );

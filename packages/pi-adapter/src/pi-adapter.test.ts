@@ -23,7 +23,6 @@ import {
   createCandyWorkspaceOperations,
   DeepSeekClient,
   MiniMaxClient,
-  MiniMaxPiAgentEngine,
   MAX_WORKSPACE_FILE_BYTES,
   MODEL_CATALOG,
   PI_COMPATIBILITY_VERSION,
@@ -645,6 +644,11 @@ test("provider catalog keeps domestic endpoints and live capabilities gated", ()
       ["deepseek-v4-flash-vision-exp", "https://api.deepseek.com/chat/completions", false],
       ["MiniMax-M3", "https://api.minimaxi.com/anthropic/v1/messages", false],
     ],
+  );
+  assert.equal(MODEL_CATALOG.find((entry) => entry.modelId === "MiniMax-M3")?.multimodal, false);
+  assert.equal(
+    MODEL_CATALOG.find((entry) => entry.modelId === "deepseek-v4-flash-vision-exp")?.multimodal,
+    true,
   );
 });
 
@@ -2731,7 +2735,7 @@ test("Candy Bash operations propagate task cancellation to the native runner", a
   assert.equal(runnerSignal?.aborted, true);
 });
 
-test("MiniMax Pi engine sends image turns through the domestic M3 provider", async () => {
+test("Pi engine sends ordinary MiniMax turns through the domestic M3 provider", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-minimax-"));
   const originalFetch = globalThis.fetch;
   let requestUrl = "";
@@ -2740,22 +2744,25 @@ test("MiniMax Pi engine sends image turns through the domestic M3 provider", asy
     requestUrl = String(input);
     requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     return new Response(
-      'event: message_start\ndata: {"type":"message_start","message":{"id":"fixture","type":"message","role":"assistant","model":"MiniMax-M3","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"vision"}}\n\nevent: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"fixture","type":"message","role":"assistant","model":"MiniMax-M3","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ordinary"}}\n\nevent: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
       { status: 200, headers: { "content-type": "text/event-stream" } },
     );
   };
   try {
     const observations = [];
-    for await (const observation of new MiniMaxPiAgentEngine(root, async () => ({
-      secret: "fixture-secret",
-      release: () => undefined,
-    })).runTurn(
+    for await (const observation of new PiAgentEngine(
+      root,
+      async () => ({
+        secret: "fixture-secret",
+        release: () => undefined,
+      }),
+      "minimax-cn",
+    ).runTurn(
       {
-        taskId: "task-vision",
-        prompt: "describe the image",
+        taskId: "task-minimax",
+        prompt: "reply with ordinary text",
         model: "MiniMax-M3",
         cwd: process.cwd(),
-        images: [{ mimeType: "image/png", data: "aW1hZ2U=" }],
       },
       new AbortController().signal,
     )) {
@@ -2764,12 +2771,7 @@ test("MiniMax Pi engine sends image turns through the domestic M3 provider", asy
     assert.equal(requestUrl, "https://api.minimaxi.com/anthropic/v1/messages");
     const message = (requestBody?.messages as { content?: unknown }[] | undefined)?.[0];
     assert.deepEqual(message?.content, [
-      { type: "text", text: "describe the image" },
-      {
-        type: "image",
-        source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
-        cache_control: { type: "ephemeral" },
-      },
+      { type: "text", text: "reply with ordinary text", cache_control: { type: "ephemeral" } },
     ]);
     assert.ok(observations.some((observation) => observation.type === "assistant.delta"));
   } finally {
@@ -2777,7 +2779,7 @@ test("MiniMax Pi engine sends image turns through the domestic M3 provider", asy
   }
 });
 
-test("DeepSeek image turns fail closed without silently falling back to MiniMax", async () => {
+test("DeepSeek text models reject images without silently falling back", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-pi-deepseek-image-reject-"));
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;

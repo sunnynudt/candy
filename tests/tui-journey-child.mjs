@@ -6,7 +6,8 @@ class TuiJourneyFixtureEngine {
 
   async *runTurn(input, signal) {
     if (signal.aborted) throw new Error("fixture turn cancelled");
-    if (input.model !== "MiniMax-M3") throw new Error("journey fixture requires MiniMax M3");
+    if (input.model !== "deepseek-v4-flash-vision-exp")
+      throw new Error("journey fixture requires an image-capable model");
     if (input.images?.length !== 1 || input.images[0]?.mimeType !== "image/png")
       throw new Error("journey fixture did not receive the persisted image");
 

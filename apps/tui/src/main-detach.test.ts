@@ -83,9 +83,9 @@ test("interactive TUI auto-detaches stored image attachments when switching a co
     terminal.emitInput(`/attach ${imagePath}`);
     terminal.emitInput("\r");
     await waitForOutput(terminal, /attachment staged: att_[a-f0-9]{64}/u);
-    terminal.emitInput("/model minimax-m3");
+    terminal.emitInput("/model deepseek-flash-vision");
     terminal.emitInput("\r");
-    await waitForOutput(terminal, /model selected: MiniMax-M3/u);
+    await waitForOutput(terminal, /model selected: deepseek-v4-flash-vision-exp/u);
     terminal.emitInput(":new");
     terminal.emitInput("\r");
     await waitForOutput(terminal, /new task ready/u);
@@ -103,7 +103,7 @@ test("interactive TUI auto-detaches stored image attachments when switching a co
     );
     const beforeSwitch = beforeSwitchStore.get(taskId);
     assert.ok(beforeSwitch);
-    assert.equal(beforeSwitch.model, "MiniMax-M3");
+    assert.equal(beforeSwitch.model, "deepseek-v4-flash-vision-exp");
     assert.equal(beforeSwitch.attachmentIds.length, 1);
     beforeSwitchStore.close();
 
@@ -111,7 +111,7 @@ test("interactive TUI auto-detaches stored image attachments when switching a co
     terminal.emitInput("\r");
     const switchOutput = await waitForOutput(terminal, /model selected: deepseek-v4-flash for /u);
     assert.match(switchOutput, /model selected: deepseek-v4-flash for /u);
-    assert.match(switchOutput, /image attachments detached: 1; use MiniMax M3 or DeepSeek Vision/u);
+    assert.match(switchOutput, /image attachments detached: 1; use DeepSeek Vision/u);
 
     const detachedStore = new SQLiteTaskStore(
       path.join(resolveAppPaths(root).state, "tasks.sqlite"),
@@ -179,7 +179,7 @@ test("interactive TUI clears staged image attachments when switching to a non-M3
     terminal.emitInput("\r");
     const switchOutput = await waitForOutput(
       terminal,
-      /image attachments detached: 1; use MiniMax M3 or DeepSeek Vision/u,
+      /image attachments detached: 1; use DeepSeek Vision/u,
     );
     assert.match(switchOutput, /model selected: deepseek-v4-flash/u);
 

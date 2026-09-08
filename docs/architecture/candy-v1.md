@@ -244,7 +244,7 @@ The logical names are stable; exact filenames and platform paths are implementat
 
 1. **Runtime proof**: pin Node, package manager, Pi packages, and DeepSeek V4 Flash contract; stream one response; run one read-only tool; save and reload a session; prove credential isolation.
 2. **Task runtime**: implement normalized commands/events, Task Store, task ownership, cancellation, and TUI over the in-process interface.
-3. **Model portfolio**: add DeepSeek V4 Pro, MiniMax M3, image attachments, provider gates, and no-fallback behavior.
+3. **Model portfolio**: add model-neutral provider selection, MiniMax M3 as an ordinary model, capability-declared image attachments, provider gates, and no-fallback behavior.
 4. **Desktop shell**: add Electron renderer/main, app-server child, typed JSONL adapter, credential bridge, task list, approvals, and diff review.
 5. **Workspace concurrency**: add queueing, Task Worktrees, Local/Worktree Handoff, non-Git single-writer behavior, and recovery.
 6. **Browser Workspace**: add the visible browser, persistent profile, site permissions, observation/actions, takeover, screenshots, and browser validation.
@@ -256,7 +256,7 @@ Each slice must pass on the current macOS Tahoe `26.x` Apple Silicon host and Wi
 
 - exact Node.js, package-manager, Pi package versions, and Pi public entrypoints;
 - DeepSeek V4 Flash/Pro domestic model identifiers, thinking modes, streaming, and tool calling;
-- MiniMax M3 domestic endpoint model identifier, Token Plan authentication, image schema, tool calling, streaming, cancellation, and limits;
+- MiniMax M3 domestic endpoint model identifier, Token Plan authentication, ordinary model tool calling, streaming, cancellation, and limits;
 - Electron embedded-browser control through CDP and the value, if any, of an external automation adapter;
 - Windows 11 and current macOS Tahoe `26.x` Apple Silicon credential stores, locks, process cancellation, task recovery, and worktree behavior.
 

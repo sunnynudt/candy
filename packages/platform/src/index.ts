@@ -52,17 +52,14 @@ export type CandyModelId =
 export const DEFAULT_CANDY_MODEL: CandyModelId = "deepseek-v4-flash";
 
 /**
- * Vision-capable Primary Models accept image attachments natively and may
- * control the agent loop. The set is the source of truth for every TUI
- * attachment gate, Pi Adapter image guard, and acceptance evidence row that
- * needs to distinguish "model accepts images" from "model does not". Keep
- * additions tied to a live provider gate on macOS Tahoe `26.x` and
- * Windows 11; see `docs/architecture/technical-plan-v1.md` and
+ * Image-capable models accept image attachments natively and may control the
+ * agent loop. This capability is model-specific; a provider is never treated
+ * as a dedicated image service. Keep additions tied to a live provider gate
+ * on macOS Tahoe `26.x` and Windows 11; see
  * `docs/testing/live-provider-credentials.md`.
  */
 export const VISION_CAPABLE_MODELS: ReadonlySet<CandyModelId> = new Set<CandyModelId>([
   "deepseek-v4-flash-vision-exp",
-  "MiniMax-M3",
 ]);
 
 export function isVisionCapableModel(model: CandyModelId): boolean {

@@ -37,11 +37,11 @@ The user-approved transfer of a completed task's reviewed patch into the target 
 _Avoid_: Auto-merge, auto-commit
 
 **Primary Model**:
-The model selected to control reasoning, coding, and tool use for a Candy Task. Candy V1 supports DeepSeek V4 Flash, DeepSeek V4 Pro, and MiniMax M3 as Primary Models.
-_Avoid_: Vision Provider, helper model
+The model selected to control reasoning, coding, and tool use for a Candy Task. Candy supports a model catalog with built-in and user-configured models; MiniMax M3 is an ordinary selectable model, not a vision-only service.
+_Avoid_: Vision Provider, helper model, DeepSeek-first
 
 **Multimodal Task**:
-A Candy Task whose Primary Model accepts native non-text attachments. MiniMax M3 provides image understanding in V1.
+A Candy Task whose selected model declares support for native non-text attachments. Attachment behavior follows the selected model capability; Candy does not route images through a provider-specific helper.
 _Avoid_: Vision handoff, OCR task
 
 **Browser Workspace**:

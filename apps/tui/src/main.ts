@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import {
   PI_COMPATIBILITY_VERSION,
   CustomPiAgentEngine,
-  MiniMaxPiAgentEngine,
   PiAgentEngine,
   ProviderContractError,
   type CandyNetworkApprovalRequest,
@@ -499,7 +498,7 @@ export class InteractiveTui {
         "deepseek",
         this.#shellRunner,
       );
-      const minimax = new MiniMaxPiAgentEngine(
+      const minimax = new PiAgentEngine(
         paths.sessions,
         async () => {
           const lease = resolveCredential(
@@ -511,6 +510,7 @@ export class InteractiveTui {
           const value = lease.value;
           return { secret: value, release: lease.release };
         },
+        "minimax-cn",
         this.#shellRunner,
       );
       const customEngines = new Map<string, TuiAgentEngine>();
@@ -864,7 +864,7 @@ export class InteractiveTui {
     }
     if (this.#selectedAttachmentIds.length > 0 && !isVisionCapableModel(this.#selectedModel)) {
       this.write(
-        "image attachments require explicit /model minimax-m3 or /model deepseek-flash-vision; switch models before creating the task\n",
+        "image attachments require an image-capable model; switch to /model deepseek-flash-vision before creating the task\n",
       );
       return;
     }
@@ -1356,9 +1356,7 @@ export class InteractiveTui {
       this.#selectedAttachmentIds = [];
       this.#selectedModel = model;
       this.write(`model selected: ${model}\n`);
-      this.write(
-        `image attachments detached: ${detachedCount}; use MiniMax M3 or DeepSeek Vision\n`,
-      );
+      this.write(`image attachments detached: ${detachedCount}; use DeepSeek Vision\n`);
       return;
     }
     if (current === undefined) {
@@ -1399,9 +1397,7 @@ export class InteractiveTui {
       this.#selectedModel = model;
       this.write(`model selected: ${model} for ${snapshot.taskId}\n`);
       if (detachedCount > 0)
-        this.write(
-          `image attachments detached: ${detachedCount}; use MiniMax M3 or DeepSeek Vision\n`,
-        );
+        this.write(`image attachments detached: ${detachedCount}; use DeepSeek Vision\n`);
     } catch (error) {
       this.write(`model switch rejected: ${safeError(error)}\n`);
     }
@@ -1443,7 +1439,7 @@ export class InteractiveTui {
         throw new Error("Attachments cannot change on a queued task.");
       if (!isVisionCapableModel(snapshot.model))
         throw new Error(
-          "Image attachments require explicit /model minimax-m3 or /model deepseek-flash-vision.",
+          "Image attachments require an image-capable model, such as /model deepseek-flash-vision.",
         );
       if (taskMetadata === undefined) throw new Error("Task metadata is unavailable.");
     }
@@ -1474,7 +1470,7 @@ export class InteractiveTui {
       this.#surface?.appendImageAttachment(mimeType, content);
       if (!isVisionCapableModel(this.#selectedModel))
         this.write(
-          "image attachment requires /model minimax-m3 or /model deepseek-flash-vision before starting a task\n",
+          "image attachment requires /model deepseek-flash-vision before starting a task\n",
         );
       return;
     }
@@ -2246,7 +2242,7 @@ export class InteractiveTui {
             );
       if (attachments !== undefined && !isVisionCapableModel(taskSnapshot.model)) {
         throw new Error(
-          "The selected model does not accept image attachments; switch to MiniMax M3 or DeepSeek Flash Vision.",
+          "The selected model does not accept image attachments; switch to a model with image input, such as DeepSeek Flash Vision.",
         );
       }
       const runEngineTurn = async (
