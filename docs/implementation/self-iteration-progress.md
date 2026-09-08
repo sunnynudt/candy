@@ -16,6 +16,12 @@ The approval-anchor acceptance assertion was made stable by waiting for the visi
 
 From `/private/tmp`, the installed `~/.candy/bin/candy` resolved successfully; `candy --version` reported `invocationCwd=/private/tmp`, and `candy --smoke` completed with Pi `0.84.1` and the expected observation types. This confirms the release launcher is usable from an arbitrary working directory on the current macOS host.
 
+## Current macOS launcher PATH checkpoint
+
+Source revision `4d2ccfe42d3c272355b6eaaa0f7c4294b4d10dd1` adds an idempotent macOS shell-startup setup to `candy update`. The default `~/.candy` installation now adds a Candy-managed PATH block to the active zsh/bash startup file; custom `--home` installs and `CANDY_SKIP_SHELL_SETUP=1` do not modify the user's shell configuration. The implementation was checked with `npm run check` at **402/402**, and the post-commit hook built and installed release `0.0.0-darwin-arm64.4d2ccfe42d3c`.
+
+After installation, a fresh zsh process with no inherited Candy PATH resolved `/Users/sunny/.candy/bin/candy`; `candy --version` and `candy --smoke` both passed. The existing terminal must be reopened or reload its shell startup file once because a child installer cannot mutate the parent shell's environment. The checkpoint is pushed and matches `origin/codex/candy-v1-foundation`.
+
 Windows 11 acceptance, live-provider reruns requiring credentials, signed-release approval, and final product-owner approval remain separate **NOT_RUN** or external gates. They are not inferred from this macOS checkpoint.
 
 ## P0 baseline
