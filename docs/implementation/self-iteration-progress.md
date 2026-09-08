@@ -14,6 +14,8 @@ At clean source revision `3315813b5fb84dc3a6916336125324d7e5baf119`, `npm run ch
 
 The approval-anchor acceptance assertion was made stable by waiting for the visible terminal tail within the existing one-second bound before checking the rendered approval controls. The managed post-commit updater now also enforces the repository-pinned Node runtime: when invoked from a non-pinned shell, it selects Node `22.23.2` from the local nvm installation and produces the release for the committed revision. The installed release manifest reports Node `v22.23.2`, pinned Node `22.23.2`, Pi `0.84.1`, and revision `3315813b5fb8`.
 
+From `/private/tmp`, the installed `~/.candy/bin/candy` resolved successfully; `candy --version` reported `invocationCwd=/private/tmp`, and `candy --smoke` completed with Pi `0.84.1` and the expected observation types. This confirms the release launcher is usable from an arbitrary working directory on the current macOS host.
+
 Windows 11 acceptance, live-provider reruns requiring credentials, signed-release approval, and final product-owner approval remain separate **NOT_RUN** or external gates. They are not inferred from this macOS checkpoint.
 
 ## P0 baseline
