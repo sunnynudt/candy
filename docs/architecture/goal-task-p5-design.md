@@ -47,6 +47,6 @@
 ## 6. 未完成 / 后续可选
 
 1. **Auto Debug 循环体合并**：把“跑一轮 + 跑 validator + 记录进度 + 停因映射”做成 runtime 内的一个驱动函数，两个客户端只注入 turn/validator 回调。风险：两个客户端的任务状态与事件模型不同，需要先约定跨客户端契约。
-2. **`/goal edit` 外部编辑器编辑**：目前 `/goal edit` 是 `/goal replace` 的别名；TUI 已有 Ctrl+G 编辑器通道（`external-editor.ts`），可复用。
+2. **`/goal edit` 外部编辑器编辑（已尝试，暂缓）**：曾实现 surface 的 `editText()` + `goal-edit.ts`（格式/解析）+ `/goal edit` 无参走编辑器。编辑结果能成功写回目标（测试中 store 已更新），但 **pi-tui 的渲染循环在命令分发过程中被 stop/start 后，测试终端不再接收后续输入**（`:quit` 不生效、TUI 无法退出）；`setImmediate` 让出调用栈与 `#resume()` 里重新 `setFocus(editor)` 都未解决。本片已回滚该路径，`/goal edit` 仍然等价于 `/goal replace`（命令行文本），仅保留 `#resume()` 的重设焦点作为防御性修正。复现方式：`/goal <objective>` 后执行 `/goal edit`，用 `launchExternalEditor` 测试探针写回内容，观察 `:quit` 不再生效。建议的下一步：把目标编辑做成“预填输入行 + Ctrl+G”（复用已验证的输入行编辑器通道），或先与 pi-tui 确认 stop/start 后的事件与焦点恢复契约。
 3. **普通主机补验项**：`npm run smoke:app-server`（P3 §6）与 live provider 用量契约（P4 §5）。
 4. **Windows**：按用户要求，本阶段不处理。

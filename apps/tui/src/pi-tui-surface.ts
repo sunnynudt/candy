@@ -637,6 +637,9 @@ export class CandyTuiSurface {
   /** Reconnect the terminal and re-render after an external editor session. */
   #resume(): void {
     this.#tui.start();
+    // pi-tui drops focus when its render loop stops; without this the editor
+    // would stop accepting input after any external-editor session.
+    this.#tui.setFocus(this.#editor);
     this.#restoreInlineImageCapability();
     this.#tui.requestRender();
   }

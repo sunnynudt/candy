@@ -1237,6 +1237,8 @@ export class InteractiveTui {
         this.configureGoalBudget(remainder);
         return;
       case "replace":
+        this.replaceGoal(remainder, subcommand);
+        return;
       case "edit":
         this.replaceGoal(remainder, subcommand);
         return;
@@ -1336,6 +1338,16 @@ export class InteractiveTui {
       this.write(`${rejection}\n`);
       return;
     }
+    this.applyGoalReplacement(task, parsed, subcommand === "edit" ? "/goal edit" : "/goal replace");
+  }
+
+  /**
+   * Persist a replacement goal and re-open the task: a running task receives
+   * the new objective through bounded steering, an idle task starts one
+   * continuation turn. Passed budgets are kept; usage counters always reset.
+   */
+  private applyGoalReplacement(task: TaskMetadata, parsed: TuiGoalArguments, label: string): void {
+    const taskId = task.taskId;
     let updated: TaskMetadata;
     try {
       updated = this.#store.setGoal(taskId, task.revision, {
@@ -1354,7 +1366,6 @@ export class InteractiveTui {
       this.write(`goal rejected: ${safeError(error)}\n`);
       return;
     }
-    const label = subcommand === "edit" ? "/goal edit" : "/goal replace";
     this.write(`${label}: goal replaced and active; budgets and usage counters reset\n`);
     this.writeGoalSummaryText(updated);
     this.#surface?.refreshChrome();
@@ -1382,6 +1393,13 @@ export class InteractiveTui {
     this.drain(new Map([[taskId, GOAL_RESUME_INSTRUCTION]]));
   }
 
+  /**
+   * `/goal edit` is an alias of `/goal replace` in this slice: it applies the
+   * text given on the command line. Editing in the user's external editor from
+   * inside a command is deferred: suspending pi-tui's render loop while a
+   * command is being dispatched leaves the harness terminal unable to accept
+   * later input (see goal-task-p5-design.md §6).
+   */
   private pauseGoal(): void {
     const taskId = this.#currentTaskId;
     const task = taskId === undefined ? undefined : this.#store.get(taskId);
