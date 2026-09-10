@@ -1,6 +1,6 @@
 # Goal Task P0 实现设计：数据模型与 goal 状态机
 
-状态：草案（draft）—— 承接 `docs/architecture/goal-task-proposal.md`（v2），只细化 P0。
+状态：**已确认，P0 已实现并提交**（`task_metadata` schema 17→18 + `goal.ts` 状态机 + 存储 API + 测试）。P1（续跑 policy/工具集）起待续。
 范围：Candy V1，macOS 先行；本次仅实现 **P0：持久化 schema 迁移 + goal 状态机 + 存储 API**，不引入回合续跑循环、不接 UI/协议。
 前置：`packages/platform/src/index.ts`（`SQLiteTaskStore`、`TaskMetadata`）、`packages/platform/src/credential-guard.ts`。
 

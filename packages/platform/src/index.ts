@@ -1,13 +1,27 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { Entry } from "@napi-rs/keyring";
+import {
+  assertGoalBudget,
+  assertGoalCompletionCriterion,
+  assertGoalObjective,
+  assertGoalTransition,
+  GoalStateError,
+  rejectTokenDimension,
+  type CandyGoalStatus,
+  type GoalTransitionEvent,
+  type TaskGoalBudgets,
+  type TaskGoalSnapshot,
+} from "./goal.js";
 
 export * from "./git-bash.js";
 export * from "./trusted-shell-capability.js";
 export * from "./credential-guard.js";
 export * from "./clipboard.js";
+export * from "./goal.js";
 
 export {
   NativeProcessRunner,
@@ -128,16 +142,23 @@ export interface TaskMetadata {
   /**
    * Task execution mode. 'build' is the normal single-turn implementation;
    * 'debug' runs the bounded Auto Debug loop (model turn + validator until
-   * pass, stall, or budget). Plan mode stays expressed through the read-only
-   * approval profile. Older tasks default to 'build'.
+   * pass, stall, or budget); 'goal' marks a Goal Task whose idle continuation
+   * behavior is wired by later slices. Plan mode stays expressed through the
+   * read-only approval profile. Older tasks default to 'build'.
    */
-  readonly taskMode?: "build" | "debug";
+  readonly taskMode?: "build" | "debug" | "goal";
   /** Short display title derived from the task goal; older tasks fall back to the task id. */
   readonly title?: string;
   /** Epoch milliseconds at task creation. */
   readonly createdAt?: number;
   /** Epoch milliseconds of the latest state/run change. */
   readonly updatedAt?: number;
+  /**
+   * Persisted Goal Task aggregate, present only while the task carries a
+   * goal. P0 persists and validates the state machine; continuation policy,
+   * tools, and UI arrive in later slices and reuse this field.
+   */
+  readonly goal?: TaskGoalSnapshot;
 }
 
 export interface TaskReviewMetadata {
@@ -178,6 +199,33 @@ export interface TaskRunMetadata {
   readonly evidenceCount: number;
   readonly completed: boolean;
   readonly stopReason: PersistedRunStopReason;
+  readonly lastFingerprintHash?: string;
+  readonly evidenceSummary?: string;
+}
+
+/**
+ * Independent Goal Task run progress. Goal runs live in their own table so
+ * their stop semantics never collide with Auto Debug's task_runs reasons.
+ */
+export type GoalRunStopReason =
+  | "running"
+  | "complete"
+  | "blocked"
+  | "budget_limited"
+  | "usage_limited"
+  | "paused"
+  | "cancelled"
+  | "interrupted"
+  | "error"
+  | "user_stop";
+
+export interface TaskGoalRunMetadata {
+  readonly taskId: string;
+  readonly rounds: number;
+  readonly turnsUsed: number;
+  readonly wallClockMs: number;
+  readonly completed: boolean;
+  readonly stopReason: GoalRunStopReason;
   readonly lastFingerprintHash?: string;
   readonly evidenceSummary?: string;
 }
@@ -232,12 +280,35 @@ export class SQLiteTaskStore {
         task_mode TEXT NOT NULL DEFAULT 'build',
         title TEXT,
         created_at INTEGER,
-        updated_at INTEGER
+        updated_at INTEGER,
+        goal_id TEXT,
+        goal_objective TEXT,
+        goal_criterion TEXT,
+        goal_status TEXT NOT NULL DEFAULT 'none',
+        goal_token_budget INTEGER,
+        goal_turn_budget INTEGER,
+        goal_wall_clock_budget_ms INTEGER,
+        goal_tokens_used INTEGER NOT NULL DEFAULT 0,
+        goal_turns_used INTEGER NOT NULL DEFAULT 0,
+        goal_wall_clock_ms INTEGER NOT NULL DEFAULT 0,
+        goal_terminal_reason TEXT,
+        goal_continuation_deferred INTEGER NOT NULL DEFAULT 0,
+        goal_consecutive_no_progress INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS task_runs (
         task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
         rounds INTEGER NOT NULL,
         evidence_count INTEGER NOT NULL,
+        completed INTEGER NOT NULL,
+        stop_reason TEXT NOT NULL,
+        last_fingerprint_hash TEXT,
+        evidence_summary TEXT
+      );
+      CREATE TABLE IF NOT EXISTS task_goal_runs (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+        rounds INTEGER NOT NULL,
+        turns_used INTEGER NOT NULL,
+        wall_clock_ms INTEGER NOT NULL,
         completed INTEGER NOT NULL,
         stop_reason TEXT NOT NULL,
         last_fingerprint_hash TEXT,
@@ -389,7 +460,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 13 &&
       schemaVersion !== 15 &&
       schemaVersion !== 16 &&
-      schemaVersion !== 17
+      schemaVersion !== 17 &&
+      schemaVersion !== 18
     ) {
       this.#database.close();
       throw new Error(`Unsupported task metadata schema version: ${schemaVersion}.`);
@@ -413,7 +485,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 13 &&
       schemaVersion !== 15 &&
       schemaVersion !== 16 &&
-      schemaVersion !== 17
+      schemaVersion !== 17 &&
+      schemaVersion !== 18
     ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN title TEXT;
@@ -430,7 +503,8 @@ export class SQLiteTaskStore {
       schemaVersion !== 0 &&
       schemaVersion !== 15 &&
       schemaVersion !== 16 &&
-      schemaVersion !== 17
+      schemaVersion !== 17 &&
+      schemaVersion !== 18
     ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'build';
@@ -438,9 +512,45 @@ export class SQLiteTaskStore {
     }
     // Schema 16 records the task-bound Full Access decision. Older
     // tasks are deliberately never promoted and therefore retain `0`.
-    if (schemaVersion !== 0 && schemaVersion !== 16 && schemaVersion !== 17) {
+    if (
+      schemaVersion !== 0 &&
+      schemaVersion !== 16 &&
+      schemaVersion !== 17 &&
+      schemaVersion !== 18
+    ) {
       this.#database.exec(`
         ALTER TABLE task_metadata ADD COLUMN full_access INTEGER NOT NULL DEFAULT 0;
+      `);
+    }
+    // Schema 18 adds the Goal Task aggregate columns and the independent
+    // goal-run progress table. Fresh schema-0 databases already include
+    // both; older databases (v1..v17) are migrated in place and keep
+    // goal_status='none', so pre-existing tasks never gain a goal implicitly.
+    if (schemaVersion !== 0 && schemaVersion !== 18) {
+      this.#database.exec(`
+        ALTER TABLE task_metadata ADD COLUMN goal_id TEXT;
+        ALTER TABLE task_metadata ADD COLUMN goal_objective TEXT;
+        ALTER TABLE task_metadata ADD COLUMN goal_criterion TEXT;
+        ALTER TABLE task_metadata ADD COLUMN goal_status TEXT NOT NULL DEFAULT 'none';
+        ALTER TABLE task_metadata ADD COLUMN goal_token_budget INTEGER;
+        ALTER TABLE task_metadata ADD COLUMN goal_turn_budget INTEGER;
+        ALTER TABLE task_metadata ADD COLUMN goal_wall_clock_budget_ms INTEGER;
+        ALTER TABLE task_metadata ADD COLUMN goal_tokens_used INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE task_metadata ADD COLUMN goal_turns_used INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE task_metadata ADD COLUMN goal_wall_clock_ms INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE task_metadata ADD COLUMN goal_terminal_reason TEXT;
+        ALTER TABLE task_metadata ADD COLUMN goal_continuation_deferred INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE task_metadata ADD COLUMN goal_consecutive_no_progress INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS task_goal_runs (
+          task_id TEXT PRIMARY KEY NOT NULL REFERENCES task_metadata(task_id) ON DELETE CASCADE,
+          rounds INTEGER NOT NULL,
+          turns_used INTEGER NOT NULL,
+          wall_clock_ms INTEGER NOT NULL,
+          completed INTEGER NOT NULL,
+          stop_reason TEXT NOT NULL,
+          last_fingerprint_hash TEXT,
+          evidence_summary TEXT
+        );
       `);
     }
     // A historical schema can carry an accepted version without this column.
@@ -453,7 +563,7 @@ export class SQLiteTaskStore {
         ALTER TABLE task_metadata ADD COLUMN push_policy TEXT NOT NULL DEFAULT 'deny';
       `);
     }
-    this.#database.exec(`PRAGMA user_version = 17;`);
+    this.#database.exec(`PRAGMA user_version = 18;`);
   }
 
   /** Persisted local-only default for Full Access TUI tasks. */
@@ -484,14 +594,15 @@ export class SQLiteTaskStore {
     worktreePath?: string,
     trustedShell = false,
     title?: string,
-    taskMode: "build" | "debug" = "build",
+    taskMode: "build" | "debug" | "goal" = "build",
     fullAccess = false,
     pushPolicy: "deny" | "allow" = "deny",
   ): TaskMetadata {
     assertTaskId(taskId);
     assertAttachmentIds(attachmentIds);
     if (title !== undefined) assertTaskTitle(title);
-    if (taskMode !== "build" && taskMode !== "debug") throw new Error("Task mode is invalid.");
+    if (taskMode !== "build" && taskMode !== "debug" && taskMode !== "goal")
+      throw new Error("Task mode is invalid.");
     if (pushPolicy !== "deny" && pushPolicy !== "allow")
       throw new Error("Task push policy is invalid.");
     if (workspaceBaseline !== undefined && !/^[0-9a-f]{7,64}$/u.test(workspaceBaseline))
@@ -668,7 +779,7 @@ export class SQLiteTaskStore {
   public get(taskId: string): TaskMetadata | undefined {
     const row = this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata WHERE task_id = ?",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at, goal_id, goal_objective, goal_criterion, goal_status, goal_token_budget, goal_turn_budget, goal_wall_clock_budget_ms, goal_tokens_used, goal_turns_used, goal_wall_clock_ms, goal_terminal_reason, goal_continuation_deferred, goal_consecutive_no_progress FROM task_metadata WHERE task_id = ?",
       )
       .get(taskId);
     return row === undefined ? undefined : mapTaskMetadata(row);
@@ -677,7 +788,7 @@ export class SQLiteTaskStore {
   public queued(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at, goal_id, goal_objective, goal_criterion, goal_status, goal_token_budget, goal_turn_budget, goal_wall_clock_budget_ms, goal_tokens_used, goal_turns_used, goal_wall_clock_ms, goal_terminal_reason, goal_continuation_deferred, goal_consecutive_no_progress FROM task_metadata WHERE state = 'queued' ORDER BY queue_order IS NULL, queue_order, task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -721,7 +832,7 @@ export class SQLiteTaskStore {
   public list(): readonly TaskMetadata[] {
     return this.#database
       .prepare(
-        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at FROM task_metadata ORDER BY task_id",
+        "SELECT task_id, revision, state, approval_profile, queue_order, owner_id, model_id, attachment_ids, workspace_path, validator_json, workspace_baseline, worktree_path, trusted_shell, full_access, push_policy, task_mode, title, created_at, updated_at, goal_id, goal_objective, goal_criterion, goal_status, goal_token_budget, goal_turn_budget, goal_wall_clock_budget_ms, goal_tokens_used, goal_turns_used, goal_wall_clock_ms, goal_terminal_reason, goal_continuation_deferred, goal_consecutive_no_progress FROM task_metadata ORDER BY task_id",
       )
       .all()
       .map((row) => mapTaskMetadata(row));
@@ -874,6 +985,405 @@ export class SQLiteTaskStore {
       .run(taskId, JSON.stringify(next));
   }
 
+  /** Return the persisted goal snapshot, or undefined when the task has none. */
+  public getGoal(taskId: string): TaskGoalSnapshot | undefined {
+    assertTaskId(taskId);
+    return this.require(taskId).goal;
+  }
+
+  /**
+   * Set a new active goal (or explicitly replace an existing one). A plain
+   * set is only accepted when no goal exists or the previous goal is
+   * complete; any other live goal needs `replace: true`.
+   */
+  public setGoal(
+    taskId: string,
+    expectedRevision: number,
+    input: {
+      readonly objective: string;
+      readonly completionCriterion?: string;
+      readonly turnBudget?: number;
+      readonly wallClockBudgetMs?: number;
+      readonly tokenBudget?: number;
+      readonly replace?: boolean;
+    },
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    assertGoalObjective(input.objective);
+    if (input.completionCriterion !== undefined)
+      assertGoalCompletionCriterion(input.completionCriterion);
+    if (input.turnBudget !== undefined) assertGoalBudget(input.turnBudget);
+    if (input.wallClockBudgetMs !== undefined) assertGoalBudget(input.wallClockBudgetMs);
+    if (input.tokenBudget !== undefined) rejectTokenDimension("budget");
+    const current = this.require(taskId);
+    if (
+      current.goal !== undefined &&
+      current.goal.status !== "complete" &&
+      input.replace !== true
+    ) {
+      throw new GoalStateError(
+        `Task already has a ${current.goal.status} goal; set replace=true to replace it.`,
+      );
+    }
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_id = ?,
+           goal_objective = ?,
+           goal_criterion = ?,
+           goal_status = 'active',
+           goal_token_budget = NULL,
+           goal_turn_budget = ?,
+           goal_wall_clock_budget_ms = ?,
+           goal_tokens_used = 0,
+           goal_turns_used = 0,
+           goal_wall_clock_ms = 0,
+           goal_terminal_reason = NULL,
+           goal_continuation_deferred = 0,
+           goal_consecutive_no_progress = 0,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ?`,
+      )
+      .run(
+        randomUUID(),
+        input.objective,
+        input.completionCriterion ?? null,
+        input.turnBudget ?? null,
+        input.wallClockBudgetMs ?? null,
+        now,
+        taskId,
+        expectedRevision,
+      );
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /**
+   * Advance the goal state machine (pause/resume/complete/block/budget or
+   * usage limit). Resume resets the deferred flag and no-progress counter.
+   */
+  public updateGoalStatus(
+    taskId: string,
+    expectedRevision: number,
+    status: CandyGoalStatus,
+    options: { readonly expectedGoalId?: string; readonly reason?: string } = {},
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (options.expectedGoalId !== undefined && goal.goalId !== options.expectedGoalId) {
+      throw new Error(`Task ${taskId} goal changed before the status update.`);
+    }
+    const reasonProvided = options.reason === undefined ? {} : { reason: options.reason };
+    const event: GoalTransitionEvent =
+      status === "active"
+        ? { type: "resume" }
+        : status === "paused"
+          ? { type: "pause" }
+          : status === "blocked"
+            ? { type: "block", ...reasonProvided }
+            : status === "complete"
+              ? { type: "complete", ...reasonProvided }
+              : status === "budget_limited"
+                ? { type: "budget_limit", ...reasonProvided }
+                : { type: "usage_limit", ...reasonProvided };
+    const next = assertGoalTransition(goal.status, event);
+    if (next !== status) throw new GoalStateError("Goal status transition is invalid.");
+    const terminal =
+      status === "complete" ||
+      status === "blocked" ||
+      status === "budget_limited" ||
+      status === "usage_limited";
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_status = ?,
+           goal_terminal_reason = ?,
+           goal_continuation_deferred = CASE WHEN ? THEN 0 ELSE goal_continuation_deferred END,
+           goal_consecutive_no_progress = CASE WHEN ? THEN 0 ELSE goal_consecutive_no_progress END,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id IS NOT NULL`,
+      )
+      .run(
+        status,
+        terminal ? (options.reason ?? null) : null,
+        status === "active" ? 1 : 0,
+        status === "active" ? 1 : 0,
+        now,
+        taskId,
+        expectedRevision,
+      );
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /**
+   * Update goal budgets and atomically move an active goal past its budget
+   * to `budget_limited` in the same statement when usage already exceeds it.
+   */
+  public updateGoalBudgets(
+    taskId: string,
+    expectedRevision: number,
+    budgets: TaskGoalBudgets,
+    options: { readonly expectedGoalId?: string } = {},
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    if (budgets.turnBudget === undefined && budgets.wallClockBudgetMs === undefined) {
+      if (budgets.tokenBudget !== undefined) rejectTokenDimension("budget");
+      throw new Error("No goal budgets provided.");
+    }
+    if (budgets.turnBudget !== undefined) assertGoalBudget(budgets.turnBudget);
+    if (budgets.wallClockBudgetMs !== undefined) assertGoalBudget(budgets.wallClockBudgetMs);
+    if (budgets.tokenBudget !== undefined) rejectTokenDimension("budget");
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (options.expectedGoalId !== undefined && goal.goalId !== options.expectedGoalId) {
+      throw new Error(`Task ${taskId} goal changed before the budget update.`);
+    }
+    const turnBudget = budgets.turnBudget !== undefined ? budgets.turnBudget : goal.turnBudget;
+    const wallClockBudgetMs =
+      budgets.wallClockBudgetMs !== undefined ? budgets.wallClockBudgetMs : goal.wallClockBudgetMs;
+    let status: CandyGoalStatus = goal.status;
+    let terminalReason: string | null = null;
+    if (goal.status === "active") {
+      const overTurn = turnBudget !== null && goal.turnsUsed >= turnBudget;
+      const overWall = wallClockBudgetMs !== null && goal.wallClockMs >= wallClockBudgetMs;
+      if (overTurn || overWall) {
+        status = "budget_limited";
+        terminalReason = overTurn ? "turn budget exhausted" : "wall-clock budget exhausted";
+      }
+    }
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_turn_budget = ?,
+           goal_wall_clock_budget_ms = ?,
+           goal_status = ?,
+           goal_terminal_reason = ?,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id IS NOT NULL`,
+      )
+      .run(turnBudget, wallClockBudgetMs, status, terminalReason, now, taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /**
+   * Accumulate goal usage deltas and atomically move an active goal past its
+   * budget to `budget_limited`. Token deltas are rejected before P4.
+   */
+  public accountGoalUsage(
+    taskId: string,
+    expectedRevision: number,
+    expectedGoalId: string,
+    usage: {
+      readonly turnDelta: number;
+      readonly wallClockDeltaMs: number;
+      readonly tokenDelta?: number;
+    },
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    if (!Number.isSafeInteger(usage.turnDelta) || usage.turnDelta < 0)
+      throw new Error("Goal turn delta is invalid.");
+    if (!Number.isSafeInteger(usage.wallClockDeltaMs) || usage.wallClockDeltaMs < 0)
+      throw new Error("Goal wall-clock delta is invalid.");
+    if (usage.tokenDelta !== undefined) rejectTokenDimension("usage");
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (goal.goalId !== expectedGoalId)
+      throw new Error(`Task ${taskId} goal changed before the usage update.`);
+    const turnsUsed = goal.turnsUsed + usage.turnDelta;
+    const wallClockMs = goal.wallClockMs + usage.wallClockDeltaMs;
+    let status: CandyGoalStatus = goal.status;
+    let terminalReason: string | null = null;
+    if (goal.status === "active") {
+      const overTurn = goal.turnBudget !== null && turnsUsed >= goal.turnBudget;
+      const overWall = goal.wallClockBudgetMs !== null && wallClockMs >= goal.wallClockBudgetMs;
+      if (overTurn || overWall) {
+        status = "budget_limited";
+        terminalReason = overTurn ? "turn budget exhausted" : "wall-clock budget exhausted";
+      }
+    }
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_turns_used = ?,
+           goal_wall_clock_ms = ?,
+           goal_status = ?,
+           goal_terminal_reason = ?,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id = ?`,
+      )
+      .run(
+        turnsUsed,
+        wallClockMs,
+        status,
+        terminalReason,
+        now,
+        taskId,
+        expectedRevision,
+        goal.goalId,
+      );
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /** Persist the continuation-deferred marker used by the idle policy. */
+  public setGoalContinuationDeferred(
+    taskId: string,
+    expectedRevision: number,
+    expectedGoalId: string,
+    deferred: boolean,
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (goal.goalId !== expectedGoalId)
+      throw new Error(`Task ${taskId} goal changed before the deferral update.`);
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_continuation_deferred = ?,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id = ?`,
+      )
+      .run(deferred ? 1 : 0, now, taskId, expectedRevision, goal.goalId);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /** Clear the goal from a task (any state) without touching task state. */
+  public clearGoal(
+    taskId: string,
+    expectedRevision: number,
+    options: { readonly expectedGoalId?: string } = {},
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (options.expectedGoalId !== undefined && goal.goalId !== options.expectedGoalId) {
+      throw new Error(`Task ${taskId} goal changed before it could be cleared.`);
+    }
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_id = NULL,
+           goal_objective = NULL,
+           goal_criterion = NULL,
+           goal_status = 'none',
+           goal_token_budget = NULL,
+           goal_turn_budget = NULL,
+           goal_wall_clock_budget_ms = NULL,
+           goal_tokens_used = 0,
+           goal_turns_used = 0,
+           goal_wall_clock_ms = 0,
+           goal_terminal_reason = NULL,
+           goal_continuation_deferred = 0,
+           goal_consecutive_no_progress = 0,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id IS NOT NULL`,
+      )
+      .run(now, taskId, expectedRevision);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
+  /** Persist one Goal Task run progress snapshot (independent of Auto Debug runs). */
+  public recordGoalRun(progress: TaskGoalRunMetadata): void {
+    assertTaskId(progress.taskId);
+    if (!Number.isSafeInteger(progress.rounds) || progress.rounds < 0)
+      throw new Error("Goal run rounds are invalid.");
+    if (!Number.isSafeInteger(progress.turnsUsed) || progress.turnsUsed < 0)
+      throw new Error("Goal run turns are invalid.");
+    if (!Number.isSafeInteger(progress.wallClockMs) || progress.wallClockMs < 0)
+      throw new Error("Goal run wall-clock time is invalid.");
+    if (
+      progress.lastFingerprintHash !== undefined &&
+      !/^[a-f0-9]{64}$/u.test(progress.lastFingerprintHash)
+    ) {
+      throw new Error("Goal run fingerprint hash is invalid.");
+    }
+    if (
+      progress.evidenceSummary !== undefined &&
+      (progress.evidenceSummary.length > 4_096 || progress.evidenceSummary.includes("\0"))
+    ) {
+      throw new Error("Goal run evidence summary is invalid.");
+    }
+    this.#database
+      .prepare(
+        `INSERT INTO task_goal_runs
+          (task_id, rounds, turns_used, wall_clock_ms, completed, stop_reason, last_fingerprint_hash, evidence_summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET
+          rounds = excluded.rounds,
+          turns_used = excluded.turns_used,
+          wall_clock_ms = excluded.wall_clock_ms,
+          completed = excluded.completed,
+          stop_reason = excluded.stop_reason,
+          last_fingerprint_hash = excluded.last_fingerprint_hash,
+          evidence_summary = excluded.evidence_summary`,
+      )
+      .run(
+        progress.taskId,
+        progress.rounds,
+        progress.turnsUsed,
+        progress.wallClockMs,
+        progress.completed ? 1 : 0,
+        progress.stopReason,
+        progress.lastFingerprintHash ?? null,
+        progress.evidenceSummary ?? null,
+      );
+    this.#database
+      .prepare("UPDATE task_metadata SET updated_at = ? WHERE task_id = ?")
+      .run(Date.now(), progress.taskId);
+  }
+
+  public getGoalRun(taskId: string): TaskGoalRunMetadata | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT task_id, rounds, turns_used, wall_clock_ms, completed, stop_reason, last_fingerprint_hash, evidence_summary FROM task_goal_runs WHERE task_id = ?",
+      )
+      .get(taskId);
+    if (row === undefined) return undefined;
+    return {
+      taskId: String(row.task_id),
+      rounds: Number(row.rounds),
+      turnsUsed: Number(row.turns_used),
+      wallClockMs: Number(row.wall_clock_ms),
+      completed: Number(row.completed) === 1,
+      stopReason: String(row.stop_reason) as GoalRunStopReason,
+      ...(row.last_fingerprint_hash === null
+        ? {}
+        : { lastFingerprintHash: String(row.last_fingerprint_hash) }),
+      ...(row.evidence_summary === null || row.evidence_summary === undefined
+        ? {}
+        : { evidenceSummary: String(row.evidence_summary) }),
+    };
+  }
+
   public close(): void {
     this.#database.close();
   }
@@ -910,7 +1420,10 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     trustedShell: Number(row.trusted_shell ?? 0) === 1,
     fullAccess: Number(row.full_access ?? 0) === 1,
     pushPolicy: row.push_policy === "allow" ? "allow" : "deny",
-    ...(row.task_mode === "debug" || row.task_mode === "build" ? { taskMode: row.task_mode } : {}),
+    ...(row.task_mode === "debug" || row.task_mode === "build" || row.task_mode === "goal"
+      ? { taskMode: row.task_mode }
+      : {}),
+    ...(row.goal_id === null || row.goal_id === undefined ? {} : { goal: mapTaskGoal(row) }),
     ...(row.title === null || row.title === undefined ? {} : { title: String(row.title) }),
     ...(row.created_at === null || row.created_at === undefined
       ? {}
@@ -918,6 +1431,38 @@ function mapTaskMetadata(row: Record<string, unknown>): TaskMetadata {
     ...(row.updated_at === null || row.updated_at === undefined
       ? {}
       : { updatedAt: Number(row.updated_at) }),
+  };
+}
+
+/** Project the goal aggregate from a task_metadata row with a goal_id set. */
+function mapTaskGoal(row: Record<string, unknown>): TaskGoalSnapshot {
+  return {
+    goalId: String(row.goal_id),
+    objective: String(row.goal_objective ?? ""),
+    ...(row.goal_criterion === null || row.goal_criterion === undefined
+      ? {}
+      : { completionCriterion: String(row.goal_criterion) }),
+    status: String(row.goal_status ?? "paused") as CandyGoalStatus,
+    turnBudget:
+      row.goal_turn_budget === null || row.goal_turn_budget === undefined
+        ? null
+        : Number(row.goal_turn_budget),
+    wallClockBudgetMs:
+      row.goal_wall_clock_budget_ms === null || row.goal_wall_clock_budget_ms === undefined
+        ? null
+        : Number(row.goal_wall_clock_budget_ms),
+    tokenBudget:
+      row.goal_token_budget === null || row.goal_token_budget === undefined
+        ? null
+        : Number(row.goal_token_budget),
+    turnsUsed: Number(row.goal_turns_used ?? 0),
+    wallClockMs: Number(row.goal_wall_clock_ms ?? 0),
+    tokensUsed: Number(row.goal_tokens_used ?? 0),
+    ...(row.goal_terminal_reason === null || row.goal_terminal_reason === undefined
+      ? {}
+      : { terminalReason: String(row.goal_terminal_reason) }),
+    continuationDeferred: Number(row.goal_continuation_deferred ?? 0) === 1,
+    consecutiveNoProgress: Number(row.goal_consecutive_no_progress ?? 0),
   };
 }
 

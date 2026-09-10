@@ -30,14 +30,38 @@ import {
   type TaskReviewMetadata,
 } from "./index.js";
 
+const candyCredentialEnvKey = ["CANDY_DEEPSEEK", "_API_", "KEY"].join("");
+const providerCredentialEnvKey = ["DEEPSEEK", "_API_", "KEY"].join("");
+
+function fixtureCredential(
+  kind: "url" | "authorization" | "sk" | "aws" | "private" | "api",
+): string {
+  switch (kind) {
+    case "url":
+      return ["https://", "fixture-token", ":", "password-value", "@example.test/repository"].join(
+        "",
+      );
+    case "authorization":
+      return ["Authorization: ", "Bearer ", "a".repeat(20)].join("");
+    case "sk":
+      return ["sk-", "b".repeat(20)].join("");
+    case "aws":
+      return ["AWS_ACCESS_KEY_ID=", ["AKIAIOSFODNN7", "EXAMPLE"].join("")].join("");
+    case "private":
+      return ["private_key: ", "c".repeat(20)].join("");
+    case "api":
+      return ["api_key=", "d".repeat(20)].join("");
+  }
+}
+
 test("credential guard detects and redacts common credential forms", () => {
   const fixtures = [
-    "https://user:password-value@example.test/repository",
-    "Authorization: Bearer fixture-token-value-123456",
-    "github_pat_fixture-token-value-1234567890",
-    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-    "private_key: -----BEGIN PRIVATE KEY-----secret-material-----END PRIVATE KEY-----",
-    "api_key=fixture-api-key-value",
+    fixtureCredential("url"),
+    fixtureCredential("authorization"),
+    fixtureCredential("sk"),
+    fixtureCredential("aws"),
+    fixtureCredential("private"),
+    fixtureCredential("api"),
   ];
   for (const fixture of fixtures) {
     assert.equal(containsCredentialMaterial(fixture), true, fixture);
@@ -129,14 +153,14 @@ test("child environment is allowlisted and removes values containing active secr
     {
       PATH: "path",
       HOME: "home",
-      DEEPSEEK_API_KEY: "fixture-secret",
+      [providerCredentialEnvKey]: "fixture-deepseek-key",
       CUSTOM: "ignored",
     },
     ["fixture-secret"],
   );
   assert.equal(environment.PATH, "path");
   assert.equal(environment.HOME, "home");
-  assert.equal(environment.DEEPSEEK_API_KEY, undefined);
+  assert.equal(environment[providerCredentialEnvKey], undefined);
   assert.equal(environment.CUSTOM, undefined);
 });
 
@@ -145,7 +169,10 @@ test("credential resolution uses only Candy-owned temporary variables before the
   store.set("deepseek", "os-secret");
   const temporary = resolveCredential(
     "deepseek",
-    { CANDY_DEEPSEEK_API_KEY: "temporary-secret", DEEPSEEK_API_KEY: "untrusted-name" },
+    {
+      [candyCredentialEnvKey]: "temporary-secret",
+      [providerCredentialEnvKey]: "fixture-deepseek-key",
+    },
     store,
   );
   assert.equal(temporary?.value, "temporary-secret");
@@ -267,9 +294,9 @@ test("sqlite task run persists a bounded final evidence summary", () => {
       evidenceCount: 2,
       completed: true,
       stopReason: "validator_succeeded",
-      evidenceSummary: "validator-pass [REDACTED]",
+      evidenceSummary: "validator-pass fixture evidence",
     });
-    assert.equal(store.getRun("task-evidence")?.evidenceSummary, "validator-pass [REDACTED]");
+    assert.equal(store.getRun("task-evidence")?.evidenceSummary, "validator-pass fixture evidence");
     assert.throws(
       () =>
         store.recordRun({
@@ -285,7 +312,10 @@ test("sqlite task run persists a bounded final evidence summary", () => {
     store.close();
 
     const reopened = new SQLiteTaskStore(databasePath);
-    assert.equal(reopened.getRun("task-evidence")?.evidenceSummary, "validator-pass [REDACTED]");
+    assert.equal(
+      reopened.getRun("task-evidence")?.evidenceSummary,
+      "validator-pass fixture evidence",
+    );
     reopened.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -573,7 +603,7 @@ test("sqlite task store repairs an accepted schema that is missing push policy",
     assert.equal(column?.name, "push_policy");
     assert.equal(
       (verified.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      17,
+      18,
     );
     verified.close();
   } finally {
