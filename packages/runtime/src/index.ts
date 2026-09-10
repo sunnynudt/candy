@@ -505,6 +505,66 @@ export type {
   WorkspaceFileSnapshot,
 } from "./v1.js";
 
+export {
+  GOAL_BLOCKED_AUDIT_RULES,
+  GOAL_COMPLETION_AUDIT_RULES,
+  GOAL_CONTINUATION_BEHAVIOR_RULES,
+  GOAL_CONVERGENCE_RULES,
+  GOAL_WRAP_UP_RULES,
+} from "./goal-contract.js";
+export {
+  DEFAULT_GOAL_BLOCKED_TURN_LIMIT,
+  DEFAULT_GOAL_NO_PROGRESS_LIMIT,
+  GOAL_CONVERGENCE_RATIO,
+  GoalBlockedClaimLedger,
+  GoalContinuationRunner,
+  GoalControlError,
+  IDLE_GOAL_SIGNALS,
+  evaluateGoalContinuation,
+  goalBudgetState,
+} from "./goal.js";
+export {
+  MAX_GOAL_CONTINUATION_CHARS,
+  MIN_GOAL_CONTINUATION_CHARS,
+  boundGoalText,
+  buildGoalContinuationPrompt,
+  buildGoalWrapUpPrompt,
+  fenceGoalData,
+} from "./goal-message.js";
+export { GoalToolHost, listGoalToolDefinitions } from "./goal-tools.js";
+export type {
+  GoalBudgetState,
+  GoalContinuationDecision,
+  GoalContinuationOptions,
+  GoalContinuationProgressBinding,
+  GoalContinuationProgressStore,
+  GoalContinuationSignals,
+  GoalContinuationSkipReason,
+  GoalContinuationStopReason,
+  GoalContinuationStore,
+  GoalControlStopReason,
+  GoalFailureCategory,
+  GoalRunResult,
+  GoalTurnCallback,
+  GoalTurnContext,
+  GoalTurnReport,
+} from "./goal.js";
+export type {
+  GoalContinuationPrompt,
+  GoalContinuationPromptInput,
+  GoalPromptUsage,
+} from "./goal-message.js";
+export type {
+  GoalToolCaller,
+  GoalToolDefinition,
+  GoalToolHostOptions,
+  GoalToolName,
+  GoalToolParameter,
+  GoalToolRequest,
+  GoalToolResult,
+  GoalToolStore,
+} from "./goal-tools.js";
+
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("Turn aborted.");

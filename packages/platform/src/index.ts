@@ -1311,6 +1311,40 @@ export class SQLiteTaskStore {
     return this.require(taskId);
   }
 
+  /**
+   * Persist the consecutive no-progress counter owned by the goal
+   * continuation policy. P0 owns the column; the runtime policy is the only
+   * writer and always passes the goal id it measured the streak against.
+   */
+  public setGoalNoProgress(
+    taskId: string,
+    expectedRevision: number,
+    expectedGoalId: string,
+    consecutiveNoProgress: number,
+  ): TaskMetadata {
+    assertTaskId(taskId);
+    if (!Number.isSafeInteger(consecutiveNoProgress) || consecutiveNoProgress < 0)
+      throw new Error("Goal no-progress counter is invalid.");
+    const current = this.require(taskId);
+    const goal = current.goal;
+    if (goal === undefined) throw new GoalStateError("Task has no goal.");
+    if (goal.goalId !== expectedGoalId)
+      throw new Error(`Task ${taskId} goal changed before the no-progress update.`);
+    const now = Date.now();
+    const result = this.#database
+      .prepare(
+        `UPDATE task_metadata SET
+           revision = revision + 1,
+           goal_consecutive_no_progress = ?,
+           updated_at = ?
+         WHERE task_id = ? AND revision = ? AND goal_id = ?`,
+      )
+      .run(consecutiveNoProgress, now, taskId, expectedRevision, goal.goalId);
+    if (result.changes !== 1)
+      throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
+    return this.require(taskId);
+  }
+
   /** Persist one Goal Task run progress snapshot (independent of Auto Debug runs). */
   public recordGoalRun(progress: TaskGoalRunMetadata): void {
     assertTaskId(progress.taskId);

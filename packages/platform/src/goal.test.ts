@@ -546,3 +546,41 @@ test("a completed goal accepts a fresh plain set and goal runs persist independe
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("goal no-progress counter is CAS- and goal-id-guarded", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-goal-no-progress-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    const created = store.create("task-goal-no-progress", "auto");
+    assert.throws(
+      () => store.setGoalNoProgress("task-goal-no-progress", created.revision, "any", 1),
+      GoalStateError,
+    );
+    const set = store.setGoal("task-goal-no-progress", created.revision, { objective: "Counter." });
+    const goalId = set.goal?.goalId ?? "";
+    const first = store.setGoalNoProgress("task-goal-no-progress", set.revision, goalId, 2);
+    assert.equal(first.goal?.consecutiveNoProgress, 2);
+    assert.throws(
+      () => store.setGoalNoProgress("task-goal-no-progress", set.revision, goalId, 3),
+      /revision is stale/u,
+    );
+    assert.throws(
+      () => store.setGoalNoProgress("task-goal-no-progress", first.revision, "other-goal", 3),
+      /goal changed/u,
+    );
+    assert.throws(
+      () => store.setGoalNoProgress("task-goal-no-progress", first.revision, goalId, -1),
+      /no-progress counter is invalid/u,
+    );
+    const reset = store.setGoalNoProgress("task-goal-no-progress", first.revision, goalId, 0);
+    assert.equal(reset.goal?.consecutiveNoProgress, 0);
+    store.close();
+
+    const reopened = new SQLiteTaskStore(databasePath);
+    assert.equal(reopened.getGoal("task-goal-no-progress")?.consecutiveNoProgress, 0);
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
