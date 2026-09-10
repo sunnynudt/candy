@@ -54,7 +54,10 @@ import {
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   WorkspaceHandoff,
+  DEFAULT_AUTO_DEBUG_ROUNDS,
+  DEFAULT_AUTO_DEBUG_STALL_LIMIT,
   billableTokens,
+  buildAutoDebugRoundPrompt,
   boundGoalText,
   buildGoalStartPrompt,
   fenceGoalData,
@@ -835,11 +838,25 @@ export class AppServerController {
       }
 
       if (current.approvalProfile === "auto" && current.validator !== undefined) {
-        const longRunning = new LongRunningTaskRunner(3, 2);
+        // Shared Auto Debug policy: the same round budget and repair-prompt
+        // contract the TUI uses.
+        const longRunning = new LongRunningTaskRunner(
+          DEFAULT_AUTO_DEBUG_ROUNDS,
+          DEFAULT_AUTO_DEBUG_STALL_LIMIT,
+        );
+        let latestEvidence = "";
         const result = await longRunning.run(
           async (_round, signal) => {
             try {
-              await runTurn();
+              // Repair rounds repeat the goal with bounded, redacted evidence.
+              const steering = this.consumeSteering(taskId);
+              const roundPrompt = buildAutoDebugRoundPrompt({
+                goal: prompt,
+                round: _round,
+                maxRounds: DEFAULT_AUTO_DEBUG_ROUNDS,
+                evidence: latestEvidence,
+              });
+              await runTurn(undefined, steering ?? roundPrompt);
             } catch (error) {
               if (error instanceof LongRunningControlError) throw error;
               const code = taskErrorCode(error, signal);
@@ -856,10 +873,18 @@ export class AppServerController {
             else throw new LongRunningControlError("ownership_lost");
           },
           {
-            run: (signal) => {
+            run: async (signal) => {
               const metadata = this.#store.get(taskId);
               if (!metadata) throw new Error("Task metadata is unavailable.");
-              return this.runValidator(taskId, metadata, executionPath, signal, emit);
+              const outcome = await this.runValidator(
+                taskId,
+                metadata,
+                executionPath,
+                signal,
+                emit,
+              );
+              latestEvidence = outcome.evidence;
+              return outcome;
             },
           },
           active.abort.signal,

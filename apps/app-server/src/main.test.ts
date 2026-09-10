@@ -716,7 +716,11 @@ test("app-server pauses for approval, applies steering to a new turn, and projec
     await waitForCompletion(background, "task-approval-steer");
     const completed = await waitForSnapshotState(background, "task-approval-steer", "completed");
     assert.equal(validatorCalls, 2);
-    assert.deepEqual(prompts, ["base outcome", "steer-next-round", "base outcome"]);
+    // Round 1 is the goal, round 2 is the user's steering, and round 3 repeats
+    // the goal with the bounded verifier evidence from round 2.
+    assert.deepEqual(prompts.slice(0, 2), ["base outcome", "steer-next-round"]);
+    assert.match(prompts[2] ?? "", /^base outcome/u);
+    assert.match(prompts[2] ?? "", /\[VERIFIER FAILED\] round \d of 6; bounded evidence:/u);
     assert.equal(completed.event.snapshot.progress?.stopReason, "validator_succeeded");
     assert.equal(completed.event.snapshot.progress?.evidenceSummary, "validator-pass [REDACTED]");
     assert.equal(JSON.stringify(background).includes("fixture-secret"), false);

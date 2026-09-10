@@ -78,6 +78,7 @@ import {
   TaskScheduler,
   UnavailableBrowserCapability,
   boundGoalText,
+  buildAutoDebugRoundPrompt,
   buildGoalStartPrompt,
   billableTokens,
   fenceGoalData,
@@ -106,6 +107,11 @@ import {
   isCurrentModelChoice,
 } from "./slash-commands.js";
 import { createCandyGoalToolDefinitions } from "@candy/pi-adapter";
+import {
+  AUTO_DEBUG_TURN_INSTRUCTION,
+  DEFAULT_AUTO_DEBUG_ROUNDS,
+  DEFAULT_AUTO_DEBUG_STALL_LIMIT,
+} from "@candy/runtime";
 
 /** Pi tool definitions Candy builds for one goal turn. */
 type TuiGoalToolDefinitions = ReturnType<typeof createCandyGoalToolDefinitions>;
@@ -353,18 +359,10 @@ const BUILD_TURN_INSTRUCTION =
   "[BUILD-PHASE] The read-only plan was reviewed by the user. Implement it now: workspace mutations are allowed. Explain adjustments when code diverges from the plan.\n";
 
 /**
- * Auto Debug loop bounds. The loop runs bounded rounds and stops early when
- * the validator passes, the evidence stalls, or the user cancels; an
- * exhausted budget leaves the task interrupted (explicit continuation only).
+ * Auto Debug loop bounds and the repair prompt contract now live in
+ * `@candy/runtime` (`auto-debug.ts`) so the TUI and the app-server share them.
  */
-const MAX_DEBUG_ROUNDS = 6;
-
-/**
- * Goal banner for `/debug`. Each failing round appends the bounded validator
- * evidence to the next turn's prompt so the model repairs its own change.
- */
-const DEBUG_TURN_INSTRUCTION =
-  "[AUTO-DEBUG] Make the change and verify it with the configured validator. After each of your turns the validator runs automatically; when it fails, the next turn receives the bounded failure evidence and you must fix the root cause. Keep changes minimal and do not remove unrelated work.\n";
+const MAX_DEBUG_ROUNDS = DEFAULT_AUTO_DEBUG_ROUNDS;
 
 /**
  * Goal banner for `/goal <objective>`. The objective itself is user data; the
@@ -1001,7 +999,7 @@ export class InteractiveTui {
     const effectivePrompt = planMode
       ? `${PLAN_TURN_INSTRUCTION}${prompt}`
       : taskMode === "debug"
-        ? `${DEBUG_TURN_INSTRUCTION}${prompt}`
+        ? `${AUTO_DEBUG_TURN_INSTRUCTION}${prompt}`
         : prompt;
     if (taskMode === "debug" && validatorCommand === undefined) {
       this.write(
@@ -3158,14 +3156,17 @@ export class InteractiveTui {
     if (taskSnapshot.validator === undefined)
       throw new Error("Auto Debug requires a configured validator.");
     let lastEvidence = "";
-    const runner = new LongRunningTaskRunner(MAX_DEBUG_ROUNDS, 2);
+    const runner = new LongRunningTaskRunner(MAX_DEBUG_ROUNDS, DEFAULT_AUTO_DEBUG_STALL_LIMIT);
     const result = await runner.run(
       async (round, signal) => {
         if (signal.aborted) throw new Error("Auto Debug turn cancelled.");
-        const roundPrompt =
-          round === 1
-            ? goal
-            : `${goal}\n\n[VERIFIER FAILED] bounded evidence:\n${lastEvidence}\n\nFix the root cause and re-verify; do not change unrelated files.`;
+        // Repair rounds repeat the goal with bounded, redacted validator evidence.
+        const roundPrompt = buildAutoDebugRoundPrompt({
+          goal,
+          round,
+          maxRounds: MAX_DEBUG_ROUNDS,
+          evidence: lastEvidence,
+        });
         // runTask already wrote the initial goal as a user message; only
         // evidence-fed repair rounds append their own prompt to the transcript.
         if (round > 1) {

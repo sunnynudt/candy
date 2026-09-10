@@ -18,9 +18,9 @@
 | `/plan`       | `/plan [prompt]`                                          | 创建只读规划任务（plan 模式）；规划 turn 绝不修改文件，审阅方案后用 `/build` 实施                                         |
 | `/build`      | `/build [task-id]`                                        | 把已审阅的 plan 任务切换到当前 profile 并开始实施；无参时使用当前任务                                                     |
 | `/debug`      | `/debug [prompt]`                                         | 创建 Auto Debug 任务：模型回合 + 验证器循环，直到验证通过、证据停滞或预算耗尽（需先配置 `/validator` 或传 `--validator`） |
-| `/goal`       | `/goal [<objective> [--criterion <text>] [--turns <n>] [--minutes <n>]]` | 创建 Goal Task（目标任务）：目标与可选完成判据持久化，Candy 空闲后自动续跑，直到目标完成/阻塞/预算耗尽 |
+| `/goal`       | `/goal [<objective> [--criterion <text>] [--turns <n>] [--minutes <n>] [--tokens <n>]]` | 创建 Goal Task（目标任务）：目标与可选完成判据持久化，Candy 空闲后自动续跑，直到目标完成/阻塞/预算耗尽 |
 | `/goal`       | `/goal \| pause \| resume [text] \| clear`                | 查看摘要 / 暂停自动续跑 / 恢复（blocked 计数重新开始）/ 清除目标                                                                  |
-| `/goal`       | `/goal budget [--turns <n>] [--minutes <n>]`               | 查看或设置回合数与墙钟预算                                                                                                     |
+| `/goal`       | `/goal budget [--turns <n>] [--minutes <n>] [--tokens <n>]` | 查看或设置回合数、墙钟（分钟）、可计费 token 预算                                                                              |
 | `/goal`       | `/goal replace <objective> [options]`                      | 替换当前任务的目标；运行中会通过 steering 注入当前回合                                                                        |
 | `/workspace`  | `/workspace [path]`                                       | 显示或选择工作区（绝对路径）                                                                                              |
 | `/tasks`      | `/tasks`                                                  | 列出任务（标题/状态/创建更新时间/模型/工作区/revision/Validator）                                                         |

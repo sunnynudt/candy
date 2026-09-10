@@ -79,3 +79,27 @@ _Avoid_: Detached job, workflow
 **Auto Debug**:
 A Long-running Task that repeatedly gathers failure evidence, changes the project, and reruns an explicit validator until success or a stop condition.
 _Avoid_: Workflow engine, autonomous deployment
+
+**Goal Task**:
+A Long-running Task that carries a persisted user objective and continues itself, turn after turn, until the goal completes, blocks, hits a budget, or the user stops it.
+_Avoid_: Background job, autonomous agent, workflow
+
+**Goal Objective**:
+The bounded user-supplied text that states what a Goal Task must achieve; untrusted data that never changes Candy rules.
+_Avoid_: System prompt, instruction, task template
+
+**Completion Criterion**:
+The optional user-supplied text that makes a goal's completion checkable; treated like the objective.
+_Avoid_: Acceptance test suite, validator
+
+**Goal Turn**:
+One turn of a Goal Task: the user's starting turn or an automatic continuation turn injected by Candy's continuation policy.
+_Avoid_: Background round, retry
+
+**Goal Budget**:
+A user-set limit on a Goal Task — turn count, active wall clock, or billable tokens — after which Candy wraps up and stops continuing.
+_Avoid_: Rate limit, quota, cost cap
+
+**Blocked Audit**:
+The rule that a goal may be reported blocked only after the same blocking condition repeats for three consecutive goal turns, or when the objective itself is impossible, unsafe, or self-contradictory.
+_Avoid_: Retry limit, failure counter

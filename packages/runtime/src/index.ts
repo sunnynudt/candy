@@ -546,6 +546,15 @@ export {
   normalizeTokenUsage,
 } from "./usage.js";
 export type { ProviderTokenUsage } from "./usage.js";
+export {
+  AUTO_DEBUG_TURN_INSTRUCTION,
+  DEFAULT_AUTO_DEBUG_ROUNDS,
+  DEFAULT_AUTO_DEBUG_STALL_LIMIT,
+  MAX_AUTO_DEBUG_EVIDENCE_CHARS,
+  boundAutoDebugEvidence,
+  buildAutoDebugRoundPrompt,
+} from "./auto-debug.js";
+export type { AutoDebugRoundInput } from "./auto-debug.js";
 export { GoalToolHost, listGoalToolDefinitions } from "./goal-tools.js";
 export type {
   GoalBudgetState,
