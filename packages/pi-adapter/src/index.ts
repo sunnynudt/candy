@@ -23,6 +23,13 @@ import { Type } from "typebox";
 import { type ConfiguredModelEntry } from "./model-config.js";
 import { CandyRestrictedResourceLoader } from "./restricted-resource-loader.js";
 export { resolveCandySkillRoots } from "./restricted-resource-loader.js";
+export { createCandyGoalToolDefinitions } from "./goal-tools.js";
+export type {
+  CandyGoalToolBridge,
+  CandyGoalToolCallResult,
+  CandyGoalToolDescriptor,
+  CandyGoalToolParameterSchema,
+} from "./goal-tools.js";
 export {
   loadCandyModelConfig,
   loadCandyModelConfigSync,
@@ -3443,6 +3450,12 @@ export interface PiAgentEngineInput {
   readonly webFetchApproval?: CandyWebFetchOperationsOptions["onApproval"];
   /** Task Git publication policy; 'allow' enables push after model commits. */
   readonly gitPushPolicy?: "deny" | "allow";
+  /**
+   * Goal Task tools built by Candy's goal tool host for this turn. Candy never
+   * registers them for tasks without a goal, and the host stays the only
+   * writer of durable goal state.
+   */
+  readonly goalTools?: readonly piSdk.ToolDefinition[];
 }
 
 export interface PiImageInput {
@@ -3918,6 +3931,8 @@ export class PiAgentEngine {
           },
         },
       );
+      const goalAwareTools =
+        input.goalTools === undefined ? workspaceTools : [...workspaceTools, ...input.goalTools];
       const sessionBindings = await bindSessionDirectory(this.sessionRoot, sessionDirectory);
       const agentBindings = await bindSessionDirectory(this.sessionRoot, agentDirectory);
       let created: Awaited<ReturnType<typeof piSdk.createAgentSession>>;
@@ -3931,8 +3946,8 @@ export class PiAgentEngine {
           model,
           sessionManager,
           noTools: "builtin",
-          tools: workspaceTools.map((tool) => tool.name),
-          customTools: workspaceTools,
+          tools: goalAwareTools.map((tool) => tool.name),
+          customTools: goalAwareTools,
           resourceLoader,
           settingsManager,
         });

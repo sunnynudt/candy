@@ -65,7 +65,9 @@ import {
   DeterministicAgentEngine,
   GitWorktreeManager,
   GitWorkspaceChangeTracker,
+  GoalBlockedClaimLedger,
   GoalContinuationRunner,
+  GoalToolHost,
   isGitWorkspaceClean,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
@@ -101,6 +103,10 @@ import {
   isCandySkillSlashCommandName,
   isCurrentModelChoice,
 } from "./slash-commands.js";
+import { createCandyGoalToolDefinitions } from "@candy/pi-adapter";
+
+/** Pi tool definitions Candy builds for one goal turn. */
+type TuiGoalToolDefinitions = ReturnType<typeof createCandyGoalToolDefinitions>;
 
 export interface TuiSmokeResult {
   readonly piVersion: string;
@@ -1617,20 +1623,31 @@ export class InteractiveTui {
     readonly runEngineTurn: (
       activeSecrets: readonly string[],
       turnPrompt: string,
+      goalTools?: TuiGoalToolDefinitions,
     ) => Promise<{ readonly toolActivations: number }>;
     readonly abort: AbortController;
   }): Promise<void> {
     const { taskId, taskSnapshot, initialPrompt, runEngineTurn, abort } = options;
+    // One claims ledger per execution span: a resume restarts the blocked audit
+    // count, and the goal tool host shares the ledger with the policy.
+    const claims = new GoalBlockedClaimLedger();
+    const goalToolsFor = (activeSecrets: readonly string[]): TuiGoalToolDefinitions =>
+      createCandyGoalToolDefinitions(
+        new GoalToolHost({ taskId, store: this.#store, claims, activeSecrets }),
+      );
     const runner = new GoalContinuationRunner({
       taskId,
       store: this.#store,
       clock: new SystemClock(),
       signals: () => this.goalContinuationSignals(taskId, abort),
+      claims,
       noProgressLimit: DEFAULT_GOAL_NO_PROGRESS_LIMIT,
     });
     const startedAt = Date.now();
     this.#taskPhases.set(taskId, "goal turn 1");
-    await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets, initialPrompt));
+    await this.withActiveSecrets((activeSecrets) =>
+      runEngineTurn(activeSecrets, initialPrompt, goalToolsFor(activeSecrets)),
+    );
     runner.accountUserTurn(Math.max(0, Date.now() - startedAt));
     const result = await runner.run(
       async (context) => {
@@ -1642,7 +1659,7 @@ export class InteractiveTui {
         this.writeUser(transcriptText(injected));
         this.#store.appendTranscript(taskId, [{ role: "user", text: transcriptText(injected) }]);
         const outcome = await this.withActiveSecrets((activeSecrets) =>
-          runEngineTurn(activeSecrets, context.message.text),
+          runEngineTurn(activeSecrets, context.message.text, goalToolsFor(activeSecrets)),
         );
         const refreshed = this.#store.get(taskId);
         const fingerprint = await this.goalWorkspaceFingerprint(refreshed ?? taskSnapshot);
@@ -2863,6 +2880,7 @@ export class InteractiveTui {
       const runEngineTurn = async (
         activeSecrets: readonly string[],
         turnPrompt: string,
+        goalTools?: TuiGoalToolDefinitions,
       ): Promise<{ readonly toolActivations: number }> => {
         this.#taskPhases.set(taskId, "turn running");
         // Tool calls other than the goal tool set count as goal progress.
@@ -2926,6 +2944,8 @@ export class InteractiveTui {
               : {
                   images: attachments.map(({ mimeType, data }) => ({ mimeType, data })),
                 }),
+            // Goal tools stay absent for every non-goal turn.
+            ...(goalTools === undefined ? {} : { goalTools }),
           },
           abort.signal,
         )) {

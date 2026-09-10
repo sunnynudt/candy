@@ -64,6 +64,22 @@ async function goalFixture(root: string): Promise<{ appDataRoot: string; workspa
   return { appDataRoot, workspace };
 }
 
+/** Invoke a model-facing goal tool exactly as the Pi session would. */
+async function callGoalTool(
+  tools: readonly { readonly name: string; readonly execute?: unknown }[] | undefined,
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+): Promise<string> {
+  const tool = tools?.find((candidate) => candidate.name === name);
+  assert.ok(tool, `${name} must be registered for a goal turn`);
+  const execute = tool.execute as unknown as (
+    id: string,
+    input: Readonly<Record<string, unknown>>,
+  ) => Promise<{ readonly content: readonly { readonly text: string }[] }>;
+  const result = await execute(`call-${name}`, args);
+  return result.content[0]?.text ?? "";
+}
+
 /** The Pi bridge stays structural: Candy's goal tool host satisfies it as-is. */
 test("Candy's goal tool host satisfies the Pi goal tool bridge", () => {
   const store = new SQLiteTaskStore(":memory:");
@@ -84,16 +100,13 @@ test("/goal creates a Goal Task, continues it automatically, and completes it", 
     const engine: TuiAgentEngine = {
       async *runTurn(input) {
         prompts.push(input.prompt);
+        assert.ok(input.goalTools, "goal turns register Candy's goal tool set");
         if (prompts.length >= 2) {
-          // Stands in for the model calling candy_goal_update complete.
-          const store = taskStore(appDataRoot);
-          const task = store.get(input.taskId);
-          assert.ok(task?.goal);
-          store.updateGoalStatus(input.taskId, task.revision, "complete", {
-            expectedGoalId: task.goal.goalId,
+          // The model signals completion through Candy's goal tool.
+          await callGoalTool(input.goalTools, "candy_goal_update", {
+            signal: "complete",
             reason: "fixture audit passed",
           });
-          store.close();
         }
         yield { type: "turn.started", taskId: input.taskId };
         yield { type: "assistant.delta", taskId: input.taskId, text: "slice done" };
@@ -150,6 +163,7 @@ test("an exhausted goal budget wraps up once and leaves the task paused", async 
     const engine: TuiAgentEngine = {
       async *runTurn(input) {
         prompts.push(input.prompt);
+        assert.ok(input.goalTools, "the wrap-up turn still carries the goal tools");
         yield { type: "turn.started", taskId: input.taskId };
         yield { type: "tool.started", taskId: input.taskId, tool: "candy_edit" };
         yield { type: "turn.completed", taskId: input.taskId };
@@ -337,6 +351,59 @@ test("/goal replace resets the goal and /goal clear drops it", async () => {
     assert.ok(prompts.length >= 2);
     const store = taskStore(appDataRoot);
     assert.equal(store.getGoal(cleared.taskId), undefined);
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a repeated blocked claim blocks the goal and pauses the task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-blocked-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  const toolTexts: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        const text = await callGoalTool(input.goalTools, "candy_goal_update", {
+          signal: "blocked",
+          reason: "the proxy rejects npm install",
+        });
+        toolTexts.push(text);
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Make the proxy install work --turns 6");
+    terminal.emitInput("\r");
+    const blocked = await waitForTask(appDataRoot, (task) => task.goal?.status === "blocked");
+    const output = await waitForOutput(terminal, /goal blocked after/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(blocked?.goal);
+    assert.equal(blocked.state, "paused");
+    assert.equal(blocked.goal.terminalReason, "the proxy rejects npm install");
+    // The starting user turn counts toward the blocked audit, so three claims
+    // (starting turn + two continuations) confirm the block, per §7.3.
+    assert.equal(blocked.goal.turnsUsed, 3);
+    assert.equal(toolTexts.length, 3);
+    assert.match(toolTexts[0] ?? "", /1 of 3 consecutive goal turns/u);
+    assert.match(toolTexts[1] ?? "", /2 of 3 consecutive goal turns/u);
+    assert.match(toolTexts[2] ?? "", /marks the goal blocked when this turn settles/u);
+    assert.match(output, /paused: goal blocked after 2 goal turn/u);
+    const store = taskStore(appDataRoot);
+    const run = store.getGoalRun(blocked.taskId);
+    assert.equal(run?.stopReason, "blocked");
+    assert.equal(run?.rounds, 2);
     store.close();
   } finally {
     await rm(root, { recursive: true, force: true });
