@@ -11,6 +11,7 @@
 1. **Auto Debug 双份实现合并（第一步：共享语义）**：把回合预算、stall 阈值、证据上界、修复回合 prompt 契约抽到 `packages/runtime/src/auto-debug.ts`，TUI 与 app-server 都用它。
 2. **修掉一个真实缺陷**：app-server 的 Auto Debug 此前每轮重复同一个 prompt（validator 证据没有回喂给模型），且预算（3 轮）与 TUI（6 轮）不一致；现在两端统一为 6 轮、2 次 stall，并且修复回合会带上脱敏、有界、控制字符清理后的验证证据。
 3. **术语与决策定稿**：新增 ADR-0016（Goal Task 能力与不变式），并在 `CONTEXT.md` 登记 Goal Task / Goal Objective / Completion Criterion / Goal Turn / Goal Budget / Blocked Audit；`docs/usage/tui-commands.md` 补齐 `--tokens`。
+4. **stdio 冒烟在进程内可用**：新增 `apps/app-server/src/stdio-smoke.test.ts`，用 `PassThrough` 在进程内跑与 `npm run smoke:app-server` 相同的 JSONL 命令与断言（不再依赖 spawn 子进程）；顺带修复非法 JSONL 行会把 stdio 循环变成未处理拒绝的问题（现在回协议错误信封），`runAppServer` 增加可选的 controller 选项以支持隔离测试。
 
 ## 2. 设计决策
 
@@ -48,5 +49,6 @@
 
 1. **Auto Debug 循环体合并**：把“跑一轮 + 跑 validator + 记录进度 + 停因映射”做成 runtime 内的一个驱动函数，两个客户端只注入 turn/validator 回调。风险：两个客户端的任务状态与事件模型不同，需要先约定跨客户端契约。
 2. **`/goal edit` 外部编辑器编辑（已尝试，暂缓）**：曾实现 surface 的 `editText()` + `goal-edit.ts`（格式/解析）+ `/goal edit` 无参走编辑器。编辑结果能成功写回目标（测试中 store 已更新），但 **pi-tui 的渲染循环在命令分发过程中被 stop/start 后，测试终端不再接收后续输入**（`:quit` 不生效、TUI 无法退出）；`setImmediate` 让出调用栈与 `#resume()` 里重新 `setFocus(editor)` 都未解决。本片已回滚该路径，`/goal edit` 仍然等价于 `/goal replace`（命令行文本），仅保留 `#resume()` 的重设焦点作为防御性修正。复现方式：`/goal <objective>` 后执行 `/goal edit`，用 `launchExternalEditor` 测试探针写回内容，观察 `:quit` 不再生效。建议的下一步：把目标编辑做成“预填输入行 + Ctrl+G”（复用已验证的输入行编辑器通道），或先与 pi-tui 确认 stop/start 后的事件与焦点恢复契约。
-3. **普通主机补验项**：`npm run smoke:app-server`（P3 §6）与 live provider 用量契约（P4 §5）。
-4. **Windows**：按用户要求，本阶段不处理。
+3. **普通主机补验项**：live provider 用量契约（P4 §5）；spawn 版 `npm run smoke:app-server`（进程内等价断言已在 `apps/app-server/src/stdio-smoke.test.ts` 覆盖，见 P3 §6）。
+4. **协议层开放问题**：非法 JSONL 行目前结束该 stdio 循环（回错误信封后干净关闭）；是否改为“跳过该行继续服务”需在 protocol 层决定。
+5. **Windows**：按用户要求，本阶段不处理。

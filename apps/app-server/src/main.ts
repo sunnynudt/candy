@@ -1765,8 +1765,12 @@ export function createDefaultAppServerController(
   });
 }
 
-export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): void {
-  const controller = createDefaultAppServerController();
+export function runAppServer(
+  stdin: NodeJS.ReadableStream,
+  stdout: NodeJS.WritableStream,
+  options: DefaultAppServerControllerOptions = {},
+): void {
+  const controller = createDefaultAppServerController(options);
   const write = (message: ProtocolMessage): void => {
     stdout.write(encodeJsonLine(message));
   };
@@ -1780,6 +1784,10 @@ export function runAppServer(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writab
           stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
         }
       }
+    } catch {
+      // A malformed JSONL line ends the decoder, but the server must answer
+      // with the protocol error envelope instead of crashing the process.
+      stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
     } finally {
       controller.close();
     }

@@ -82,13 +82,14 @@ web-ui（`apps/app-server/src/web-ui.test.ts`，1 例）：`app.js` 含 goal 控
 - `node --test packages/protocol/dist/protocol.test.js` → 全绿。
 - 全量 `npm test`：除 6 个**既有**的嵌套沙箱环境失败（`native/sandbox-runner` 与沙箱内 npm 脚本，本片未改这些路径）外全绿。
 
-**未验证：`npm run smoke:app-server`。** 症状：在本任务（外层 Candy 命令沙箱）里，该脚本 spawn `apps/app-server/dist/main.js` 并向 stdin 写入一条 `snapshot` 命令后等待子进程 exit；命令在沙箱内被中断（`Command aborted`），且把该 spawn 放进后台子 shell 也同样被中断——沙箱会清理长期存活的子进程。因此**无法在本环境判定** app-server 在 stdin EOF 后是否正常退出。
+**未验证（spawn 版）`npm run smoke:app-server`。** 症状：在本任务（外层 Candy 命令沙箱）里，该脚本 spawn `apps/app-server/dist/main.js` 并向 stdin 写入一条 `snapshot` 命令后等待子进程 exit；命令在沙箱内被中断（`Command aborted`），且把该 spawn 放进后台子 shell 也同样被中断——沙箱会清理长期存活的子进程。
 
-- 复现与补验（请在普通主机执行）：
-  1. `git fetch origin codex/candy-v1-foundation && git checkout <本片提交>`；
+- **已在进程内等价验证（P5 补充）**：`apps/app-server/src/stdio-smoke.test.ts` 用 `PassThrough` 流调用 `runAppServer(stdin, stdout, { appDataRoot })`，发送与 smoke 完全相同的 JSONL 命令并断言同两个条件（`"kind":"event"`、`"task-1"`、`"type":"snapshot"`），另覆盖“连续两条有效命令”与“非法 JSONL 行”。因此 stdio 循环本身不依赖外部进程管理即可验证；spawn 版 smoke 仍保留给 CI／普通主机。
+- **顺带修复（P5 补充）**：非法 JSONL 行此前会以未处理拒绝结束 stdio 循环（可能带走进程），现在回 `{"v":1,"kind":"error","code":"invalid_message"}` 并干净关闭；“畸形行之后是否继续服务”需 protocol 层决策（跳过 vs 终止），已在 `goal-task-p5-design.md` §6 标注为后续问题。
+- 复现与补验（普通主机）：
+  1. `git fetch origin codex/candy-v1-foundation` 并检出对应提交；
   2. `npm run smoke:app-server`（预期输出 `app-server JSONL smoke ok`）；
-  3. 若它长时间不退出，说明 stdin EOF 未触发退出：查看 `apps/app-server/src/main.ts` 的 `runAppServer`（约 1729 行起）在 stdin 结束后的 `close()`/`process.exit` 路径；本片未改动该路径，但也未能在本地排除。
-- 若 `smoke:app-server` 通过，可直接进入 P4；若不通过，修复点集中在 `runAppServer` 的输入结束处理，与 goal 改动无关。
+  3. 同步跑 `node --test apps/app-server/dist/stdio-smoke.test.js`（进程内等价断言）。
 
 其它需要在普通主机确认的既有环境项（与本片无关）：native Sandbox Runner 相关 5 例与 TUI 沙箱 npm 脚本 1 例。
 
