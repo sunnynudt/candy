@@ -2,7 +2,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { isSafeTaskId, type CandyModelId, type ProtocolMessage } from "@candy/protocol";
+import {
+  isSafeTaskId,
+  validateGoalSpec,
+  type CandyModelId,
+  type GoalSpec,
+  type ProtocolMessage,
+} from "@candy/protocol";
 import {
   createDefaultAppServerController,
   type AppServerController,
@@ -146,13 +152,17 @@ export class LocalWebUiServer {
         return;
       }
 
-      const taskMatch = /^\/api\/tasks\/([^/]+)(?:\/(changes|stop))?$/u.exec(requestUrl.pathname);
+      const taskMatch =
+        /^\/api\/tasks\/([^/]+)(?:\/(changes|stop|goal))?(?:\/(pause|resume|clear))?$/u.exec(
+          requestUrl.pathname,
+        );
       if (taskMatch === null || !isSafeTaskId(decodeURIComponent(taskMatch[1] ?? ""))) {
         this.sendJson(response, 404, { error: "not_found" });
         return;
       }
       const taskId = decodeURIComponent(taskMatch[1]!);
       const action = taskMatch[2];
+      const goalAction = taskMatch[3];
       if (request.method === "GET" && (action === undefined || action === "changes")) {
         const view = await this.#controller.inspectTask(taskId);
         if (view === undefined) {
@@ -177,6 +187,44 @@ export class LocalWebUiServer {
         this.sendJson(response, 200, view === undefined ? {} : taskView(view));
         return;
       }
+      if (request.method === "POST" && action === "goal") {
+        const goalCommand =
+          goalAction === "pause"
+            ? "goal.pause"
+            : goalAction === "resume"
+              ? "goal.resume"
+              : goalAction === "clear"
+                ? "goal.clear"
+                : undefined;
+        if (goalCommand === undefined) {
+          this.sendJson(response, 400, { error: "invalid_goal_action" });
+          return;
+        }
+        const current = await this.#controller.inspectTask(taskId);
+        if (current === undefined) {
+          this.sendJson(response, 404, { error: "task_not_found" });
+          return;
+        }
+        try {
+          await this.#controller.dispatch({
+            v: 1,
+            kind: "command",
+            commandId: `web-goal-${taskId}-${Date.now()}`,
+            taskId,
+            expectedRevision: current.metadata.revision,
+            command: { type: goalCommand },
+          });
+        } catch (error) {
+          this.sendJson(response, 409, {
+            error: "goal_command_rejected",
+            message: error instanceof Error ? error.message : "Goal command rejected.",
+          });
+          return;
+        }
+        const updated = await this.#controller.inspectTask(taskId);
+        this.sendJson(response, 200, updated === undefined ? {} : taskView(updated));
+        return;
+      }
       this.sendJson(response, 405, { error: "method_not_allowed" });
     } catch {
       if (!response.headersSent) this.sendJson(response, 400, { error: "bad_request" });
@@ -199,6 +247,16 @@ export class LocalWebUiServer {
     }
     const taskId = `web-${Date.now().toString(36)}-${randomBytes(6).toString("hex")}`;
     const model = typeof body.model === "string" ? (body.model as CandyModelId) : undefined;
+    let goalSpec: GoalSpec | undefined;
+    if (body.goal !== undefined) {
+      try {
+        validateGoalSpec(body.goal, "goal");
+        goalSpec = body.goal;
+      } catch {
+        this.sendJson(response, 400, { error: "invalid_goal_request" });
+        return;
+      }
+    }
     const created = await this.#controller.dispatch({
       v: 1,
       kind: "command",
@@ -211,6 +269,7 @@ export class LocalWebUiServer {
         approvalProfile,
         workspacePath,
         ...(model ? { model } : {}),
+        ...(goalSpec === undefined ? {} : { goal: goalSpec }),
       },
     });
     const snapshot = findSnapshot(created);
@@ -283,6 +342,20 @@ function taskSummary(task: ReturnType<AppServerController["listTasks"]>[number])
     owner: task.ownerId === undefined ? "available" : "active",
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
+    goal:
+      task.goal === undefined
+        ? null
+        : {
+            status: task.goal.status,
+            objective: task.goal.objective,
+            completionCriterion: task.goal.completionCriterion ?? null,
+            turnsUsed: task.goal.turnsUsed,
+            turnBudget: task.goal.turnBudget,
+            wallClockMs: task.goal.wallClockMs,
+            wallClockBudgetMs: task.goal.wallClockBudgetMs,
+            consecutiveNoProgress: task.goal.consecutiveNoProgress,
+            terminalReason: task.goal.terminalReason ?? null,
+          },
   };
 }
 
@@ -325,14 +398,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const INDEX_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Candy WebUI</title><style>
 :root{font-family:ui-sans-serif,system-ui,sans-serif;color:#202124;background:#f7f7f5}body{margin:0}main{display:grid;grid-template-columns:280px 1fr;min-height:100vh}aside{border-right:1px solid #ddd;padding:18px;background:#fff}section{padding:22px;max-width:1000px}button{border:1px solid #999;border-radius:6px;background:#fff;padding:7px 10px;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}ul{padding:0;list-style:none}li{margin:6px 0}li button{width:100%;text-align:left}.selected{background:#e9eefc}pre{white-space:pre-wrap;overflow:auto;background:#fff;border:1px solid #ddd;padding:12px;border-radius:6px}.muted{color:#666}.danger{color:#9b1c1c}.meta{display:flex;gap:10px;flex-wrap:wrap}.meta span{background:#e8e8e5;padding:4px 7px;border-radius:4px;font-size:12px}
-</style></head><body><main><aside><h1>Candy</h1><p class="muted">Local WebUI</p><button id="refresh">Refresh</button><ul id="tasks"></ul></aside><section><div id="empty" class="muted">Select a task to inspect its conversation and changes.</div><article id="detail" hidden><h2 id="title"></h2><div id="meta" class="meta"></div><p><button id="stop" class="danger">Stop owned task</button> <span id="status" class="muted"></span></p><h3>Conversation</h3><pre id="conversation"></pre><h3>Changed files and diff</h3><pre id="changes"></pre></article></section></main><script src="/app.js" defer></script></body></html>`;
+</style></head><body><main><aside><h1>Candy</h1><p class="muted">Local WebUI</p><button id="refresh">Refresh</button><ul id="tasks"></ul></aside><section><div id="empty" class="muted">Select a task to inspect its conversation and changes.</div><article id="detail" hidden><h2 id="title"></h2><div id="meta" class="meta"></div><p><button id="stop" class="danger">Stop owned task</button> <span id="status" class="muted"></span></p><div id="goalPanel" hidden><h3>Goal</h3><div id="goal"></div><p><button id="goalPause">Pause goal</button> <button id="goalResume">Resume goal</button> <button id="goalClear" class="danger">Clear goal</button> <span id="goalStatus" class="muted"></span></p></div><h3>Conversation</h3><pre id="conversation"></pre><h3>Changed files and diff</h3><pre id="changes"></pre></article></section></main><script src="/app.js" defer></script></body></html>`;
 
-const APP_JS = `const tasks=document.querySelector('#tasks');const refresh=document.querySelector('#refresh');const empty=document.querySelector('#empty');const detail=document.querySelector('#detail');const title=document.querySelector('#title');const meta=document.querySelector('#meta');const conversation=document.querySelector('#conversation');const changes=document.querySelector('#changes');const stop=document.querySelector('#stop');const status=document.querySelector('#status');let selected='';
+const APP_JS = `const tasks=document.querySelector('#tasks');const refresh=document.querySelector('#refresh');const empty=document.querySelector('#empty');const detail=document.querySelector('#detail');const title=document.querySelector('#title');const meta=document.querySelector('#meta');const conversation=document.querySelector('#conversation');const changes=document.querySelector('#changes');const stop=document.querySelector('#stop');const status=document.querySelector('#status');const goalPanel=document.querySelector('#goalPanel');const goal=document.querySelector('#goal');const goalPause=document.querySelector('#goalPause');const goalResume=document.querySelector('#goalResume');const goalClear=document.querySelector('#goalClear');const goalStatus=document.querySelector('#goalStatus');let selected='';
 async function api(path,options){const response=await fetch(path,options);const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'request failed');return data}
 function text(value){return document.createTextNode(String(value??''))}
 function renderTasks(items){tasks.replaceChildren();for(const task of items){const li=document.createElement('li');const button=document.createElement('button');button.textContent=task.title+' · '+task.state;button.className=task.taskId===selected?'selected':'';button.onclick=()=>load(task.taskId);li.append(button);tasks.append(li)}}
-async function load(id){selected=id;try{const view=await api('/api/tasks/'+encodeURIComponent(id));empty.hidden=true;detail.hidden=false;title.textContent=view.title;meta.replaceChildren();for(const value of [view.state,view.model,view.approvalProfile,view.owner]){const span=document.createElement('span');span.append(text(value));meta.append(span)}stop.disabled=view.owner!=='active'||!['running','waiting_approval'].includes(view.state);status.textContent=stop.disabled?'Only the owning WebUI process can stop an active task.':'';conversation.textContent=view.transcript.map(entry=>entry.role+': '+entry.text).join('\\n\\n');const c=view.changes;changes.textContent='tracked: '+c.tracked.join(', ')+'\\nuntracked: '+c.untracked.join(', ')+'\\n\\n'+c.patchText;renderTasks((await api('/api/tasks')).tasks)}catch(error){status.textContent=error.message}}
-async function refreshTasks(){try{const data=await api('/api/tasks');renderTasks(data.tasks);if(selected)await load(selected)}catch(error){status.textContent=error.message}}stop.onclick=async()=>{if(!selected)return;try{await api('/api/tasks/'+encodeURIComponent(selected)+'/stop',{method:'POST'});await load(selected)}catch(error){status.textContent=error.message}};refresh.onclick=refreshTasks;refreshTasks();setInterval(refreshTasks,1500);`;
+async function load(id){selected=id;try{const view=await api('/api/tasks/'+encodeURIComponent(id));empty.hidden=true;detail.hidden=false;title.textContent=view.title;meta.replaceChildren();for(const value of [view.state,view.model,view.approvalProfile,view.owner]){const span=document.createElement('span');span.append(text(value));meta.append(span)}stop.disabled=view.owner!=='active'||!['running','waiting_approval'].includes(view.state);status.textContent=stop.disabled?'Only the owning WebUI process can stop an active task.':'';renderGoal(view.goal);renderGoal(view.goal);conversation.textContent=view.transcript.map(entry=>entry.role+': '+entry.text).join('\\n\\n');const c=view.changes;changes.textContent='tracked: '+c.tracked.join(', ')+'\\nuntracked: '+c.untracked.join(', ')+'\\n\\n'+c.patchText;renderTasks((await api('/api/tasks')).tasks)}catch(error){status.textContent=error.message}}
+async function refreshTasks(){try{const data=await api('/api/tasks');renderTasks(data.tasks);if(selected)await load(selected)}catch(error){status.textContent=error.message}}stop.onclick=async()=>{if(!selected)return;try{await api('/api/tasks/'+encodeURIComponent(selected)+'/stop',{method:'POST'});await load(selected)}catch(error){status.textContent=error.message}};function renderGoal(value){goalPanel.hidden=!value;if(!value){goal.replaceChildren();goalStatus.textContent='';return}goal.replaceChildren();for(const item of [value.status+' · '+value.turnsUsed+(value.turnBudget===null?'':'/'+value.turnBudget)+' turns',value.objective,value.completionCriterion?('criterion: '+value.completionCriterion):'',value.terminalReason?('reason: '+value.terminalReason):'']){if(!item)continue;const line=document.createElement('div');line.append(text(item));goal.append(line)}goalPause.disabled=value.status!=='active';goalResume.disabled=value.status!=='paused'&&value.status!=='blocked';goalStatus.textContent=''}
+async function goalAction(action){if(!selected)return;try{await api('/api/tasks/'+encodeURIComponent(selected)+'/goal/'+action,{method:'POST'});await load(selected)}catch(error){goalStatus.textContent=error.message}}
+goalPause.onclick=()=>goalAction('pause');goalResume.onclick=()=>goalAction('resume');goalClear.onclick=()=>goalAction('clear');refresh.onclick=refreshTasks;refreshTasks();setInterval(refreshTasks,1500);`;
 
 export async function runWebUi(): Promise<void> {
   const controller = createDefaultAppServerController({ recoverActiveTasks: false });

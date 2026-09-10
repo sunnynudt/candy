@@ -68,10 +68,37 @@ export interface TaskSnapshot {
   readonly trustedShell?: boolean;
   readonly shellApproval?: ShellApprovalRequest;
   readonly progress?: TaskProgress;
+  /** Persisted Goal Task state; absent while the task carries no goal. */
+  readonly goal?: GoalSnapshot;
   readonly transcript?: readonly {
     readonly role: "user" | "assistant" | "tool";
     readonly text: string;
   }[];
+}
+
+/** Bounded goal text shared by the goal commands and the task snapshot. */
+export const MAX_PROTOCOL_GOAL_TEXT_CHARS = 4_096;
+
+/** Model-facing view of one task's persisted goal. */
+export interface GoalSnapshot {
+  readonly status:
+    "active" | "paused" | "blocked" | "budget_limited" | "usage_limited" | "complete";
+  readonly objective: string;
+  readonly completionCriterion?: string;
+  readonly turnsUsed: number;
+  readonly turnBudget: number | null;
+  readonly wallClockMs: number;
+  readonly wallClockBudgetMs: number | null;
+  readonly consecutiveNoProgress: number;
+  readonly terminalReason?: string;
+}
+
+/** Goal fields accepted when a client creates or replaces a goal. */
+export interface GoalSpec {
+  readonly objective: string;
+  readonly completionCriterion?: string;
+  readonly turnBudget?: number;
+  readonly wallClockBudgetMs?: number;
 }
 
 export interface ShellApprovalRequest {
@@ -93,6 +120,8 @@ export interface CreateTaskCommand {
   readonly model?: CandyModelId;
   readonly attachmentIds?: readonly string[];
   readonly trustedShell?: boolean;
+  /** Present when the client starts a Goal Task. */
+  readonly goal?: GoalSpec;
 }
 
 export interface ValidatorSpec {
@@ -131,6 +160,26 @@ export interface ApprovalCommand {
   readonly decision: "approve" | "deny";
 }
 
+export interface GoalSetCommand {
+  readonly type: "goal.set";
+  readonly objective: string;
+  readonly completionCriterion?: string;
+  readonly turnBudget?: number;
+  readonly wallClockBudgetMs?: number;
+  /** Replace an existing unfinished goal; without it the task must have none. */
+  readonly replace?: boolean;
+}
+
+export interface GoalActionCommand {
+  readonly type: "goal.pause" | "goal.resume" | "goal.clear";
+}
+
+export interface GoalBudgetCommand {
+  readonly type: "goal.budget";
+  readonly turnBudget?: number;
+  readonly wallClockBudgetMs?: number;
+}
+
 export type RuntimeCommand =
   | SnapshotCommand
   | CreateTaskCommand
@@ -139,7 +188,10 @@ export type RuntimeCommand =
   | TaskReorderCommand
   | WorkspaceApplyCommand
   | WorkspaceDiscardCommand
-  | ApprovalCommand;
+  | ApprovalCommand
+  | GoalSetCommand
+  | GoalActionCommand
+  | GoalBudgetCommand;
 
 export interface CommandEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -158,7 +210,7 @@ export interface SnapshotEvent {
 export interface TaskStateChangedEvent {
   readonly type: "task.state_changed";
   readonly state: TaskState;
-  readonly reason?: "user" | "owner_lost" | "approval" | "validator" | "error";
+  readonly reason?: "user" | "owner_lost" | "approval" | "validator" | "goal" | "error";
 }
 
 export interface TaskCreatedEvent {
@@ -203,6 +255,12 @@ export interface WorkspaceChangesEvent {
   readonly patchTruncated: boolean;
 }
 
+/** Emitted whenever one task's persisted goal changes or ends a run. */
+export interface GoalChangedEvent {
+  readonly type: "goal.changed";
+  readonly goal?: GoalSnapshot;
+}
+
 export type RuntimeEvent =
   | SnapshotEvent
   | TaskStateChangedEvent
@@ -212,7 +270,8 @@ export type RuntimeEvent =
   | ToolStartedEvent
   | ToolCompletedEvent
   | TaskErrorEvent
-  | WorkspaceChangesEvent;
+  | WorkspaceChangesEvent
+  | GoalChangedEvent;
 
 export interface EventEnvelope {
   readonly v: typeof PROTOCOL_VERSION;
@@ -341,6 +400,7 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
     assertWorkspacePath(value.worktreePath, "snapshot.worktreePath");
   if (value.approvalId !== undefined) assertString(value.approvalId, "snapshot.approvalId");
   if (value.progress !== undefined) validateTaskProgress(value.progress);
+  if (value.goal !== undefined) validateGoalSnapshot(value.goal, "snapshot.goal");
   if (value.transcript !== undefined) {
     if (
       !Array.isArray(value.transcript) ||
@@ -359,6 +419,35 @@ function validateSnapshot(value: unknown): asserts value is TaskSnapshot {
       throw new ProtocolValidationError("invalid_message", "snapshot.transcript is invalid.");
     }
   }
+}
+
+const GOAL_STATUS_VALUES = [
+  "active",
+  "paused",
+  "blocked",
+  "budget_limited",
+  "usage_limited",
+  "complete",
+] as const;
+
+function validateGoalSnapshot(value: unknown, name: string): void {
+  if (!isRecord(value)) {
+    throw new ProtocolValidationError("invalid_message", `${name} must be an object.`);
+  }
+  if (!GOAL_STATUS_VALUES.includes(value.status as (typeof GOAL_STATUS_VALUES)[number])) {
+    throw new ProtocolValidationError("invalid_message", `${name}.status is unsupported.`);
+  }
+  assertGoalText(value.objective, `${name}.objective`);
+  if (value.completionCriterion !== undefined)
+    assertGoalText(value.completionCriterion, `${name}.completionCriterion`);
+  assertNonNegativeInteger(value.turnsUsed, `${name}.turnsUsed`);
+  if (value.turnBudget !== null) assertPositiveInteger(value.turnBudget, `${name}.turnBudget`);
+  assertNonNegativeInteger(value.wallClockMs, `${name}.wallClockMs`);
+  if (value.wallClockBudgetMs !== null)
+    assertPositiveInteger(value.wallClockBudgetMs, `${name}.wallClockBudgetMs`);
+  assertNonNegativeInteger(value.consecutiveNoProgress, `${name}.consecutiveNoProgress`);
+  if (value.terminalReason !== undefined)
+    assertGoalText(value.terminalReason, `${name}.terminalReason`);
 }
 
 function validateTaskProgress(value: unknown): asserts value is TaskProgress {
@@ -478,6 +567,7 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
       throw new ProtocolValidationError("invalid_message", "command.model is unsupported.");
     }
     if (value.attachmentIds !== undefined) assertAttachmentIds(value.attachmentIds);
+    if (value.goal !== undefined) validateGoalSpec(value.goal, "command.goal");
     return;
   }
   if (value.type === "workspace.apply") {
@@ -487,6 +577,28 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
     return;
   }
   if (value.type === "workspace.discard") return;
+  if (value.type === "goal.pause" || value.type === "goal.resume" || value.type === "goal.clear")
+    return;
+  if (value.type === "goal.set") {
+    assertGoalText(value.objective, "command.objective");
+    if (value.completionCriterion !== undefined)
+      assertGoalCriterion(value.completionCriterion, "command.completionCriterion");
+    assertGoalBudgets(value, "command");
+    if (value.replace !== undefined && typeof value.replace !== "boolean") {
+      throw new ProtocolValidationError("invalid_message", "command.replace must be a boolean.");
+    }
+    return;
+  }
+  if (value.type === "goal.budget") {
+    assertGoalBudgets(value, "command");
+    if (value.turnBudget === undefined && value.wallClockBudgetMs === undefined) {
+      throw new ProtocolValidationError(
+        "invalid_message",
+        "command must carry a turn or wall-clock budget.",
+      );
+    }
+    return;
+  }
   if (value.type === "approval.respond") {
     assertString(value.approvalId, "command.approvalId");
     if (value.decision !== "approve" && value.decision !== "deny") {
@@ -531,6 +643,10 @@ function validateEvent(value: unknown): asserts value is RuntimeEvent {
   }
   if (value.type === "snapshot") {
     validateSnapshot(value.snapshot);
+    return;
+  }
+  if (value.type === "goal.changed") {
+    if (value.goal !== undefined) validateGoalSnapshot(value.goal, "event.goal");
     return;
   }
   if (value.type === "task.state_changed") {
@@ -632,6 +748,51 @@ function assertBaseCommit(value: unknown, name: string): asserts value is string
   if (typeof value !== "string" || !/^[0-9a-f]{7,64}$/u.test(value)) {
     throw new ProtocolValidationError("invalid_message", `${name} must be a Git commit id.`);
   }
+}
+
+const GOAL_TEXT_LIMIT = 4_096;
+const GOAL_BUDGET_LIMIT = 30 * 24 * 60 * 60 * 1_000;
+
+function assertGoalText(value: unknown, name: string): asserts value is string {
+  assertString(value, name);
+  if (value.length === 0 || value.length > GOAL_TEXT_LIMIT || value.includes("\0")) {
+    throw new ProtocolValidationError("invalid_message", `${name} is outside the allowed bounds.`);
+  }
+}
+
+function assertGoalCriterion(value: unknown, name: string): void {
+  assertGoalText(value, name);
+}
+
+function assertGoalBudgets(value: Record<string, unknown>, name: string): void {
+  const turnBudget = value.turnBudget;
+  if (
+    turnBudget !== undefined &&
+    (typeof turnBudget !== "number" || !Number.isSafeInteger(turnBudget) || turnBudget < 1)
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name}.turnBudget is invalid.`);
+  }
+  const wallClockBudgetMs = value.wallClockBudgetMs;
+  if (
+    wallClockBudgetMs !== undefined &&
+    (typeof wallClockBudgetMs !== "number" ||
+      !Number.isSafeInteger(wallClockBudgetMs) ||
+      wallClockBudgetMs < 1 ||
+      wallClockBudgetMs > GOAL_BUDGET_LIMIT)
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name}.wallClockBudgetMs is invalid.`);
+  }
+}
+
+/** Public helper so clients and the app-server validate goal text the same way. */
+export function validateGoalSpec(value: unknown, name = "goal"): asserts value is GoalSpec {
+  if (!isRecord(value)) {
+    throw new ProtocolValidationError("invalid_message", `${name} must be an object.`);
+  }
+  assertGoalText(value.objective, `${name}.objective`);
+  if (value.completionCriterion !== undefined)
+    assertGoalCriterion(value.completionCriterion, `${name}.completionCriterion`);
+  assertGoalBudgets(value, name);
 }
 
 export function validateProtocolMessage(value: unknown): ProtocolMessage {

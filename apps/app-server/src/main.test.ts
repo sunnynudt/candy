@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -2141,5 +2141,332 @@ test("app-server reorders queued run requests before promoting the next task", a
     for (const resolve of gates.values()) resolve();
   } finally {
     controller.close();
+  }
+});
+
+/** Shared stub tracker: goal fixtures work in a non-Git workspace. */
+const GOAL_UNTRACKED_CHANGES = {
+  async captureBaseline() {
+    return undefined;
+  },
+  async inspect() {
+    return {
+      available: false,
+      tracked: [],
+      untracked: [],
+      patchText: "",
+      patchTruncated: false,
+    };
+  },
+};
+
+type GoalTurnInput = AgentTurnInput & {
+  readonly goalTools?: readonly { readonly name: string; readonly execute?: unknown }[];
+};
+
+async function callGoalTool(
+  tools: GoalTurnInput["goalTools"],
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+): Promise<string> {
+  const tool = tools?.find((candidate) => candidate.name === name);
+  assert.ok(tool, `${name} must be registered for a goal turn`);
+  const execute = tool.execute as unknown as (
+    id: string,
+    input: Readonly<Record<string, unknown>>,
+  ) => Promise<{ readonly content: readonly { readonly text: string }[] }>;
+  const result = await execute(`call-${name}`, args);
+  return result.content[0]?.text ?? "";
+}
+
+async function goalFixtureWorkspace(root: string): Promise<string> {
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  return workspace;
+}
+
+test("app-server creates a Goal Task and completes it through Candy's goal tool", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-complete-"));
+  const workspace = await goalFixtureWorkspace(root);
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const prompts: string[] = [];
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    databasePath,
+    changeTracker: GOAL_UNTRACKED_CHANGES,
+    engine: {
+      async *runTurn(input: GoalTurnInput) {
+        prompts.push(input.prompt);
+        assert.ok(input.goalTools, "goal turns register Candy's goal tool set");
+        if (prompts.length >= 2) {
+          await callGoalTool(input.goalTools, "candy_goal_update", {
+            signal: "complete",
+            reason: "fixture audit passed",
+          });
+        }
+        yield { type: "turn.started" as const, taskId: input.taskId, at: Date.now() };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  try {
+    const created = await controller.dispatch(
+      command("goal-1", "create-goal", 0, {
+        type: "task.create",
+        prompt: "Make the fixture pass",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        goal: {
+          objective: "Make the fixture pass",
+          completionCriterion: "npm test exits zero",
+          turnBudget: 4,
+        },
+      }),
+      (message) => background.push(message),
+    );
+    assert.ok(eventTypes(created).includes("goal.changed"));
+    const createdSnapshot = created.findLast(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    );
+    assert.equal(createdSnapshot?.event.snapshot.goal?.status, "active");
+    assert.equal(createdSnapshot?.event.snapshot.goal?.objective, "Make the fixture pass");
+    assert.equal(createdSnapshot?.event.snapshot.goal?.turnBudget, 4);
+
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.get("goal-1")?.taskMode, "goal");
+    store.close();
+
+    await controller.dispatch(
+      command("goal-1", "run-goal", createdSnapshot?.revision ?? 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const completed = await waitForSnapshotState(background, "goal-1", "completed");
+    assert.equal(completed.event.snapshot.goal?.status, "complete");
+    assert.equal(completed.event.snapshot.goal?.terminalReason, "fixture audit passed");
+    assert.equal(completed.event.snapshot.goal?.turnsUsed, 2);
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0] ?? "", /\[GOAL\]/u);
+    assert.match(prompts[1] ?? "", /Candy Goal continuation/u);
+    assert.match(prompts[1] ?? "", /BEGIN CANDY GOAL OBJECTIVE/u);
+    const verify = new SQLiteTaskStore(databasePath);
+    assert.equal(verify.getGoalRun("goal-1")?.stopReason, "complete");
+    assert.equal(verify.getGoalRun("goal-1")?.rounds, 1);
+    verify.close();
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server stops a Goal Task at its budget and never auto-completes it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-budget-"));
+  const workspace = await goalFixtureWorkspace(root);
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const prompts: string[] = [];
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    databasePath,
+    changeTracker: GOAL_UNTRACKED_CHANGES,
+    engine: {
+      async *runTurn(input: GoalTurnInput) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started" as const, taskId: input.taskId, at: Date.now() };
+        yield { type: "tool.started" as const, taskId: input.taskId, tool: "candy_edit" };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  try {
+    const created = await controller.dispatch(
+      command("goal-budget", "create-budget", 0, {
+        type: "task.create",
+        prompt: "Fix the failing suite",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        goal: { objective: "Fix the failing suite", turnBudget: 1 },
+      }),
+      (message) => background.push(message),
+    );
+    const revision = created.findLast(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    )?.revision;
+    await controller.dispatch(
+      command("goal-budget", "run-budget", revision ?? 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const paused = await waitForSnapshotState(background, "goal-budget", "paused");
+    assert.equal(paused.event.snapshot.goal?.status, "budget_limited");
+    // The starting goal turn plus the single wrap-up turn.
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1] ?? "", /Final wrap-up turn/u);
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.getGoalRun("goal-budget")?.stopReason, "budget_limited");
+    store.close();
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server blocks a goal after repeated identical claims and pauses the task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-blocked-"));
+  const workspace = await goalFixtureWorkspace(root);
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const toolTexts: string[] = [];
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    databasePath,
+    changeTracker: GOAL_UNTRACKED_CHANGES,
+    engine: {
+      async *runTurn(input: GoalTurnInput) {
+        toolTexts.push(
+          await callGoalTool(input.goalTools, "candy_goal_update", {
+            signal: "blocked",
+            reason: "the proxy rejects npm install",
+          }),
+        );
+        yield { type: "turn.started" as const, taskId: input.taskId, at: Date.now() };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  try {
+    const created = await controller.dispatch(
+      command("goal-blocked", "create-blocked", 0, {
+        type: "task.create",
+        prompt: "Make the proxy install work",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        goal: { objective: "Make the proxy install work", turnBudget: 6 },
+      }),
+      (message) => background.push(message),
+    );
+    const revision = created.findLast(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    )?.revision;
+    await controller.dispatch(
+      command("goal-blocked", "run-blocked", revision ?? 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const paused = await waitForSnapshotState(background, "goal-blocked", "paused");
+    assert.equal(paused.event.snapshot.goal?.status, "blocked");
+    assert.equal(paused.event.snapshot.goal?.terminalReason, "the proxy rejects npm install");
+    assert.equal(paused.event.snapshot.goal?.turnsUsed, 3);
+    assert.equal(toolTexts.length, 3);
+    assert.match(toolTexts[0] ?? "", /1 of 3 consecutive goal turns/u);
+    assert.match(toolTexts[2] ?? "", /marks the goal blocked when this turn settles/u);
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.getGoalRun("goal-blocked")?.stopReason, "blocked");
+    store.close();
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("app-server goal commands pause, resume, budget, replace, and clear a goal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-commands-"));
+  const workspace = await goalFixtureWorkspace(root);
+  const controller = new AppServerController({
+    databasePath: path.join(root, "state", "tasks.sqlite"),
+    changeTracker: GOAL_UNTRACKED_CHANGES,
+  });
+  try {
+    const created = await controller.dispatch(
+      command("goal-cmd", "create-cmd", 0, {
+        type: "task.create",
+        prompt: "Ship the bounded objective",
+        approvalProfile: "read-only",
+        workspacePath: workspace,
+        goal: { objective: "Ship the bounded objective", turnBudget: 2 },
+      }),
+    );
+    let revision =
+      created.findLast(
+        (message): message is SnapshotEnvelope =>
+          message.kind === "event" && message.event.type === "snapshot",
+      )?.revision ?? 0;
+    const snapshotGoal = (messages: readonly ProtocolMessage[]): SnapshotEnvelope | undefined =>
+      messages.findLast(
+        (message): message is SnapshotEnvelope =>
+          message.kind === "event" && message.event.type === "snapshot",
+      );
+
+    // A second unfinished goal needs an explicit replace.
+    await assert.rejects(
+      controller.dispatch(
+        command("goal-cmd", "set-without-replace", revision, {
+          type: "goal.set",
+          objective: "Second objective",
+        }),
+      ),
+      /replace=true/u,
+    );
+    const replaced = await controller.dispatch(
+      command("goal-cmd", "set-replace", revision, {
+        type: "goal.set",
+        objective: "Second objective",
+        turnBudget: 8,
+        replace: true,
+      }),
+    );
+    assert.ok(eventTypes(replaced).includes("goal.changed"));
+    const replacedSnapshot = snapshotGoal(replaced);
+    assert.equal(replacedSnapshot?.event.snapshot.goal?.objective, "Second objective");
+    assert.equal(replacedSnapshot?.event.snapshot.goal?.turnBudget, 8);
+    revision = replacedSnapshot?.revision ?? revision;
+
+    const paused = await controller.dispatch(
+      command("goal-cmd", "pause", revision, { type: "goal.pause" }),
+    );
+    assert.equal(snapshotGoal(paused)?.event.snapshot.goal?.status, "paused");
+    revision = snapshotGoal(paused)?.revision ?? revision;
+    const resumed = await controller.dispatch(
+      command("goal-cmd", "resume", revision, { type: "goal.resume" }),
+    );
+    assert.equal(snapshotGoal(resumed)?.event.snapshot.goal?.status, "active");
+    revision = snapshotGoal(resumed)?.revision ?? revision;
+    const budgeted = await controller.dispatch(
+      command("goal-cmd", "budget", revision, { type: "goal.budget", turnBudget: 3 }),
+    );
+    assert.equal(snapshotGoal(budgeted)?.event.snapshot.goal?.turnBudget, 3);
+    revision = snapshotGoal(budgeted)?.revision ?? revision;
+    const cleared = await controller.dispatch(
+      command("goal-cmd", "clear", revision, { type: "goal.clear" }),
+    );
+    assert.equal(snapshotGoal(cleared)?.event.snapshot.goal, undefined);
+    assert.ok(eventTypes(cleared).includes("goal.changed"));
+
+    // Budgets and goal text stay bounded and credential-free at the protocol edge.
+    await assert.rejects(
+      controller.dispatch(
+        command("goal-cmd", "bad-budget", snapshotGoal(cleared)?.revision ?? 0, {
+          type: "goal.budget",
+          turnBudget: 0,
+        }),
+      ),
+    );
+    await assert.rejects(
+      controller.dispatch(
+        command("goal-cmd", "too-long", snapshotGoal(cleared)?.revision ?? 0, {
+          type: "goal.set",
+          objective: "x".repeat(5_000),
+        }),
+      ),
+    );
+    await assert.rejects(
+      controller.dispatch(
+        command("goal-cmd", "no-goal", snapshotGoal(cleared)?.revision ?? 0, {
+          type: "goal.pause",
+        }),
+      ),
+      /no goal/u,
+    );
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
   }
 });

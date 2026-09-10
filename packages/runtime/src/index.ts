@@ -528,6 +528,7 @@ export {
   MIN_GOAL_CONTINUATION_CHARS,
   boundGoalText,
   buildGoalContinuationPrompt,
+  buildGoalStartPrompt,
   buildGoalWrapUpPrompt,
   fenceGoalData,
 } from "./goal-message.js";

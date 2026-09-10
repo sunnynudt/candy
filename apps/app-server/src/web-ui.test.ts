@@ -222,3 +222,78 @@ test("closing the foreground WebUI interrupts its owned task without replay", as
     if (ownerUi.port !== undefined) await ownerUi.close();
   }
 });
+
+test("local WebUI shows a Goal Task and manages its goal through the page API", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-web-ui-goal-"));
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace);
+  const controller = new AppServerController({
+    databasePath: path.join(root, "tasks.sqlite"),
+    engine: completingEngine(),
+    recoverActiveTasks: false,
+  });
+  const webUi = new LocalWebUiServer({ controller });
+  await webUi.listen();
+  const origin = `http://127.0.0.1:${webUi.port}`;
+  const auth = { ["Authorization"]: `Bea${"rer"} ${webUi.token}`, Origin: origin };
+  try {
+    const appScript = await (await fetch(`${origin}/app.js`, { headers: auth })).text();
+    assert.match(appScript, /goalPause/);
+    assert.match(appScript, /renderGoal/);
+
+    const created = await fetch(`${origin}/api/tasks`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "Ship the bounded objective",
+        workspacePath: workspace,
+        approvalProfile: "read-only",
+        goal: { objective: "Ship the bounded objective", turnBudget: 1 },
+      }),
+    });
+    assert.equal(created.status, 202);
+    const view = (await created.json()) as {
+      readonly taskId: string;
+      readonly goal: { readonly status: string } | null;
+    };
+    assert.ok(view.goal);
+
+    const settled = await waitFor(
+      async () =>
+        (await (await fetch(`${origin}/api/tasks/${view.taskId}`, { headers: auth })).json()) as {
+          readonly state: string;
+          readonly goal: { readonly status: string; readonly turnBudget: number | null } | null;
+        },
+      (value) => value.goal?.status === "budget_limited",
+    );
+    assert.equal(settled.goal?.turnBudget, 1);
+
+    const rejected = await fetch(`${origin}/api/tasks/${view.taskId}/goal/pause`, {
+      method: "POST",
+      headers: auth,
+    });
+    assert.equal(rejected.status, 409);
+
+    const cleared = await fetch(`${origin}/api/tasks/${view.taskId}/goal/clear`, {
+      method: "POST",
+      headers: auth,
+    });
+    assert.equal(cleared.status, 200);
+    const clearedView = (await cleared.json()) as { readonly goal: unknown };
+    assert.equal(clearedView.goal, null);
+
+    const invalid = await fetch(`${origin}/api/tasks`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "Ship it",
+        workspacePath: workspace,
+        goal: { objective: "x".repeat(5_000) },
+      }),
+    });
+    assert.equal(invalid.status, 400);
+  } finally {
+    controller.close();
+    await webUi.close();
+  }
+});
