@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./goal-tools": {
+      "types": "./dist/goal-tools.d.ts",
+      "import": "./dist/goal-tools.js"
     }
   },
   "dependencies": {

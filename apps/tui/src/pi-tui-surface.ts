@@ -130,6 +130,8 @@ interface CandyChromeOptions {
   readonly taskTitle: (() => string | undefined) | undefined;
   readonly taskPhase: (() => string | undefined) | undefined;
   readonly recoveryTaskCount: (() => number) | undefined;
+  /** Compact Goal Task badge (status and turn usage) for the current task. */
+  readonly goalBadge: (() => string | undefined) | undefined;
 }
 
 /** Quiet, fixed chrome that keeps the transcript focused on the current turn. */
@@ -153,6 +155,7 @@ class CandyChrome implements Component {
     const phase = this.#options.taskPhase?.();
     const recoveryTaskCount = this.#options.recoveryTaskCount?.() ?? 0;
     const status = phaseStatus(phase);
+    const goalBadge = this.#options.goalBadge?.();
     const recovery =
       recoveryTaskCount > 0
         ? ` ${dim("·")} ${tint(`↻ ${recoveryTaskCount} 个可恢复任务 · /tasks`, ANSI_WARNING)}`
@@ -180,7 +183,7 @@ class CandyChrome implements Component {
           : fullAccessAvailable
             ? ` ${localActionLink(fullAccessConfirmationPending ? CONFIRM_FULL_ACCESS_URL : OPEN_FULL_ACCESS_URL, tint(fullAccessConfirmationPending ? "⚠ 确认开启 Full access" : "⚠ 开启 Full access", ANSI_WARNING))} ${dim("·")} ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`
             : ` ${tint(workspace, ANSI_TEXT)} ${dim("·")} ${tint(profile, ANSI_TEXT)} ${dim("·")} ${tint(worktree, ANSI_TEXT)} ${dim("·")} ${tint(shell, ANSI_TEXT)}`,
-        `${tint(model, ANSI_SOFT)}${recovery}`,
+        `${goalBadge === undefined ? "" : `${tint(goalBadge, ANSI_ACCENT)} ${dim("·")} `}${tint(model, ANSI_SOFT)}${recovery}`,
         safeWidth,
       ),
     ];
@@ -357,6 +360,8 @@ export interface CandyTuiSurfaceOptions {
   readonly taskId?: () => string | undefined;
   readonly taskTitle?: () => string | undefined;
   readonly taskPhase?: () => string | undefined;
+  /** Compact Goal Task badge (for example "goal active · 2/8 turns"). */
+  readonly goalBadge?: () => string | undefined;
   /** Whether the final assistant reply is available to copy. */
   readonly assistantReplyAvailable?: () => boolean;
   readonly recoveryTaskCount?: () => number;
@@ -455,6 +460,7 @@ export class CandyTuiSurface {
       taskTitle: options.taskTitle,
       taskPhase: options.taskPhase,
       recoveryTaskCount: options.recoveryTaskCount,
+      goalBadge: options.goalBadge,
     });
     const transcriptViewport = new ScrollView(this.#transcript, {
       follow: "end",
@@ -571,6 +577,11 @@ export class CandyTuiSurface {
 
   /** Re-render the fixed queued-turn-message area after its source list changes. */
   public refreshQueuedTurnMessages(): void {
+    this.#tui.requestRender();
+  }
+
+  /** Re-render the fixed chrome after task or goal state changed. */
+  public refreshChrome(): void {
     this.#tui.requestRender();
   }
 

@@ -1,0 +1,390 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { resolveAppPaths, SQLiteTaskStore, type TaskMetadata } from "@candy/platform";
+import { GoalToolHost } from "@candy/runtime";
+import type { CandyGoalToolBridge } from "@candy/pi-adapter/goal-tools";
+import { InteractiveTui, type TuiAgentEngine } from "./main.js";
+import { FakeTerminal } from "./pi-tui-surface.js";
+
+/** TUI with the explicit test workspace path used by the goal fixtures. */
+class TestInteractiveTui extends InteractiveTui {
+  public constructor(options: ConstructorParameters<typeof InteractiveTui>[0] = {}) {
+    super(options);
+  }
+}
+
+const sleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+
+async function waitForOutput(
+  terminal: FakeTerminal,
+  pattern: RegExp,
+  maxAttempts: number = 800,
+): Promise<string> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const output = terminal.writes.join("");
+    if (pattern.test(output)) return output;
+    await sleep(1);
+  }
+  return terminal.writes.join("");
+}
+
+function taskStore(appDataRoot: string): SQLiteTaskStore {
+  return new SQLiteTaskStore(path.join(resolveAppPaths(appDataRoot).state, "tasks.sqlite"));
+}
+
+/** Poll the durable task store instead of scraping the rendered transcript. */
+async function waitForTask(
+  appDataRoot: string,
+  predicate: (task: TaskMetadata) => boolean,
+  maxAttempts: number = 800,
+): Promise<TaskMetadata | undefined> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const store = taskStore(appDataRoot);
+    try {
+      const match = store.list().find(predicate);
+      if (match !== undefined) return match;
+    } finally {
+      store.close();
+    }
+    await sleep(5);
+  }
+  return undefined;
+}
+
+async function goalFixture(root: string): Promise<{ appDataRoot: string; workspace: string }> {
+  const appDataRoot = path.join(root, "app-data");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  return { appDataRoot, workspace };
+}
+
+/** The Pi bridge stays structural: Candy's goal tool host satisfies it as-is. */
+test("Candy's goal tool host satisfies the Pi goal tool bridge", () => {
+  const store = new SQLiteTaskStore(":memory:");
+  store.create("task-bridge", "auto");
+  const host = new GoalToolHost({ taskId: "task-bridge", store });
+  const bridge: CandyGoalToolBridge = host;
+  assert.equal(bridge.definitions.length, 4);
+  assert.ok(bridge.definitions.some((definition) => definition.name === "candy_goal_update"));
+  store.close();
+});
+
+test("/goal creates a Goal Task, continues it automatically, and completes it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-complete-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        if (prompts.length >= 2) {
+          // Stands in for the model calling candy_goal_update complete.
+          const store = taskStore(appDataRoot);
+          const task = store.get(input.taskId);
+          assert.ok(task?.goal);
+          store.updateGoalStatus(input.taskId, task.revision, "complete", {
+            expectedGoalId: task.goal.goalId,
+            reason: "fixture audit passed",
+          });
+          store.close();
+        }
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "assistant.delta", taskId: input.taskId, text: "slice done" };
+        yield { type: "tool.started", taskId: input.taskId, tool: "candy_read" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Make the fixture pass --criterion npm test exits zero --turns 4");
+    terminal.emitInput("\r");
+    const completed = await waitForTask(appDataRoot, (task) => task.state === "completed");
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(completed?.goal);
+    assert.equal(completed.taskMode, "goal");
+    assert.equal(completed.goal.status, "complete");
+    assert.equal(completed.goal.terminalReason, "fixture audit passed");
+    assert.equal(completed.goal.objective, "Make the fixture pass");
+    assert.equal(completed.goal.completionCriterion, "npm test exits zero");
+    assert.equal(completed.goal.turnBudget, 4);
+    assert.equal(completed.goal.turnsUsed, 2);
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0] ?? "", /\[GOAL\]/u);
+    assert.match(prompts[0] ?? "", /Make the fixture pass/u);
+    assert.match(prompts[1] ?? "", /Candy Goal continuation/u);
+    assert.match(prompts[1] ?? "", /BEGIN CANDY GOAL OBJECTIVE/u);
+    assert.match(prompts[1] ?? "", /- Goal turns: 1 of 4 used, 3 left\./u);
+    const store = taskStore(appDataRoot);
+    const run = store.getGoalRun(completed.taskId);
+    assert.equal(run?.stopReason, "complete");
+    // `rounds` counts policy-driven continuation turns; the starting user turn
+    // is visible through `goal.turnsUsed` (2) and the accounting above.
+    assert.equal(run?.rounds, 1);
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an exhausted goal budget wraps up once and leaves the task paused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-budget-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "tool.started", taskId: input.taskId, tool: "candy_edit" };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Fix the failing suite --turns 1");
+    terminal.emitInput("\r");
+    const paused = await waitForTask(
+      appDataRoot,
+      (task) => task.goal?.status === "budget_limited" && task.state === "paused",
+    );
+    const output = await waitForOutput(terminal, /goal budget exhausted/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(paused?.goal);
+    // One counted goal turn plus the single wrap-up turn.
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1] ?? "", /Final wrap-up turn/u);
+    assert.match(prompts[1] ?? "", /Do not signal complete/u);
+    assert.match(output, /paused: goal budget exhausted/u);
+    const store = taskStore(appDataRoot);
+    assert.equal(store.getGoalRun(paused.taskId)?.stopReason, "budget_limited");
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/goal pause stops the continuation and shows the paused goal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-pause-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        yield { type: "turn.started", taskId: input.taskId };
+        await sleep(200);
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Keep the fixture green --turns 5");
+    terminal.emitInput("\r");
+    const running = await waitForTask(
+      appDataRoot,
+      (task) => task.goal !== undefined && task.state === "running",
+    );
+    assert.ok(running?.goal);
+    terminal.emitInput(":goal pause");
+    terminal.emitInput("\r");
+    const paused = await waitForTask(
+      appDataRoot,
+      (task) => task.goal?.status === "paused" && task.state === "paused",
+    );
+    terminal.emitInput(":goal");
+    terminal.emitInput("\r");
+    const summary = await waitForOutput(terminal, /state: paused/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(paused?.goal);
+    assert.match(summary, /objective: Keep the fixture green/u);
+    assert.match(summary, /turns: 0 of 5/u);
+    assert.match(summary, /recovery: \/goal resume/u);
+    const store = taskStore(appDataRoot);
+    assert.equal(store.getGoalRun(paused.taskId)?.stopReason, "paused");
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("queued user input wins the next goal turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-yield-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started", taskId: input.taskId };
+        await sleep(200);
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+      async followUp() {},
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Keep the fixture green --turns 5");
+    terminal.emitInput("\r");
+    const running = await waitForTask(
+      appDataRoot,
+      (task) => task.goal !== undefined && task.state === "running",
+    );
+    assert.ok(running?.goal);
+    terminal.emitInput("please check the logs first");
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /queued/u);
+    const paused = await waitForTask(appDataRoot, (task) => task.state === "paused");
+    const output = await waitForOutput(terminal, /yielded to your queued input/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(paused?.goal);
+    // Only the starting user turn ran; the goal yielded instead of continuing.
+    assert.equal(prompts.length, 1);
+    assert.equal(paused.goal.status, "active");
+    assert.match(output, /paused: goal continuation yielded/u);
+    const store = taskStore(appDataRoot);
+    assert.equal(store.getGoalRun(paused.taskId)?.stopReason, "user_stop");
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/goal replace resets the goal and /goal clear drops it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-replace-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  const prompts: string[] = [];
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        prompts.push(input.prompt);
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal First objective --turns 1");
+    terminal.emitInput("\r");
+    const first = await waitForTask(appDataRoot, (task) => task.goal?.status === "budget_limited");
+    assert.ok(first?.goal);
+    terminal.emitInput(":goal replace Second objective --turns 8");
+    terminal.emitInput("\r");
+    const replaced = await waitForTask(
+      appDataRoot,
+      (task) => task.goal?.objective === "Second objective",
+    );
+    assert.ok(replaced?.goal);
+    assert.equal(replaced.goal.status, "active");
+    assert.equal(replaced.goal.turnBudget, 8);
+    assert.equal(replaced.goal.turnsUsed, 0);
+    assert.equal(replaced.goal.goalId === first.goal.goalId, false);
+    terminal.emitInput(":goal clear");
+    terminal.emitInput("\r");
+    const cleared = await waitForTask(appDataRoot, (task) => task.goal === undefined);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(cleared);
+    assert.equal(cleared.taskMode, "goal");
+    // The replace started one continuation turn for the replacement goal.
+    assert.ok(prompts.length >= 2);
+    const store = taskStore(appDataRoot);
+    assert.equal(store.getGoal(cleared.taskId), undefined);
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/goal rejects unsafe goal text and reports usage without a task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-reject-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal");
+    terminal.emitInput("\r");
+    const empty = await waitForOutput(terminal, /no task selected/u);
+    assert.match(empty, /creates a Goal Task/u);
+    const oversizedObjective = "x".repeat(4_100);
+    terminal.emitInput(`:goal ${oversizedObjective}`);
+    terminal.emitInput("\r");
+    const oversized = await waitForOutput(terminal, /exceeds 4096 characters/u);
+    terminal.emitInput(":goal Fix it --turns 0");
+    terminal.emitInput("\r");
+    const badBudget = await waitForOutput(terminal, /usage: \/goal/u);
+    const credentialShaped = `${"sk"}-${"c".repeat(24)}`;
+    terminal.emitInput(`:goal Ship it with ${credentialShaped}`);
+    terminal.emitInput("\r");
+    await waitForOutput(terminal, /credential-shaped content is forbidden/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.match(oversized, /goal objective rejected/u);
+    assert.match(badBudget, /--turns/u);
+    const store = taskStore(appDataRoot);
+    assert.deepEqual(store.list(), []);
+    store.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

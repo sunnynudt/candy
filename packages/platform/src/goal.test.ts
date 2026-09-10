@@ -584,3 +584,56 @@ test("goal no-progress counter is CAS- and goal-id-guarded", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("a completed goal keeps its terminal reason across later usage and budget writes", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-goal-terminal-reason-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    const created = store.create("task-goal-terminal", "auto");
+    const set = store.setGoal("task-goal-terminal", created.revision, { objective: "Ship it." });
+    assert.ok(set.goal);
+    const completed = store.updateGoalStatus("task-goal-terminal", set.revision, "complete", {
+      expectedGoalId: set.goal.goalId,
+      reason: "audit passed",
+    });
+    assert.equal(completed.goal?.terminalReason, "audit passed");
+    // A late accounting or budget write must not erase an already recorded
+    // terminal reason; only an explicit non-terminal transition clears it.
+    const accounted = store.accountGoalUsage(
+      "task-goal-terminal",
+      completed.revision,
+      set.goal.goalId,
+      { turnDelta: 1, wallClockDeltaMs: 1_000 },
+    );
+    assert.equal(accounted.goal?.terminalReason, "audit passed");
+    const budgeted = store.updateGoalBudgets(
+      "task-goal-terminal",
+      accounted.revision,
+      { turnBudget: 9 },
+      { expectedGoalId: set.goal.goalId },
+    );
+    assert.equal(budgeted.goal?.terminalReason, "audit passed");
+    assert.equal(budgeted.goal?.status, "complete");
+
+    // An explicit resume back to `active` is the one path that clears it.
+    const createdSecond = store.create("task-goal-resume", "auto");
+    const secondSet = store.setGoal("task-goal-resume", createdSecond.revision, {
+      objective: "Ship it again.",
+    });
+    assert.ok(secondSet.goal);
+    const blocked = store.updateGoalStatus("task-goal-resume", secondSet.revision, "blocked", {
+      expectedGoalId: secondSet.goal.goalId,
+      reason: "same obstacle",
+    });
+    assert.equal(blocked.goal?.terminalReason, "same obstacle");
+    const resumed = store.updateGoalStatus("task-goal-resume", blocked.revision, "active", {
+      expectedGoalId: secondSet.goal.goalId,
+    });
+    assert.equal(resumed.goal?.status, "active");
+    assert.equal(resumed.goal?.terminalReason, undefined);
+    store.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

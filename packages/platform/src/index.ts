@@ -1169,7 +1169,7 @@ export class SQLiteTaskStore {
            goal_turn_budget = ?,
            goal_wall_clock_budget_ms = ?,
            goal_status = ?,
-           goal_terminal_reason = ?,
+           goal_terminal_reason = COALESCE(?, goal_terminal_reason),
            updated_at = ?
          WHERE task_id = ? AND revision = ? AND goal_id IS NOT NULL`,
       )
@@ -1224,7 +1224,7 @@ export class SQLiteTaskStore {
            goal_turns_used = ?,
            goal_wall_clock_ms = ?,
            goal_status = ?,
-           goal_terminal_reason = ?,
+           goal_terminal_reason = COALESCE(?, goal_terminal_reason),
            updated_at = ?
          WHERE task_id = ? AND revision = ? AND goal_id = ?`,
       )

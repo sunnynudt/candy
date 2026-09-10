@@ -429,6 +429,23 @@ export class GoalContinuationRunner {
         return this.#finish(state, "user_stop", false, progress, { yieldedTo: "no_goal" });
       if (goal.status !== "active") {
         const reason = statusSkipReason(goal.status);
+        // The starting user turn can consume the last allowed goal turn, so an
+        // exhausted budget still gets its single wrap-up turn before stopping.
+        if (goal.status === "budget_limited" && this.#wrapUpTurn && state.rounds === 0) {
+          const wrapUpUsage = this.#usage(goal, goal.turnsUsed + 1, goalBudgetState(goal));
+          try {
+            await this.#runTurn(
+              goal.turnsUsed + 1,
+              "wrap_up",
+              wrapUpUsage,
+              goal,
+              turnCallback,
+              signal,
+            );
+          } catch (error) {
+            return this.#finishFailure(state, error, signal, progress);
+          }
+        }
         return this.#finish(state, skipStopReason(reason), goal.status === "complete", progress, {
           yieldedTo: reason,
         });

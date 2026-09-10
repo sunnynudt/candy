@@ -104,6 +104,20 @@ function completeModels(
     .map((item: AutocompleteItem): AutocompleteItem => markCurrentModelChoice(item, currentModel));
 }
 
+/** Goal Task subcommands surfaced by `/goal <tab>`; a bare objective also works. */
+const GOAL_SUBCOMMAND_CHOICES: readonly AutocompleteItem[] = [
+  { value: "resume", label: "resume", description: "重新开启已暂停或已阻塞的目标并继续运行" },
+  { value: "pause", label: "pause", description: "暂停目标，停止自动续跑" },
+  { value: "clear", label: "clear", description: "清除当前任务的目标" },
+  { value: "budget", label: "budget", description: "查看或设置回合数与墙钟预算" },
+  { value: "replace", label: "replace", description: "替换当前任务的目标（需重新确认）" },
+];
+
+function completeGoalSubcommands(argumentPrefix: string): AutocompleteItem[] {
+  const prefix = argumentPrefix.trim().toLowerCase();
+  return GOAL_SUBCOMMAND_CHOICES.filter((item) => item.value.startsWith(prefix));
+}
+
 /**
  * The default completion for a bare `/model` preserves its documented query
  * behavior. A concrete model still requires an explicit selection.
@@ -159,6 +173,13 @@ export const CANDY_SLASH_COMMANDS: readonly CandySlashCommand[] = [
     name: "debug",
     argumentHint: "[prompt]",
     description: "Create an Auto Debug task: model turn + validator until pass, stall, or budget",
+  },
+  {
+    name: "goal",
+    argumentHint: "[objective] [--criterion <text>] [--turns <n>] [--minutes <n>]",
+    description:
+      "Show, create, or manage a Goal Task: Candy keeps continuing the task until the goal completes, blocks, or runs out of budget",
+    getArgumentCompletions: completeGoalSubcommands,
   },
   {
     name: "workspace",
@@ -415,7 +436,9 @@ export function createCandySlashCommandAutocompleteProvider(
         const commandName = trimmed.slice(1);
         const command = argumentCompletionCommands.get(commandName);
         if (command?.getArgumentCompletions) {
-          const items = completeModels("", modelChoices, currentModel());
+          // Each command owns its argument list; `/model` keeps the leading
+          // bare-query entry, other commands show only their own choices.
+          const items = await command.getArgumentCompletions("");
           if (Array.isArray(items) && items.length > 0) {
             // The full `/<cmd>` is the prefix so `applyCompletion` preserves the
             // command name and inserts a space before the chosen argument.
