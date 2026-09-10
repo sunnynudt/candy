@@ -2185,6 +2185,68 @@ async function goalFixtureWorkspace(root: string): Promise<string> {
   return workspace;
 }
 
+test("app-server stops a Goal Task on its token budget and reports usage", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-tokens-"));
+  const workspace = await goalFixtureWorkspace(root);
+  const databasePath = path.join(root, "state", "tasks.sqlite");
+  const background: ProtocolMessage[] = [];
+  const controller = new AppServerController({
+    databasePath,
+    changeTracker: GOAL_UNTRACKED_CHANGES,
+    engine: {
+      async *runTurn(input: GoalTurnInput) {
+        yield { type: "turn.started" as const, taskId: input.taskId, at: Date.now() };
+        // Billable tokens: (800 - 100) + 200 = 900 per turn.
+        yield {
+          type: "turn.usage" as const,
+          usage: { input: 800, output: 200, cacheRead: 100, cacheWrite: 0 },
+        };
+        yield { type: "tool.started" as const, taskId: input.taskId, tool: "candy_read" };
+        yield { type: "turn.completed" as const, taskId: input.taskId, at: Date.now() };
+      },
+    },
+  });
+  try {
+    const created = await controller.dispatch(
+      command("goal-tokens", "create-tokens", 0, {
+        type: "task.create",
+        prompt: "Bound the token spend",
+        approvalProfile: "auto",
+        workspacePath: workspace,
+        goal: { objective: "Bound the token spend", tokenBudget: 1_000 },
+      }),
+      (message) => background.push(message),
+    );
+    const revision = created.findLast(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    )?.revision;
+    const createdGoal = created.findLast(
+      (message): message is SnapshotEnvelope =>
+        message.kind === "event" && message.event.type === "snapshot",
+    )?.event.snapshot.goal;
+    assert.equal(createdGoal?.tokenBudget, 1_000);
+    assert.equal(createdGoal?.tokensUsed, 0);
+
+    await controller.dispatch(
+      command("goal-tokens", "run-tokens", revision ?? 0, { type: "task.run" }),
+      (message) => background.push(message),
+    );
+    const paused = await waitForSnapshotState(background, "goal-tokens", "paused");
+    assert.equal(paused.event.snapshot.goal?.status, "budget_limited");
+    assert.equal(paused.event.snapshot.goal?.terminalReason, "token budget exhausted");
+    // Starting turn (900) plus one continuation (900); the wrap-up turn is not
+    // accounted and the budget is checked after each turn.
+    assert.equal(paused.event.snapshot.goal?.tokensUsed, 1_800);
+    const store = new SQLiteTaskStore(databasePath);
+    assert.equal(store.getGoalRun("goal-tokens")?.stopReason, "budget_limited");
+    store.close();
+  } finally {
+    controller.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("app-server creates a Goal Task and completes it through Candy's goal tool", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-app-server-goal-complete-"));
   const workspace = await goalFixtureWorkspace(root);

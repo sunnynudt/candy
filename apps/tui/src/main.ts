@@ -79,6 +79,7 @@ import {
   UnavailableBrowserCapability,
   boundGoalText,
   buildGoalStartPrompt,
+  billableTokens,
   fenceGoalData,
   type CommandValidatorCommand,
   type GitWorktreePlan,
@@ -387,12 +388,13 @@ interface TuiGoalArguments {
   readonly objective: string;
   readonly completionCriterion?: string;
   readonly turnBudget?: number;
+  readonly tokenBudget?: number;
   readonly wallClockBudgetMs?: number;
 }
 
-const GOAL_FLAGS = ["--criterion", "--turns", "--minutes"] as const;
+const GOAL_FLAGS = ["--criterion", "--turns", "--minutes", "--tokens"] as const;
 /** Flags that take one bounded value; `--criterion` runs until one of these. */
-const GOAL_VALUE_FLAGS: readonly string[] = ["--turns", "--minutes"];
+const GOAL_VALUE_FLAGS: readonly string[] = ["--turns", "--minutes", "--tokens"];
 
 /**
  * Parse `/goal` arguments without accepting unknown flags: the objective is
@@ -402,13 +404,14 @@ const GOAL_VALUE_FLAGS: readonly string[] = ["--turns", "--minutes"];
  */
 function parseGoalArguments(value: string): TuiGoalArguments | string {
   const usage =
-    "usage: /goal [<objective> [--criterion <text>] [--turns <n>] [--minutes <n>]] | pause | resume [text] | clear | budget [--turns <n>] [--minutes <n>] | replace <objective> [options]";
+    "usage: /goal [<objective> [--criterion <text>] [--turns <n>] [--minutes <n>] [--tokens <n>]] | pause | resume [text] | clear | budget [--turns <n>] [--minutes <n>] [--tokens <n>] | replace <objective> [options]";
   const tokens = value.split(/\s+/u).filter((token) => token.length > 0);
   const firstFlag = tokens.findIndex((token) => (GOAL_FLAGS as readonly string[]).includes(token));
   const objectiveTokens = firstFlag < 0 ? tokens : tokens.slice(0, firstFlag);
   const flagTokens = firstFlag < 0 ? [] : tokens.slice(firstFlag);
   let completionCriterion: string | undefined;
   let turnBudget: number | undefined;
+  let tokenBudget: number | undefined;
   let wallClockBudgetMs: number | undefined;
   for (let index = 0; index < flagTokens.length; index += 1) {
     const flag = flagTokens[index];
@@ -432,6 +435,7 @@ function parseGoalArguments(value: string): TuiGoalArguments | string {
     if (!Number.isSafeInteger(parsed) || parsed < 1) return usage;
     if (flag === "--turns") turnBudget = parsed;
     else if (flag === "--minutes") wallClockBudgetMs = parsed * 60_000;
+    else if (flag === "--tokens") tokenBudget = parsed;
     else return usage;
     index += 1;
   }
@@ -439,6 +443,7 @@ function parseGoalArguments(value: string): TuiGoalArguments | string {
     objective: objectiveTokens.join(" "),
     ...(completionCriterion === undefined ? {} : { completionCriterion }),
     ...(turnBudget === undefined ? {} : { turnBudget }),
+    ...(tokenBudget === undefined ? {} : { tokenBudget }),
     ...(wallClockBudgetMs === undefined ? {} : { wallClockBudgetMs }),
   };
 }
@@ -1111,6 +1116,7 @@ export class InteractiveTui {
           ? {}
           : { completionCriterion: goal.completionCriterion }),
         ...(goal.turnBudget === undefined ? {} : { turnBudget: goal.turnBudget }),
+        ...(goal.tokenBudget === undefined ? {} : { tokenBudget: goal.tokenBudget }),
         ...(goal.wallClockBudgetMs === undefined
           ? {}
           : { wallClockBudgetMs: goal.wallClockBudgetMs }),
@@ -1340,6 +1346,7 @@ export class InteractiveTui {
           ? {}
           : { completionCriterion: parsed.completionCriterion }),
         ...(parsed.turnBudget === undefined ? {} : { turnBudget: parsed.turnBudget }),
+        ...(parsed.tokenBudget === undefined ? {} : { tokenBudget: parsed.tokenBudget }),
         ...(parsed.wallClockBudgetMs === undefined
           ? {}
           : { wallClockBudgetMs: parsed.wallClockBudgetMs }),
@@ -1474,9 +1481,11 @@ export class InteractiveTui {
     const parsed = parseGoalArguments(trimmed);
     if (
       typeof parsed === "string" ||
-      (parsed.turnBudget === undefined && parsed.wallClockBudgetMs === undefined)
+      (parsed.turnBudget === undefined &&
+        parsed.tokenBudget === undefined &&
+        parsed.wallClockBudgetMs === undefined)
     ) {
-      this.write("usage: /goal budget [--turns <n>] [--minutes <n>]\n");
+      this.write("usage: /goal budget [--turns <n>] [--minutes <n>] [--tokens <n>]\n");
       return;
     }
     try {
@@ -1485,6 +1494,7 @@ export class InteractiveTui {
         task.revision,
         {
           ...(parsed.turnBudget === undefined ? {} : { turnBudget: parsed.turnBudget }),
+          ...(parsed.tokenBudget === undefined ? {} : { tokenBudget: parsed.tokenBudget }),
           ...(parsed.wallClockBudgetMs === undefined
             ? {}
             : { wallClockBudgetMs: parsed.wallClockBudgetMs }),
@@ -1514,7 +1524,7 @@ export class InteractiveTui {
     const task = taskId === undefined ? undefined : this.#store.get(taskId);
     if (task === undefined) {
       this.write(
-        "no task selected; /goal <objective> [--criterion <text>] [--turns <n>] [--minutes <n>] creates a Goal Task\n",
+        "no task selected; /goal <objective> [--criterion <text>] [--turns <n>] [--minutes <n>] [--tokens <n>] creates a Goal Task\n",
       );
       return;
     }
@@ -1538,6 +1548,7 @@ export class InteractiveTui {
       `goal ${task.taskId}`,
       `state: ${goal.status}`,
       `turns: ${goal.turnsUsed}${goal.turnBudget === null ? " (no budget)" : ` of ${goal.turnBudget} (${remainingTurns ?? 0} left)`}`,
+      `tokens: ${goal.tokensUsed}${goal.tokenBudget === null ? " (no budget)" : ` of ${goal.tokenBudget} (${Math.max(0, goal.tokenBudget - goal.tokensUsed)} left)`}`,
       `wall clock: ${formatGoalDuration(goal.wallClockMs)}${
         goal.wallClockBudgetMs === null
           ? " (no budget)"
@@ -1624,7 +1635,7 @@ export class InteractiveTui {
       activeSecrets: readonly string[],
       turnPrompt: string,
       goalTools?: TuiGoalToolDefinitions,
-    ) => Promise<{ readonly toolActivations: number }>;
+    ) => Promise<{ readonly toolActivations: number; readonly tokensUsed: number }>;
     readonly abort: AbortController;
   }): Promise<void> {
     const { taskId, taskSnapshot, initialPrompt, runEngineTurn, abort } = options;
@@ -1645,10 +1656,12 @@ export class InteractiveTui {
     });
     const startedAt = Date.now();
     this.#taskPhases.set(taskId, "goal turn 1");
-    await this.withActiveSecrets((activeSecrets) =>
+    const initialOutcome = await this.withActiveSecrets((activeSecrets) =>
       runEngineTurn(activeSecrets, initialPrompt, goalToolsFor(activeSecrets)),
     );
-    runner.accountUserTurn(Math.max(0, Date.now() - startedAt));
+    runner.accountUserTurn(Math.max(0, Date.now() - startedAt), {
+      tokensUsed: initialOutcome.tokensUsed,
+    });
     const result = await runner.run(
       async (context) => {
         if (abort.signal.aborted) throw new Error("Goal continuation cancelled.");
@@ -1665,6 +1678,7 @@ export class InteractiveTui {
         const fingerprint = await this.goalWorkspaceFingerprint(refreshed ?? taskSnapshot);
         return {
           toolActivations: outcome.toolActivations,
+          tokensUsed: outcome.tokensUsed,
           ...(fingerprint === undefined ? {} : { workspaceFingerprint: fingerprint }),
         };
       },
@@ -2881,10 +2895,12 @@ export class InteractiveTui {
         activeSecrets: readonly string[],
         turnPrompt: string,
         goalTools?: TuiGoalToolDefinitions,
-      ): Promise<{ readonly toolActivations: number }> => {
+      ): Promise<{ readonly toolActivations: number; readonly tokensUsed: number }> => {
         this.#taskPhases.set(taskId, "turn running");
         // Tool calls other than the goal tool set count as goal progress.
         let toolActivations = 0;
+        // Billable tokens reported by the provider for this turn (P4).
+        let tokensUsed = 0;
         // Capture the pre-turn state of isolated tasks so /undo can revert
         // this turn's changes. A fresh worktree at turn 1 captures nothing;
         // /discard resets the whole task to baseline in that case.
@@ -3028,12 +3044,15 @@ export class InteractiveTui {
                 : `\n[context compaction ${observation.aborted ? "cancelled" : "settled"}: ${observation.reason}]\n`,
             );
           }
+          if (observation.type === "turn.usage") {
+            tokensUsed += billableTokens(observation.usage);
+          }
           if (observation.type === "turn.settled") {
             this.#taskPhases.set(taskId, "turn settled");
             this.write("\n[turn settled]\n");
           }
         }
-        return { toolActivations };
+        return { toolActivations, tokensUsed };
       };
       if (taskSnapshot.taskMode === "goal" && taskSnapshot.goal !== undefined) {
         try {
@@ -3612,7 +3631,7 @@ export class InteractiveTui {
       const goal = task.goal;
       const goalRun = this.#store.getGoalRun(task.taskId);
       lines.push(
-        `goal: ${goal.status}, turns=${goal.turnsUsed}${goal.turnBudget === null ? "" : `/${goal.turnBudget}`}, wall clock=${formatGoalDuration(goal.wallClockMs)}${goal.wallClockBudgetMs === null ? "" : `/${formatGoalDuration(goal.wallClockBudgetMs)}`}, no-progress=${goal.consecutiveNoProgress}`,
+        `goal: ${goal.status}, turns=${goal.turnsUsed}${goal.turnBudget === null ? "" : `/${goal.turnBudget}`}, tokens=${goal.tokensUsed}${goal.tokenBudget === null ? "" : `/${goal.tokenBudget}`}, wall clock=${formatGoalDuration(goal.wallClockMs)}${goal.wallClockBudgetMs === null ? "" : `/${formatGoalDuration(goal.wallClockBudgetMs)}`}, no-progress=${goal.consecutiveNoProgress}`,
         `goal objective: ${redactSensitive(goal.objective, this.activeSecretsSnapshot())}`,
       );
       if (goal.completionCriterion !== undefined)

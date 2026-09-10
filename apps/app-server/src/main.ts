@@ -54,6 +54,7 @@ import {
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   WorkspaceHandoff,
+  billableTokens,
   boundGoalText,
   buildGoalStartPrompt,
   fenceGoalData,
@@ -413,6 +414,9 @@ export class AppServerController {
               ...(command.goal.turnBudget === undefined
                 ? {}
                 : { turnBudget: command.goal.turnBudget }),
+              ...(command.goal.tokenBudget === undefined
+                ? {}
+                : { tokenBudget: command.goal.tokenBudget }),
               ...(command.goal.wallClockBudgetMs === undefined
                 ? {}
                 : { wallClockBudgetMs: command.goal.wallClockBudgetMs }),
@@ -567,6 +571,7 @@ export class AppServerController {
           ? {}
           : { completionCriterion: command.completionCriterion }),
         ...(command.turnBudget === undefined ? {} : { turnBudget: command.turnBudget }),
+        ...(command.tokenBudget === undefined ? {} : { tokenBudget: command.tokenBudget }),
         ...(command.wallClockBudgetMs === undefined
           ? {}
           : { wallClockBudgetMs: command.wallClockBudgetMs }),
@@ -634,6 +639,7 @@ export class AppServerController {
         message.expectedRevision,
         {
           ...(command.turnBudget === undefined ? {} : { turnBudget: command.turnBudget }),
+          ...(command.tokenBudget === undefined ? {} : { tokenBudget: command.tokenBudget }),
           ...(command.wallClockBudgetMs === undefined
             ? {}
             : { wallClockBudgetMs: command.wallClockBudgetMs }),
@@ -803,7 +809,7 @@ export class AppServerController {
       const runTurn = (
         goalTools?: ReturnType<typeof createCandyGoalToolDefinitions>,
         promptOverride?: string,
-      ): Promise<{ readonly toolActivations: number }> => {
+      ): Promise<{ readonly toolActivations: number; readonly tokensUsed: number }> => {
         const steering = promptOverride === undefined ? this.consumeSteering(taskId) : undefined;
         return this.runAgentTurn(
           taskId,
@@ -944,9 +950,11 @@ export class AppServerController {
     signal: AbortSignal,
     emit: Emit,
     goalTools?: ReturnType<typeof createCandyGoalToolDefinitions>,
-  ): Promise<{ readonly toolActivations: number }> {
+  ): Promise<{ readonly toolActivations: number; readonly tokensUsed: number }> {
     // Goal tool calls are the continuation signal, not goal progress.
     let toolActivations = 0;
+    // Billable tokens the provider reported for this turn (P4).
+    let tokensUsed = 0;
     const executionPath = metadata.worktreePath ?? metadata.workspacePath;
     const trustedGitCommonDirectory =
       metadata.trustedShell && this.#engine instanceof PiAppServerEngine
@@ -983,6 +991,7 @@ export class AppServerController {
       if (!this.ownsExecution(current)) throw new LongRunningControlError("ownership_lost");
       if (observation.type === "tool.started" && !observation.tool.startsWith("candy_goal_"))
         toolActivations += 1;
+      if (observation.type === "turn.usage") tokensUsed += billableTokens(observation.usage);
       const rawEvent = observationToEvent(taskId, current.revision, observation);
       const event =
         rawEvent?.type === "assistant.delta" || rawEvent?.type === "assistant.thinking.delta"
@@ -997,7 +1006,7 @@ export class AppServerController {
         emit(this.event(taskId, current.revision, event));
       }
     }
-    return { toolActivations };
+    return { toolActivations, tokensUsed };
   }
 
   private goalChanged(metadata: TaskMetadata): EventEnvelope {
@@ -1049,7 +1058,7 @@ export class AppServerController {
     readonly runTurn: (
       goalTools?: ReturnType<typeof createCandyGoalToolDefinitions>,
       promptOverride?: string,
-    ) => Promise<{ readonly toolActivations: number }>;
+    ) => Promise<{ readonly toolActivations: number; readonly tokensUsed: number }>;
     readonly active: ActiveTask;
     readonly emit: Emit;
   }): Promise<void> {
@@ -1075,8 +1084,10 @@ export class AppServerController {
       noProgressLimit: DEFAULT_GOAL_NO_PROGRESS_LIMIT,
     });
     const startedAt = Date.now();
-    await runTurn(goalToolsFor(), initialPrompt);
-    runner.accountUserTurn(Math.max(0, Date.now() - startedAt));
+    const initialOutcome = await runTurn(goalToolsFor(), initialPrompt);
+    runner.accountUserTurn(Math.max(0, Date.now() - startedAt), {
+      tokensUsed: initialOutcome.tokensUsed,
+    });
     const result = await runner.run(
       async (context) => {
         if (active.abort.signal.aborted)
@@ -1088,6 +1099,7 @@ export class AppServerController {
         const fingerprint = await this.goalWorkspaceFingerprint(taskId);
         return {
           toolActivations: outcome.toolActivations,
+          tokensUsed: outcome.tokensUsed,
           ...(fingerprint === undefined ? {} : { workspaceFingerprint: fingerprint }),
         };
       },
@@ -1464,6 +1476,8 @@ function toGoalSnapshot(goal: TaskGoalSnapshot | GoalSnapshot): GoalSnapshot {
       : { completionCriterion: goal.completionCriterion }),
     turnsUsed: goal.turnsUsed,
     turnBudget: goal.turnBudget,
+    tokensUsed: goal.tokensUsed,
+    tokenBudget: goal.tokenBudget,
     wallClockMs: goal.wallClockMs,
     wallClockBudgetMs: goal.wallClockBudgetMs,
     consecutiveNoProgress: goal.consecutiveNoProgress,
@@ -1800,6 +1814,7 @@ function mapPiObservation(observation: PiAgentObservation): AgentObservation | u
       tool: observation.tool,
       ok: observation.ok,
     };
+  if (observation.type === "turn.usage") return { type: "turn.usage", usage: observation.usage };
   if (observation.type === "turn.completed")
     return { type: "turn.completed", taskId: observation.taskId, at: Date.now() };
   return undefined;

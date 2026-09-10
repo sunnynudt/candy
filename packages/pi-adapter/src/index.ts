@@ -3458,6 +3458,14 @@ export interface PiAgentEngineInput {
   readonly goalTools?: readonly piSdk.ToolDefinition[];
 }
 
+/** Provider-reported token usage for one model call (Pi's Usage shape minus cost). */
+export interface PiTokenUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
 export interface PiImageInput {
   readonly mimeType: string;
   readonly data: string;
@@ -3552,6 +3560,12 @@ export type PiAgentObservation =
       readonly reason: "manual" | "threshold" | "overflow";
       readonly aborted?: boolean;
       readonly willRetry?: boolean;
+    }
+  | {
+      readonly type: "turn.usage";
+      readonly taskId: string;
+      /** Sum of every model call inside this Candy turn. */
+      readonly usage: PiTokenUsage;
     }
   | { readonly type: "turn.settled"; readonly taskId: string }
   | { readonly type: "assistant.thinking.delta"; readonly taskId: string; readonly text: string }
@@ -3994,6 +4008,18 @@ export class PiAgentEngine {
           events.fail(promptError);
         });
       let started = false;
+      // Provider usage accumulates across every model call in this Candy turn
+      // and is reported once, before `turn.settled`.
+      const turnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const addUsage = (value: unknown): void => {
+        if (typeof value !== "object" || value === null) return;
+        const record = value as Record<string, unknown>;
+        for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+          const field = record[key];
+          if (typeof field === "number" && Number.isFinite(field) && field > 0)
+            turnUsage[key] += Math.round(field);
+        }
+      };
       try {
         for (;;) {
           const event = await events.next();
@@ -4034,6 +4060,7 @@ export class PiAgentEngine {
             event.value.type === "message_end" &&
             event.value.message.role === "assistant"
           ) {
+            addUsage((event.value.message as { readonly usage?: unknown }).usage);
             lastAssistantError =
               event.value.message.stopReason === "error"
                 ? (event.value.message.errorMessage ?? "Provider request failed.")
@@ -4045,6 +4072,7 @@ export class PiAgentEngine {
             if (lastAssistantError !== undefined) {
               throw sanitizePiProviderError(new Error(lastAssistantError));
             }
+            yield { type: "turn.usage", taskId: input.taskId, usage: { ...turnUsage } };
             yield { type: "turn.settled", taskId: input.taskId };
             break;
           }

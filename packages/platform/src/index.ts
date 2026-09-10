@@ -10,7 +10,6 @@ import {
   assertGoalObjective,
   assertGoalTransition,
   GoalStateError,
-  rejectTokenDimension,
   type CandyGoalStatus,
   type GoalTransitionEvent,
   type TaskGoalBudgets,
@@ -1014,7 +1013,7 @@ export class SQLiteTaskStore {
       assertGoalCompletionCriterion(input.completionCriterion);
     if (input.turnBudget !== undefined) assertGoalBudget(input.turnBudget);
     if (input.wallClockBudgetMs !== undefined) assertGoalBudget(input.wallClockBudgetMs);
-    if (input.tokenBudget !== undefined) rejectTokenDimension("budget");
+    if (input.tokenBudget !== undefined) assertGoalBudget(input.tokenBudget);
     const current = this.require(taskId);
     if (
       current.goal !== undefined &&
@@ -1034,7 +1033,7 @@ export class SQLiteTaskStore {
            goal_objective = ?,
            goal_criterion = ?,
            goal_status = 'active',
-           goal_token_budget = NULL,
+           goal_token_budget = ?,
            goal_turn_budget = ?,
            goal_wall_clock_budget_ms = ?,
            goal_tokens_used = 0,
@@ -1050,6 +1049,7 @@ export class SQLiteTaskStore {
         randomUUID(),
         input.objective,
         input.completionCriterion ?? null,
+        input.tokenBudget ?? null,
         input.turnBudget ?? null,
         input.wallClockBudgetMs ?? null,
         now,
@@ -1135,13 +1135,16 @@ export class SQLiteTaskStore {
     options: { readonly expectedGoalId?: string } = {},
   ): TaskMetadata {
     assertTaskId(taskId);
-    if (budgets.turnBudget === undefined && budgets.wallClockBudgetMs === undefined) {
-      if (budgets.tokenBudget !== undefined) rejectTokenDimension("budget");
+    if (
+      budgets.turnBudget === undefined &&
+      budgets.wallClockBudgetMs === undefined &&
+      budgets.tokenBudget === undefined
+    ) {
       throw new Error("No goal budgets provided.");
     }
     if (budgets.turnBudget !== undefined) assertGoalBudget(budgets.turnBudget);
     if (budgets.wallClockBudgetMs !== undefined) assertGoalBudget(budgets.wallClockBudgetMs);
-    if (budgets.tokenBudget !== undefined) rejectTokenDimension("budget");
+    if (budgets.tokenBudget !== undefined) assertGoalBudget(budgets.tokenBudget);
     const current = this.require(taskId);
     const goal = current.goal;
     if (goal === undefined) throw new GoalStateError("Task has no goal.");
@@ -1151,14 +1154,20 @@ export class SQLiteTaskStore {
     const turnBudget = budgets.turnBudget !== undefined ? budgets.turnBudget : goal.turnBudget;
     const wallClockBudgetMs =
       budgets.wallClockBudgetMs !== undefined ? budgets.wallClockBudgetMs : goal.wallClockBudgetMs;
+    const tokenBudget = budgets.tokenBudget !== undefined ? budgets.tokenBudget : goal.tokenBudget;
     let status: CandyGoalStatus = goal.status;
     let terminalReason: string | null = null;
     if (goal.status === "active") {
       const overTurn = turnBudget !== null && goal.turnsUsed >= turnBudget;
       const overWall = wallClockBudgetMs !== null && goal.wallClockMs >= wallClockBudgetMs;
-      if (overTurn || overWall) {
+      const overTokens = tokenBudget !== null && goal.tokensUsed >= tokenBudget;
+      if (overTurn || overWall || overTokens) {
         status = "budget_limited";
-        terminalReason = overTurn ? "turn budget exhausted" : "wall-clock budget exhausted";
+        terminalReason = overTurn
+          ? "turn budget exhausted"
+          : overWall
+            ? "wall-clock budget exhausted"
+            : "token budget exhausted";
       }
     }
     const now = Date.now();
@@ -1168,12 +1177,22 @@ export class SQLiteTaskStore {
            revision = revision + 1,
            goal_turn_budget = ?,
            goal_wall_clock_budget_ms = ?,
+           goal_token_budget = ?,
            goal_status = ?,
            goal_terminal_reason = COALESCE(?, goal_terminal_reason),
            updated_at = ?
          WHERE task_id = ? AND revision = ? AND goal_id IS NOT NULL`,
       )
-      .run(turnBudget, wallClockBudgetMs, status, terminalReason, now, taskId, expectedRevision);
+      .run(
+        turnBudget,
+        wallClockBudgetMs,
+        tokenBudget,
+        status,
+        terminalReason,
+        now,
+        taskId,
+        expectedRevision,
+      );
     if (result.changes !== 1)
       throw new Error(`Task ${taskId} metadata revision is stale or missing.`);
     return this.require(taskId);
@@ -1198,7 +1217,11 @@ export class SQLiteTaskStore {
       throw new Error("Goal turn delta is invalid.");
     if (!Number.isSafeInteger(usage.wallClockDeltaMs) || usage.wallClockDeltaMs < 0)
       throw new Error("Goal wall-clock delta is invalid.");
-    if (usage.tokenDelta !== undefined) rejectTokenDimension("usage");
+    if (
+      usage.tokenDelta !== undefined &&
+      (!Number.isSafeInteger(usage.tokenDelta) || usage.tokenDelta < 0)
+    )
+      throw new Error("Goal token delta is invalid.");
     const current = this.require(taskId);
     const goal = current.goal;
     if (goal === undefined) throw new GoalStateError("Task has no goal.");
@@ -1206,14 +1229,20 @@ export class SQLiteTaskStore {
       throw new Error(`Task ${taskId} goal changed before the usage update.`);
     const turnsUsed = goal.turnsUsed + usage.turnDelta;
     const wallClockMs = goal.wallClockMs + usage.wallClockDeltaMs;
+    const tokensUsed = goal.tokensUsed + (usage.tokenDelta ?? 0);
     let status: CandyGoalStatus = goal.status;
     let terminalReason: string | null = null;
     if (goal.status === "active") {
       const overTurn = goal.turnBudget !== null && turnsUsed >= goal.turnBudget;
       const overWall = goal.wallClockBudgetMs !== null && wallClockMs >= goal.wallClockBudgetMs;
-      if (overTurn || overWall) {
+      const overTokens = goal.tokenBudget !== null && tokensUsed >= goal.tokenBudget;
+      if (overTurn || overWall || overTokens) {
         status = "budget_limited";
-        terminalReason = overTurn ? "turn budget exhausted" : "wall-clock budget exhausted";
+        terminalReason = overTurn
+          ? "turn budget exhausted"
+          : overWall
+            ? "wall-clock budget exhausted"
+            : "token budget exhausted";
       }
     }
     const now = Date.now();
@@ -1223,6 +1252,7 @@ export class SQLiteTaskStore {
            revision = revision + 1,
            goal_turns_used = ?,
            goal_wall_clock_ms = ?,
+           goal_tokens_used = ?,
            goal_status = ?,
            goal_terminal_reason = COALESCE(?, goal_terminal_reason),
            updated_at = ?
@@ -1231,6 +1261,7 @@ export class SQLiteTaskStore {
       .run(
         turnsUsed,
         wallClockMs,
+        tokensUsed,
         status,
         terminalReason,
         now,

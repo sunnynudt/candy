@@ -163,7 +163,4 @@ export function assertGoalBudget(budget: number): void {
   }
 }
 
-/** The token budget/usage dimensions are reserved for P4 and rejected before then. */
-export function rejectTokenDimension(dimension: "budget" | "usage"): never {
-  throw new Error(`Goal token ${dimension} is not yet supported.`);
-}
+/** Token budgets are enforced in the same accounting paths as turns and wall clock. */

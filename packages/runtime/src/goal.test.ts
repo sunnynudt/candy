@@ -69,6 +69,7 @@ interface Harness {
 function createHarness(options: {
   readonly turnBudget?: number;
   readonly wallClockBudgetMs?: number;
+  readonly tokenBudget?: number;
   readonly noProgressLimit?: number;
   readonly blockedTurnLimit?: number;
   readonly wrapUpTurn?: boolean;
@@ -97,6 +98,7 @@ function createHarness(options: {
     ...(options.wallClockBudgetMs === undefined
       ? {}
       : { wallClockBudgetMs: options.wallClockBudgetMs }),
+    ...(options.tokenBudget === undefined ? {} : { tokenBudget: options.tokenBudget }),
   });
   const claims = new GoalBlockedClaimLedger();
   let current = signals();
@@ -137,11 +139,13 @@ test("goal budgets expose remaining turns, remaining wall clock, and convergence
   assert.deepEqual(goalBudgetState(goalSnapshot()), {
     remainingTurns: null,
     remainingWallClockMs: null,
+    remainingTokens: null,
     nearBudget: false,
   });
   assert.deepEqual(goalBudgetState(goalSnapshot({ turnBudget: 10, turnsUsed: 3 })), {
     remainingTurns: 7,
     remainingWallClockMs: null,
+    remainingTokens: null,
     nearBudget: false,
   });
   const near = goalBudgetState(
@@ -149,6 +153,12 @@ test("goal budgets expose remaining turns, remaining wall clock, and convergence
   );
   assert.equal(near.nearBudget, true);
   assert.equal(near.remainingWallClockMs, 200);
+  const nearTokens = goalBudgetState(
+    goalSnapshot({ tokenBudget: 1_000, tokensUsed: 800, turnBudget: 10 }),
+  );
+  assert.equal(nearTokens.nearBudget, true);
+  assert.equal(nearTokens.remainingTokens, 200);
+  assert.equal(goalBudgetState(goalSnapshot({ tokenBudget: 0, tokensUsed: 0 })).nearBudget, false);
   const atThreshold = goalBudgetState(
     goalSnapshot({ turnBudget: 4, turnsUsed: Math.ceil(4 * GOAL_CONVERGENCE_RATIO) }),
   );
@@ -235,6 +245,7 @@ test("continuation evaluation yields to shutdown, ownership, user turns, and app
       turn: 2,
       remainingTurns: 4,
       remainingWallClockMs: null,
+      remainingTokens: null,
       nearBudget: false,
     },
   );
@@ -489,6 +500,41 @@ test("a goal cleared mid-run stops continuation", async () => {
   assert.equal(result.stopReason, "user_stop");
   assert.equal(result.yieldedTo, "no_goal");
   assert.equal(harness.store.getGoal(TASK_ID), undefined);
+  harness.store.close();
+});
+
+test("the runner accounts billable tokens and stops on the token budget", async () => {
+  const harness = createHarness({ turnBudget: 5, tokenBudget: 1_000 });
+  const phases: string[] = [];
+  const turn: GoalTurnCallback = async (context) => {
+    phases.push(context.phase);
+    if (context.phase === "wrap_up") {
+      // The wrap-up turn is not accounted, and it still reports the budget.
+      assert.match(context.message.text, /Final wrap-up turn/u);
+      return { toolActivations: 1, workspaceFingerprint: "wrap" };
+    }
+    return {
+      toolActivations: 1,
+      tokensUsed: 600,
+      workspaceFingerprint: `turn-${context.turn}`,
+    };
+  };
+  harness.runner.accountUserTurn(100, { tokensUsed: 300 });
+  const result = await harness.runner.run(turn, new AbortController().signal, {
+    store: { record: (progress) => harness.store.recordGoalRun(progress) },
+  });
+  assert.equal(result.stopReason, "budget_limited");
+  assert.equal(result.completed, false);
+  // 300 tokens from the starting user turn plus two 600-token goal turns: the
+  // budget is checked after each turn, so the last turn may overshoot it.
+  assert.equal(result.tokensUsed, 1_500);
+  assert.deepEqual(phases, ["continuation", "continuation", "wrap_up"]);
+  const goal = harness.store.getGoal(TASK_ID);
+  assert.equal(goal?.tokensUsed, 1_500);
+  assert.equal(goal?.status, "budget_limited");
+  assert.equal(goal?.terminalReason, "token budget exhausted");
+  const run = harness.store.getGoalRun(TASK_ID);
+  assert.equal(run?.stopReason, "budget_limited");
   harness.store.close();
 });
 

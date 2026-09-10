@@ -48,6 +48,10 @@ export interface GoalPromptUsage {
   readonly wallClockMs: number;
   readonly wallClockBudgetMs: number | null;
   readonly remainingWallClockMs: number | null;
+  /** Billable tokens recorded for the goal so far. */
+  readonly tokensUsed: number;
+  readonly tokenBudget: number | null;
+  readonly remainingTokens: number | null;
   /** True when an enabled budget reached Candy's convergence threshold. */
   readonly nearBudget: boolean;
   readonly noProgressStreak: number;
@@ -119,7 +123,11 @@ function usageLines(usage: GoalPromptUsage): string {
     usage.wallClockBudgetMs === null
       ? `- Active goal wall clock: ${seconds(usage.wallClockMs)}; no wall-clock budget is configured.`
       : `- Active goal wall clock: ${seconds(usage.wallClockMs)} of ${seconds(usage.wallClockBudgetMs)} used, ${seconds(usage.remainingWallClockMs ?? 0)} left.`;
-  return ["Budget and usage:", turns, wallClock].join("\n");
+  const tokens =
+    usage.tokenBudget === null
+      ? `- Goal tokens: ${usage.tokensUsed} used; no token budget is configured.`
+      : `- Goal tokens: ${usage.tokensUsed} of ${usage.tokenBudget} used, ${Math.max(0, usage.remainingTokens ?? 0)} left.`;
+  return ["Budget and usage:", turns, wallClock, tokens].join("\n");
 }
 
 function notices(usage: GoalPromptUsage): string | undefined {

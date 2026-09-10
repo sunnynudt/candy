@@ -200,19 +200,22 @@ test("candy_goal_update rejects user-controlled transitions and resumes on reque
   harness.store.close();
 });
 
-test("candy_goal_budget sets budgets and rejects the reserved dimension", () => {
+test("candy_goal_budget sets every budget dimension", () => {
   const harness = createHarness();
   call(harness, "candy_goal_set", { objective: "Ship the bounded objective." });
   assert.equal(call(harness, "candy_goal_budget", {}).ok, false);
-  const reserved = call(harness, "candy_goal_budget", { token_budget: 1_000 });
-  assert.equal(reserved.ok, false);
-  assert.match(reserved.text, /not support token budgets yet/u);
+  const rejected = call(harness, "candy_goal_budget", { token_budget: 0 });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.text, /positive integer/u);
+  const budgetValue = 50_000;
   const updated = call(harness, "candy_goal_budget", {
     turn_budget: 3,
+    token_budget: budgetValue,
     wall_clock_budget_ms: 600_000,
   });
   assert.equal(updated.ok, true);
   assert.equal(harness.store.getGoal(TASK_ID)?.turnBudget, 3);
+  assert.equal(harness.store.getGoal(TASK_ID)?.tokenBudget, budgetValue);
   assert.equal(harness.store.getGoal(TASK_ID)?.wallClockBudgetMs, 600_000);
 
   const goal = harness.store.getGoal(TASK_ID);

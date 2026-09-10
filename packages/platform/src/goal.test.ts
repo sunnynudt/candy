@@ -261,22 +261,24 @@ test("goal objective and budgets reject unbounded or unsafe input", () => {
       () =>
         store.setGoal("task-goal-validation", revision, {
           objective: "Valid goal.",
-          tokenBudget: 100,
+          tokenBudget: 0,
         }),
-      /not yet supported/u,
+      /positive safe integer/u,
     );
     const set = store.setGoal("task-goal-validation", revision, {
       objective: "Valid goal.",
       turnBudget: 3,
+      tokenBudget: 1_000,
     });
     assert.equal(set.goal?.status, "active");
+    assert.equal(set.goal?.tokenBudget, 1_000);
     assert.throws(
       () => store.updateGoalBudgets("task-goal-validation", set.revision, {}),
       /No goal budgets provided/u,
     );
     assert.throws(
-      () => store.updateGoalBudgets("task-goal-validation", set.revision, { tokenBudget: 100 }),
-      /not yet supported/u,
+      () => store.updateGoalBudgets("task-goal-validation", set.revision, { tokenBudget: -1 }),
+      /positive safe integer/u,
     );
     assert.throws(
       () =>
@@ -632,6 +634,84 @@ test("a completed goal keeps its terminal reason across later usage and budget w
     });
     assert.equal(resumed.goal?.status, "active");
     assert.equal(resumed.goal?.terminalReason, undefined);
+    store.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("goal token usage accumulates and flips an active goal to budget_limited", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "candy-goal-tokens-"));
+  const databasePath = path.join(directory, "state", "tasks.sqlite");
+  try {
+    const store = new SQLiteTaskStore(databasePath);
+    const created = store.create("task-goal-tokens", "auto");
+    const set = store.setGoal("task-goal-tokens", created.revision, {
+      objective: "Bound the token spend.",
+      tokenBudget: 1_000,
+    });
+    assert.ok(set.goal);
+    assert.equal(set.goal.tokenBudget, 1_000);
+    assert.equal(set.goal.tokensUsed, 0);
+
+    const first = store.accountGoalUsage("task-goal-tokens", set.revision, set.goal.goalId, {
+      turnDelta: 1,
+      wallClockDeltaMs: 1_000,
+      tokenDelta: 400,
+    });
+    assert.equal(first.goal?.tokensUsed, 400);
+    assert.equal(first.goal?.status, "active");
+
+    const second = store.accountGoalUsage("task-goal-tokens", first.revision, set.goal.goalId, {
+      turnDelta: 1,
+      wallClockDeltaMs: 1_000,
+      tokenDelta: 600,
+    });
+    assert.equal(second.goal?.tokensUsed, 1_000);
+    assert.equal(second.goal?.status, "budget_limited");
+    assert.equal(second.goal?.terminalReason, "token budget exhausted");
+
+    assert.throws(
+      () =>
+        store.accountGoalUsage("task-goal-tokens", second.revision, set.goal?.goalId ?? "", {
+          turnDelta: 0,
+          wallClockDeltaMs: 0,
+          tokenDelta: -1,
+        }),
+      /token delta is invalid/u,
+    );
+
+    // A token budget raised above recorded usage still stops a budget_limited goal.
+    const raised = store.updateGoalBudgets(
+      "task-goal-tokens",
+      second.revision,
+      { tokenBudget: 5_000 },
+      { expectedGoalId: set.goal.goalId },
+    );
+    assert.equal(raised.goal?.tokenBudget, 5_000);
+    assert.equal(raised.goal?.status, "budget_limited");
+
+    const other = store.setGoal("task-goal-tokens", raised.revision, {
+      objective: "Token budget below recorded usage.",
+      tokenBudget: 10,
+      replace: true,
+    });
+    assert.equal(other.goal?.status, "active");
+    const limited = store.updateGoalBudgets(
+      "task-goal-tokens",
+      other.revision,
+      { tokenBudget: 100 },
+      { expectedGoalId: other.goal?.goalId ?? "" },
+    );
+    assert.equal(limited.goal?.status, "active");
+    const stillLimited = store.accountGoalUsage(
+      "task-goal-tokens",
+      limited.revision,
+      other.goal?.goalId ?? "",
+      { turnDelta: 0, wallClockDeltaMs: 0, tokenDelta: 200 },
+    );
+    assert.equal(stillLimited.goal?.status, "budget_limited");
+    assert.equal(stillLimited.goal?.terminalReason, "token budget exhausted");
     store.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });

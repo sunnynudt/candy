@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_CANDY_MODEL, type CandyModelId, type Clock } from "@candy/platform";
+import type { ProviderTokenUsage } from "./usage.js";
 
 export interface AgentTurnInput {
   readonly taskId: string;
@@ -37,6 +38,11 @@ export type AgentObservation =
       readonly taskId: string;
       readonly tool: string;
       readonly ok: boolean;
+    }
+  | {
+      readonly type: "turn.usage";
+      /** Provider token usage for the whole turn; absent when unreported. */
+      readonly usage: ProviderTokenUsage;
     }
   | { readonly type: "turn.completed"; readonly taskId: string; readonly at: number };
 
@@ -532,6 +538,14 @@ export {
   buildGoalWrapUpPrompt,
   fenceGoalData,
 } from "./goal-message.js";
+export {
+  EMPTY_TOKEN_USAGE,
+  addTokenUsage,
+  billableTokens,
+  isTokenUsage,
+  normalizeTokenUsage,
+} from "./usage.js";
+export type { ProviderTokenUsage } from "./usage.js";
 export { GoalToolHost, listGoalToolDefinitions } from "./goal-tools.js";
 export type {
   GoalBudgetState,

@@ -87,6 +87,9 @@ export interface GoalSnapshot {
   readonly completionCriterion?: string;
   readonly turnsUsed: number;
   readonly turnBudget: number | null;
+  /** Billable tokens recorded for the goal (P4 口径). */
+  readonly tokensUsed: number;
+  readonly tokenBudget: number | null;
   readonly wallClockMs: number;
   readonly wallClockBudgetMs: number | null;
   readonly consecutiveNoProgress: number;
@@ -98,6 +101,7 @@ export interface GoalSpec {
   readonly objective: string;
   readonly completionCriterion?: string;
   readonly turnBudget?: number;
+  readonly tokenBudget?: number;
   readonly wallClockBudgetMs?: number;
 }
 
@@ -165,6 +169,7 @@ export interface GoalSetCommand {
   readonly objective: string;
   readonly completionCriterion?: string;
   readonly turnBudget?: number;
+  readonly tokenBudget?: number;
   readonly wallClockBudgetMs?: number;
   /** Replace an existing unfinished goal; without it the task must have none. */
   readonly replace?: boolean;
@@ -177,6 +182,7 @@ export interface GoalActionCommand {
 export interface GoalBudgetCommand {
   readonly type: "goal.budget";
   readonly turnBudget?: number;
+  readonly tokenBudget?: number;
   readonly wallClockBudgetMs?: number;
 }
 
@@ -442,6 +448,8 @@ function validateGoalSnapshot(value: unknown, name: string): void {
     assertGoalText(value.completionCriterion, `${name}.completionCriterion`);
   assertNonNegativeInteger(value.turnsUsed, `${name}.turnsUsed`);
   if (value.turnBudget !== null) assertPositiveInteger(value.turnBudget, `${name}.turnBudget`);
+  assertNonNegativeInteger(value.tokensUsed, `${name}.tokensUsed`);
+  if (value.tokenBudget !== null) assertPositiveInteger(value.tokenBudget, `${name}.tokenBudget`);
   assertNonNegativeInteger(value.wallClockMs, `${name}.wallClockMs`);
   if (value.wallClockBudgetMs !== null)
     assertPositiveInteger(value.wallClockBudgetMs, `${name}.wallClockBudgetMs`);
@@ -591,10 +599,14 @@ function validateCommand(value: unknown): asserts value is RuntimeCommand {
   }
   if (value.type === "goal.budget") {
     assertGoalBudgets(value, "command");
-    if (value.turnBudget === undefined && value.wallClockBudgetMs === undefined) {
+    if (
+      value.turnBudget === undefined &&
+      value.tokenBudget === undefined &&
+      value.wallClockBudgetMs === undefined
+    ) {
       throw new ProtocolValidationError(
         "invalid_message",
-        "command must carry a turn or wall-clock budget.",
+        "command must carry a turn, token, or wall-clock budget.",
       );
     }
     return;
@@ -771,6 +783,13 @@ function assertGoalBudgets(value: Record<string, unknown>, name: string): void {
     (typeof turnBudget !== "number" || !Number.isSafeInteger(turnBudget) || turnBudget < 1)
   ) {
     throw new ProtocolValidationError("invalid_message", `${name}.turnBudget is invalid.`);
+  }
+  const tokenBudget = value.tokenBudget;
+  if (
+    tokenBudget !== undefined &&
+    (typeof tokenBudget !== "number" || !Number.isSafeInteger(tokenBudget) || tokenBudget < 1)
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name}.tokenBudget is invalid.`);
   }
   const wallClockBudgetMs = value.wallClockBudgetMs;
   if (

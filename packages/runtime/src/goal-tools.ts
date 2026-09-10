@@ -306,6 +306,7 @@ export class GoalToolHost {
       "Goal summary (Candy-owned state):",
       `- status: ${goal.status}`,
       `- turns: ${goal.turnsUsed} of ${goal.turnBudget ?? "unlimited"} used${budget.remainingTurns === null ? "" : ` (${budget.remainingTurns} left)`}`,
+      `- tokens: ${goal.tokensUsed} of ${goal.tokenBudget ?? "unlimited"} billable tokens used${budget.remainingTokens === null ? "" : ` (${Math.max(0, budget.remainingTokens)} left)`}`,
       `- active wall clock: ${Math.round(goal.wallClockMs / 1_000)}s of ${goal.wallClockBudgetMs === null ? "unlimited" : `${Math.round(goal.wallClockBudgetMs / 1_000)}s`}${budget.remainingWallClockMs === null ? "" : ` (${Math.round(budget.remainingWallClockMs / 1_000)}s left)`}`,
       `- consecutive no-progress turns: ${goal.consecutiveNoProgress}`,
       `- continuation deferred: ${goal.continuationDeferred ? "yes" : "no"}`,
@@ -461,19 +462,24 @@ export class GoalToolHost {
   }
 
   #budget(args: Readonly<Record<string, unknown>>): GoalToolResult {
-    const unknown = unknownArguments(args, ["turn_budget", "wall_clock_budget_ms", "token_budget"]);
+    const unknown = unknownArguments(args, ["turn_budget", "token_budget", "wall_clock_budget_ms"]);
     if (unknown !== undefined) return this.#result(`Unknown argument ${unknown}.`, false);
-    if (args["token_budget"] !== undefined)
+    const turnBudget = readInteger(args, "turn_budget");
+    const tokenBudget = readInteger(args, "token_budget");
+    const wallClockBudgetMs = readInteger(args, "wall_clock_budget_ms");
+    if (
+      args["turn_budget"] === undefined &&
+      args["token_budget"] === undefined &&
+      args["wall_clock_budget_ms"] === undefined
+    )
       return this.#result(
-        "Candy does not support token budgets yet; use turn_budget or wall_clock_budget_ms.",
+        "candy_goal_budget needs turn_budget, token_budget, or wall_clock_budget_ms.",
         false,
       );
-    const turnBudget = readInteger(args, "turn_budget");
-    const wallClockBudgetMs = readInteger(args, "wall_clock_budget_ms");
-    if (turnBudget === undefined && wallClockBudgetMs === undefined)
-      return this.#result("candy_goal_budget needs turn_budget or wall_clock_budget_ms.", false);
     if (turnBudget === undefined && args["turn_budget"] !== undefined)
       return this.#result("turn_budget must be a positive integer.", false);
+    if (tokenBudget === undefined && args["token_budget"] !== undefined)
+      return this.#result("token_budget must be a positive integer.", false);
     if (wallClockBudgetMs === undefined && args["wall_clock_budget_ms"] !== undefined)
       return this.#result("wall_clock_budget_ms must be a positive integer.", false);
     const goal = this.#goal();
@@ -486,6 +492,7 @@ export class GoalToolHost {
         current.revision,
         {
           ...(turnBudget === undefined ? {} : { turnBudget }),
+          ...(tokenBudget === undefined ? {} : { tokenBudget }),
           ...(wallClockBudgetMs === undefined ? {} : { wallClockBudgetMs }),
         },
         { expectedGoalId: goal.goalId },

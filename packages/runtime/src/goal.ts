@@ -93,6 +93,7 @@ export const IDLE_GOAL_SIGNALS: GoalContinuationSignals = {
 export interface GoalBudgetState {
   readonly remainingTurns: number | null;
   readonly remainingWallClockMs: number | null;
+  readonly remainingTokens: number | null;
   readonly nearBudget: boolean;
 }
 
@@ -103,6 +104,7 @@ export type GoalContinuationDecision =
       readonly turn: number;
       readonly remainingTurns: number | null;
       readonly remainingWallClockMs: number | null;
+      readonly remainingTokens: number | null;
       readonly nearBudget: boolean;
     }
   | { readonly continue: false; readonly reason: GoalContinuationSkipReason };
@@ -115,16 +117,22 @@ export function goalBudgetState(
   const remainingTurns = goal.turnBudget === null ? null : goal.turnBudget - goal.turnsUsed;
   const remainingWallClockMs =
     goal.wallClockBudgetMs === null ? null : goal.wallClockBudgetMs - goal.wallClockMs;
+  const remainingTokens = goal.tokenBudget === null ? null : goal.tokenBudget - goal.tokensUsed;
   const nearTurnBudget =
     goal.turnBudget !== null && goal.turnBudget > 0 && goal.turnsUsed / goal.turnBudget >= ratio;
   const nearWallClockBudget =
     goal.wallClockBudgetMs !== null &&
     goal.wallClockBudgetMs > 0 &&
     goal.wallClockMs / goal.wallClockBudgetMs >= ratio;
+  const nearTokenBudget =
+    goal.tokenBudget !== null &&
+    goal.tokenBudget > 0 &&
+    goal.tokensUsed / goal.tokenBudget >= ratio;
   return {
     remainingTurns,
     remainingWallClockMs,
-    nearBudget: nearTurnBudget || nearWallClockBudget,
+    remainingTokens,
+    nearBudget: nearTurnBudget || nearWallClockBudget || nearTokenBudget,
   };
 }
 
@@ -153,11 +161,14 @@ export function evaluateGoalContinuation(
     return { continue: false, reason: "budget_exhausted" };
   if (budget.remainingWallClockMs !== null && budget.remainingWallClockMs <= 0)
     return { continue: false, reason: "budget_exhausted" };
+  if (budget.remainingTokens !== null && budget.remainingTokens <= 0)
+    return { continue: false, reason: "budget_exhausted" };
   return {
     continue: true,
     turn: goal.turnsUsed + 1,
     remainingTurns: budget.remainingTurns,
     remainingWallClockMs: budget.remainingWallClockMs,
+    remainingTokens: budget.remainingTokens,
     nearBudget: budget.nearBudget,
   };
 }
@@ -294,10 +305,13 @@ export interface GoalContinuationProgressBinding {
 /**
  * What a completed goal turn reports. `toolActivations` counts tool calls
  * other than the goal tool set, so a turn that only asserts `blocked` is not
- * mistaken for progress.
+ * mistaken for progress. `tokensUsed` is the turn's *billable* token count
+ * (see `billableTokens` in `usage.ts`), or omitted when the provider reported
+ * no usage.
  */
 export interface GoalTurnReport {
   readonly toolActivations: number;
+  readonly tokensUsed?: number;
   /** Host workspace fingerprint after the turn; omit when the host cannot compute one. */
   readonly workspaceFingerprint?: string;
 }
@@ -328,6 +342,8 @@ export interface GoalRunResult {
   readonly rounds: number;
   readonly turnsUsed: number;
   readonly wallClockMs: number;
+  /** Billable tokens recorded for the whole goal. */
+  readonly tokensUsed: number;
   readonly noProgressStreak: number;
   readonly failureCategory?: GoalFailureCategory;
 }
@@ -351,6 +367,7 @@ interface GoalRunState {
   rounds: number;
   turnsUsed: number;
   wallClockMs: number;
+  tokensUsed: number;
   noProgressStreak: number;
   lastFingerprint: string | undefined;
 }
@@ -398,8 +415,15 @@ export class GoalContinuationRunner {
    * Account the user-initiated goal turn that started or resumed the goal.
    * Candy's accepted default counts the starting user turn in the turn budget.
    */
-  public accountUserTurn(wallClockMs: number): void {
-    this.#account({ turnDelta: 1, wallClockDeltaMs: wallClockMs });
+  public accountUserTurn(
+    wallClockMs: number,
+    options: { readonly tokensUsed?: number } = {},
+  ): void {
+    this.#account({
+      turnDelta: 1,
+      wallClockDeltaMs: wallClockMs,
+      ...(options.tokensUsed === undefined ? {} : { tokenDelta: options.tokensUsed }),
+    });
   }
 
   /**
@@ -417,6 +441,7 @@ export class GoalContinuationRunner {
       rounds: 0,
       turnsUsed: initial?.turnsUsed ?? 0,
       wallClockMs: initial?.wallClockMs ?? 0,
+      tokensUsed: initial?.tokensUsed ?? 0,
       noProgressStreak: this.#noProgressStreak,
       lastFingerprint: this.#lastFingerprint,
     };
@@ -474,10 +499,12 @@ export class GoalContinuationRunner {
       const accounted = this.#account({
         turnDelta: 1,
         wallClockDeltaMs: Math.max(0, this.#options.clock.now() - turnStartedAt),
+        ...(report.tokensUsed === undefined ? {} : { tokenDelta: report.tokensUsed }),
       });
       if (accounted !== undefined) {
         state.turnsUsed = accounted.turnsUsed;
         state.wallClockMs = accounted.wallClockMs;
+        state.tokensUsed = accounted.tokensUsed;
       }
       const previousFingerprint = state.lastFingerprint;
       state.noProgressStreak = nextNoProgressStreak(
@@ -528,6 +555,7 @@ export class GoalContinuationRunner {
     budget: {
       readonly remainingTurns: number | null;
       readonly remainingWallClockMs: number | null;
+      readonly remainingTokens: number | null;
       readonly nearBudget: boolean;
     },
   ): GoalPromptUsage {
@@ -540,6 +568,9 @@ export class GoalContinuationRunner {
       wallClockMs: goal.wallClockMs,
       wallClockBudgetMs: goal.wallClockBudgetMs,
       remainingWallClockMs: budget.remainingWallClockMs,
+      tokensUsed: goal.tokensUsed,
+      tokenBudget: goal.tokenBudget,
+      remainingTokens: budget.remainingTokens,
       nearBudget: budget.nearBudget,
       noProgressStreak: this.#noProgressStreak,
       noProgressLimit: this.#noProgressLimit,
@@ -602,6 +633,7 @@ export class GoalContinuationRunner {
   #account(delta: {
     readonly turnDelta: number;
     readonly wallClockDeltaMs: number;
+    readonly tokenDelta?: number;
   }): TaskGoalSnapshot | undefined {
     const current = this.#options.store.get(this.#options.taskId);
     const goal = current?.goal;
@@ -675,6 +707,7 @@ export class GoalContinuationRunner {
       rounds: state.rounds,
       turnsUsed: state.turnsUsed,
       wallClockMs: state.wallClockMs,
+      tokensUsed: state.tokensUsed,
       noProgressStreak: state.noProgressStreak,
       ...(extra.yieldedTo === undefined ? {} : { yieldedTo: extra.yieldedTo }),
       ...(extra.failureCategory === undefined ? {} : { failureCategory: extra.failureCategory }),
@@ -732,7 +765,8 @@ function seconds(milliseconds: number): string {
 function runSummary(state: GoalRunState, stopReason: GoalRunStopReason): string {
   return (
     `goal ${stopReason}: ${state.rounds} goal turn(s), ${state.turnsUsed} turn(s) used, ` +
-    `${seconds(state.wallClockMs)} active wall clock, ${state.noProgressStreak} no-progress turn(s)`
+    `${seconds(state.wallClockMs)} active wall clock, ${state.tokensUsed} billable token(s), ` +
+    `${state.noProgressStreak} no-progress turn(s)`
   ).slice(0, 4_096);
 }
 
