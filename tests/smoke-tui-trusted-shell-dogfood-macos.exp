@@ -1,0 +1,113 @@
+log_user 0
+set timeout 120
+log_file -a $env(CANDY_DOGFOOD_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "Trusted Shell dogfood failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+cd $env(CANDY_DOGFOOD_LAUNCH_DIR)
+spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
+wait_for {开始任务|继续任务} "usable TUI input"
+
+send_command ":workspace $env(CANDY_DOGFOOD_WORKSPACE)"
+wait_for {workspace selected:} "workspace selection"
+send_command ":profile auto"
+wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
+wait_for {offline local commands on} "default local-command state"
+
+# Category 1: repository and code understanding, with no write or network side effect.
+send_command "Understand this repository fixture. You MUST use candy_read on README.md, src/value.mjs, and test/value.test.mjs, and You MUST use candy_bash (auto mode, no approval needed) to run the exact offline command git status --short. Do not edit, create, delete, stage, commit, push, or use network. Explain the failing expectation and the smallest safe repair, but leave all files unchanged."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set understanding_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for understanding task creation" }
+  eof { fail "TUI exited while waiting for understanding task creation" }
+}
+wait_for "${understanding_task_id} completed" "understanding task completion"
+
+# Category 2: small repair in the task worktree, followed by validation and Apply.
+send_command ":new"
+wait_for {new task ready} "repair task ready"
+send_command ":validator $env(CANDY_DOGFOOD_NODE) --test test/value.test.mjs"
+wait_for {validator configured for new tasks:} "repair validator configuration"
+send_command "Repair the value fixture. You MUST use candy_read on README.md, src/value.mjs, and test/value.test.mjs. Change only src/value.mjs so the failing test passes. You MUST use candy_bash (auto mode, no approval needed) to run node --test test/value.test.mjs and git status --short. Do not use network or modify anything outside the Task Worktree."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set repair_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for repair task creation" }
+  eof { fail "TUI exited while waiting for repair task creation" }
+}
+wait_for "${repair_task_id} completed" "repair task completion"
+send_command ":validate"
+wait_for {validator running:} "repair validator start"
+expect {
+  -re {validator (pass|fail|blocked|cancelled|timeout):} {
+    set validator_status $expect_out(1,string)
+    if {$validator_status ne "pass"} { fail "repair validator returned $validator_status" }
+  }
+  timeout { fail "timed out waiting for repair validator result" }
+  eof { fail "TUI exited while waiting for repair validator result" }
+}
+
+# Category 3: diagnose a failing test, make the narrow fix, and validate it.
+send_command ":new"
+wait_for {new task ready} "diagnosis task ready"
+send_command ":validator $env(CANDY_DOGFOOD_NODE) --test test/diagnosis.test.mjs"
+wait_for {validator configured for new tasks:} "diagnosis validator configuration"
+send_command "Diagnose and fix the failing test. You MUST use candy_read on README.md, src/diagnosis.mjs, and test/diagnosis.test.mjs. You MUST first use candy_bash (auto mode, no approval needed) to run node --test test/diagnosis.test.mjs and inspect the failure. Then edit only src/diagnosis.mjs, rerun the same test with candy_bash, and report the root cause and result. Do not use network or modify anything outside the Task Worktree."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set diagnosis_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for diagnosis task creation" }
+  eof { fail "TUI exited while waiting for diagnosis task creation" }
+}
+wait_for "${diagnosis_task_id} completed" "diagnosis task completion"
+send_command ":changes"
+wait_for "changed files: ${diagnosis_task_id}" "diagnosis changed-file manifest"
+send_command ":diff"
+wait_for {diff } "diagnosis complete diff"
+send_command ":validate"
+wait_for {validator running:} "diagnosis validator start"
+expect {
+  -re {validator (pass|fail|blocked|cancelled|timeout):} {
+    set validator_status $expect_out(1,string)
+    if {$validator_status ne "pass"} { fail "diagnosis validator returned $validator_status" }
+  }
+  timeout { fail "timed out waiting for diagnosis validator result" }
+  eof { fail "TUI exited while waiting for diagnosis validator result" }
+}
+# Leave this independent diagnosis in its Task Worktree. The earlier repair
+# intentionally leaves the Local Workspace dirty after Apply, so a second
+# Apply must remain blocked by the clean-target preflight.
+
+send_command ":quit"
+expect eof
+
+spawn -noecho $env(CANDY_DOGFOOD_NODE) $env(CANDY_DOGFOOD_CHILD)
+wait_for {开始任务|继续任务} "TUI restart"
+after 1000
+send_command ":tasks"
+# The restart banner fills the transcript viewport, so the first task line
+# scrolls out of the emitted tail; two visible completed rows prove the
+# restarted TUI lists tasks, and the harness asserts all three completed
+# tasks from the persisted store.
+wait_for {(?s)completed.*completed} "two completed tasks after restart"
+send_command ":quit"
+expect eof
+
+set result [open $env(CANDY_DOGFOOD_RESULT) w]
+puts $result "understanding_task_id=$understanding_task_id"
+puts $result "repair_task_id=$repair_task_id"
+puts $result "diagnosis_task_id=$diagnosis_task_id"
+close $result
