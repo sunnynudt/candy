@@ -1,6 +1,6 @@
 # Goal Task P6：P5 遗留三项收尾
 
-状态：**进行中**——④（stdio 非法行策略）与①（`/goal edit` 预填命令行通道）已完成并验证；②（Auto Debug 循环体合并）待做。
+状态：**完成**——④（stdio 非法行策略）、①（`/goal edit` 预填命令行通道）、②（Auto Debug 循环体合并）均已实现并验证。
 范围：macOS 先行；Windows 相关复核整体推迟。
 前置：`docs/architecture/goal-task-p5-design.md` §6（三项遗留）、[`goal-task-p3-design.md`](./goal-task-p3-design.md) §6/§7（stdio 冒烟与工具链守卫）。
 
@@ -87,6 +87,50 @@ P5 留下的开放问题是“畸形行之后继续服务（跳过）还是终�
 - 预填不包含“重新确认”交互：`/goal replace` 本身没有二次确认，改变的是“先看到完整命令行再提交”。
 - 仍未允许 objective/criterion 里的 flag-like token 往返：那是 `/goal` 命令语法本身的限制，不在本项范围。
 
-## 3. ② Auto Debug 循环体合并
+## 3. ② Auto Debug 循环体合并（已完成）
 
-待实现。P5 已把会漂移的常量与 prompt 契约收敛到 `packages/runtime/src/auto-debug.ts`；本项要把“跑一轮 + 跑 validator + 记录进度 + 停因映射”也收敛为一个 driver。
+### 3.1 决策
+
+把“跑一轮 + 跑 validator + 记录进度 + 停因映射”收敛到 `packages/runtime/src/auto-debug.ts` 的 `runAutoDebugLoop()`；两个客户端只注入回调：
+
+```ts
+await runAutoDebugLoop({
+  goal,                       // 任务持久化的 prompt：第 1 轮的目标
+  signal,
+  runTurn: async (round) => …, // round = { round, maxRounds, repair, prompt }
+  runValidator: async (signal) => …, // 返回 ValidatorResult（证据已由客户端脱敏）
+  recordProgress?: (progress) => …, // 客户端自己的 run 存储投影
+  maxRounds?, stallLimit?,     // 默认取共享常量
+});
+```
+
+驱动自己负责：轮次循环与终止条件（通过已有的 `LongRunningTaskRunner`）、每轮 prompt（`buildAutoDebugRoundPrompt` = 目标 + 上一轮有界证据）、把上一轮 validator 证据带回下一轮、停因 `LongRunningResult`。客户端保留各自的：回合内 transcript/阶段标签/steering（TUI）、协议事件与任务状态迁移（app-server）、错误映射（provider/凭据/所有权）。
+
+新增 `describeAutoDebugStop(result)` 作为失败文案的共享实现（TUI 的 `/resume` 提示在外面拼）。
+
+### 3.2 理由
+
+1. **P5 已经证明“常量共享”不够**：两边的循环体各自演进（steering 注入、错误映射、进度投影散在两处），任何一处改动都要在另一处重复。驱动把“什么时候开始下一轮、下一轮拿到什么”变成单一事实源。
+2. **不强行统一客户端语义**：TUI 用 transcript + 阶段标签 + `/resume` 文案；app-server 用协议事件 + 任务状态机（`longRunningState`/`longRunningErrorCode`）。这些是 surface 差异，不是策略差异，继续留在各自代码里。
+3. **不新增抽象层**：驱动直接复用 `LongRunningTaskRunner`（已有循环与进度/停因语义），只把“回合内容”与“证据回喂”搬进来，没有引入“第三套循环”。
+4. **证据仍在客户端入口脱敏**：TUI 用活动密钥快照、app-server 用 `sanitizeEvidenceSummary`，驱动只负责把返回值传给下一轮，并在构造 prompt 时再脱敏/限长一次（防御性）。
+
+### 3.3 涉及文件
+
+| 文件 | 变更 |
+|---|---|
+| `packages/runtime/src/auto-debug.ts` | 新增 `AutoDebugRound`、`AutoDebugLoopOptions`、`runAutoDebugLoop()`、`describeAutoDebugStop()` |
+| `packages/runtime/src/index.ts` | re-export（值 + 类型） |
+| `packages/runtime/src/auto-debug.test.ts` | 新增 4 例：首轮通过即停；修复轮拿到上一轮证据且每轮都重复目标；stall 与 budget 停因及文案；取消后不再开新轮 |
+| `apps/tui/src/main.ts` | `runAutoDebug()` 改为调用共享驱动；删除本地循环体与重复的常量/文案 |
+| `apps/app-server/src/main.ts` | Auto Debug 分支改为调用共享驱动；保留协议状态/错误映射与 steering 优先 |
+
+### 3.4 验证
+
+- `npm run build`、`npm run lint`、`npm run format:check` 通过。
+- 定向 `node --test packages/runtime/dist/auto-debug.test.js apps/app-server/dist/main.test.js` → 均通过；`apps/tui/dist/main.test.js` 与 app-server 合跑 111 例，仅 1 例既有沙箱环境失败。
+- 全量 `npm test`：除 6 个**既有**嵌套沙箱环境失败外全绿。
+
+### 3.5 未做（有意）
+
+- 未把 app-server 的 `longRunningState`/`longRunningErrorCode`/`longRunningStateReason` 搬进 runtime：它们映射的是 app-server 的协议事件与任务状态，和 TUI 的失败文案不是同一件事。

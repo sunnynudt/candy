@@ -49,16 +49,12 @@ import {
   GoalControlError,
   GoalToolHost,
   LongRunningControlError,
-  LongRunningTaskRunner,
   MAX_TASK_ATTACHMENT_BYTES,
   MAX_TASK_ATTACHMENT_COUNT,
   NonGitWorkspaceChangeTracker,
   ResolvedWorkspaceChangeTracker,
   WorkspaceHandoff,
-  DEFAULT_AUTO_DEBUG_ROUNDS,
-  DEFAULT_AUTO_DEBUG_STALL_LIMIT,
   billableTokens,
-  buildAutoDebugRoundPrompt,
   boundGoalText,
   buildGoalStartPrompt,
   fenceGoalData,
@@ -74,6 +70,7 @@ import {
   planGitWorktree,
   resolveGitCommonDirectory,
   resolveTaskWorktreeRoot,
+  runAutoDebugLoop,
 } from "@candy/runtime";
 
 interface PiTurnEngine {
@@ -846,67 +843,45 @@ export class AppServerController {
       }
 
       if (current.approvalProfile === "auto" && current.validator !== undefined) {
-        // Shared Auto Debug policy: the same round budget and repair-prompt
-        // contract the TUI uses.
-        const longRunning = new LongRunningTaskRunner(
-          DEFAULT_AUTO_DEBUG_ROUNDS,
-          DEFAULT_AUTO_DEBUG_STALL_LIMIT,
-        );
-        let latestEvidence = "";
-        const result = await longRunning.run(
-          async (_round, signal) => {
+        // Shared Auto Debug driver: the same round budget, stall limit, repair
+        // prompt, and stop reasons the TUI uses. This client only injects its
+        // own turn/validator callbacks and protocol projections.
+        const result = await runAutoDebugLoop({
+          goal: prompt,
+          signal: active.abort.signal,
+          runTurn: async (round) => {
             try {
-              // Repair rounds repeat the goal with bounded, redacted evidence.
+              // A queued user steering message wins the round; otherwise the
+              // driver's repair prompt carries the bounded evidence.
               const steering = this.consumeSteering(taskId);
-              const roundPrompt = buildAutoDebugRoundPrompt({
-                goal: prompt,
-                round: _round,
-                maxRounds: DEFAULT_AUTO_DEBUG_ROUNDS,
-                evidence: latestEvidence,
-              });
-              await runTurn(undefined, steering ?? roundPrompt);
+              await runTurn(undefined, steering ?? round.prompt);
             } catch (error) {
               if (error instanceof LongRunningControlError) throw error;
-              const code = taskErrorCode(error, signal);
+              const code = taskErrorCode(error, active.abort.signal);
               if (code === "needs_credentials" || code === "provider_error")
                 throw new LongRunningControlError("provider_failure");
               throw error;
             }
-            if (signal.aborted)
-              throw signal.reason instanceof Error
-                ? signal.reason
+            if (active.abort.signal.aborted)
+              throw active.abort.signal.reason instanceof Error
+                ? active.abort.signal.reason
                 : new LongRunningControlError("cancelled");
             const afterTurn = this.#store.get(taskId);
             if (this.ownsExecution(afterTurn)) emit(await this.workspaceChanges(afterTurn));
             else throw new LongRunningControlError("ownership_lost");
           },
-          {
-            run: async (signal) => {
-              const metadata = this.#store.get(taskId);
-              if (!metadata) throw new Error("Task metadata is unavailable.");
-              const outcome = await this.runValidator(
-                taskId,
-                metadata,
-                executionPath,
-                signal,
-                emit,
-              );
-              latestEvidence = outcome.evidence;
-              return outcome;
-            },
+          runValidator: async (signal) => {
+            const metadata = this.#store.get(taskId);
+            if (!metadata) throw new Error("Task metadata is unavailable.");
+            return this.runValidator(taskId, metadata, executionPath, signal, emit);
           },
-          active.abort.signal,
-          {
-            store: {
-              record: (progress) => {
-                if (!this.ownsExecution(this.#store.get(taskId))) return;
-                this.#store.recordRun({ taskId, ...progress });
-                const metadata = this.#store.get(taskId);
-                if (this.ownsExecution(metadata) && !this.#closed) emit(this.snapshot(metadata));
-              },
-            },
+          recordProgress: (progress) => {
+            if (!this.ownsExecution(this.#store.get(taskId))) return;
+            this.#store.recordRun({ taskId, ...progress });
+            const metadata = this.#store.get(taskId);
+            if (this.ownsExecution(metadata) && !this.#closed) emit(this.snapshot(metadata));
           },
-        );
+        });
         const metadata = this.#store.get(taskId);
         if (!this.ownsExecution(metadata)) return;
         if (result.completed) {

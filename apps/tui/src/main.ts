@@ -73,15 +73,15 @@ import {
   ResolvedWorkspaceChangeTracker,
   MAX_ATTACHMENT_BYTES,
   MAX_UNTRACKED_FILE_BYTES,
-  LongRunningTaskRunner,
   TaskController,
   TaskScheduler,
   UnavailableBrowserCapability,
   boundGoalText,
-  buildAutoDebugRoundPrompt,
   buildGoalStartPrompt,
   billableTokens,
+  describeAutoDebugStop,
   fenceGoalData,
+  runAutoDebugLoop,
   type CommandValidatorCommand,
   type GitWorktreePlan,
   type GoalContinuationSignals,
@@ -107,11 +107,7 @@ import {
   isCurrentModelChoice,
 } from "./slash-commands.js";
 import { createCandyGoalToolDefinitions } from "@candy/pi-adapter";
-import {
-  AUTO_DEBUG_TURN_INSTRUCTION,
-  DEFAULT_AUTO_DEBUG_ROUNDS,
-  DEFAULT_AUTO_DEBUG_STALL_LIMIT,
-} from "@candy/runtime";
+import { AUTO_DEBUG_TURN_INSTRUCTION, DEFAULT_AUTO_DEBUG_ROUNDS } from "@candy/runtime";
 
 /** Pi tool definitions Candy builds for one goal turn. */
 type TuiGoalToolDefinitions = ReturnType<typeof createCandyGoalToolDefinitions>;
@@ -3230,9 +3226,10 @@ export class InteractiveTui {
 
   /**
    * Bounded Auto Debug loop: model turn + validator until pass, stall, or
-   * budget. Each failing round appends the redacted validator evidence to the
-   * next prompt; progress is persisted through the run store. A non-pass stop
-   * throws so the task lands interrupted (explicit continuation only).
+   * budget. The round policy and prompt contract live in `@candy/runtime`'s
+   * shared driver; this method injects the TUI's transcript, phase label, and
+   * run-store projections. A non-pass stop throws so the task lands
+   * interrupted (explicit continuation only).
    */
   private async runAutoDebug(options: {
     readonly taskId: string;
@@ -3250,81 +3247,60 @@ export class InteractiveTui {
       throw new Error("Auto Debug is blocked: the native Sandbox Runner is unavailable.");
     if (taskSnapshot.validator === undefined)
       throw new Error("Auto Debug requires a configured validator.");
-    let lastEvidence = "";
-    const runner = new LongRunningTaskRunner(MAX_DEBUG_ROUNDS, DEFAULT_AUTO_DEBUG_STALL_LIMIT);
-    const result = await runner.run(
-      async (round, signal) => {
-        if (signal.aborted) throw new Error("Auto Debug turn cancelled.");
-        // Repair rounds repeat the goal with bounded, redacted validator evidence.
-        const roundPrompt = buildAutoDebugRoundPrompt({
-          goal,
-          round,
-          maxRounds: MAX_DEBUG_ROUNDS,
-          evidence: lastEvidence,
-        });
-        // runTask already wrote the initial goal as a user message; only
-        // evidence-fed repair rounds append their own prompt to the transcript.
-        if (round > 1) {
-          this.writeUser(transcriptText(roundPrompt));
+    const result = await runAutoDebugLoop({
+      goal,
+      signal: abort.signal,
+      runTurn: async (round) => {
+        // Repair rounds repeat the goal with bounded, redacted validator
+        // evidence. runTask already wrote the initial goal as a user message,
+        // so only those rounds append their own prompt to the transcript.
+        if (round.repair) {
+          this.writeUser(transcriptText(round.prompt));
           this.#store.appendTranscript(taskId, [
-            { role: "user", text: transcriptText(roundPrompt) },
+            { role: "user", text: transcriptText(round.prompt) },
           ]);
         }
-        this.#taskPhases.set(taskId, `debug round ${round}/${MAX_DEBUG_ROUNDS}`);
-        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets, roundPrompt));
+        this.#taskPhases.set(taskId, `debug round ${round.round}/${round.maxRounds}`);
+        await this.withActiveSecrets((activeSecrets) => runEngineTurn(activeSecrets, round.prompt));
       },
-      {
-        run: async (signal) => {
-          const outcome = await this.withActiveSecrets(async (activeSecrets) => ({
+      runValidator: async (signal) => {
+        const outcome = await this.withActiveSecrets(async (activeSecrets) => ({
+          activeSecrets,
+          result: await this.#validator!.run(
+            taskSnapshot.validator!,
+            executionPath,
+            signal,
             activeSecrets,
-            result: await this.#validator!.run(
-              taskSnapshot.validator!,
-              executionPath,
-              signal,
-              activeSecrets,
-            ),
-          }));
-          lastEvidence = redactSensitive(outcome.result.evidence, outcome.activeSecrets);
-          this.finishValidator(
-            taskId,
-            outcome.result.ok ? "pass" : "fail",
-            lastEvidence,
-            outcome.result.durationMs,
-          );
-          return outcome.result;
-        },
+          ),
+        }));
+        const evidence = redactSensitive(outcome.result.evidence, outcome.activeSecrets);
+        this.finishValidator(
+          taskId,
+          outcome.result.ok ? "pass" : "fail",
+          evidence,
+          outcome.result.durationMs,
+        );
+        return { ...outcome.result, evidence };
       },
-      abort.signal,
-      {
-        store: {
-          record: (progress) => {
-            const summary = progress.evidenceSummary ?? "";
-            this.#store.recordRun({
-              taskId,
-              rounds: progress.rounds,
-              evidenceCount: progress.evidenceCount,
-              completed: progress.completed,
-              stopReason: progress.stopReason as PersistedRunStopReason,
-              ...(progress.lastFingerprintHash === undefined
-                ? {}
-                : { lastFingerprintHash: progress.lastFingerprintHash }),
-              ...(summary.length === 0 ? {} : { evidenceSummary: summary.slice(0, 4_096) }),
-            });
-          },
-        },
+      recordProgress: (progress) => {
+        const summary = progress.evidenceSummary ?? "";
+        this.#store.recordRun({
+          taskId,
+          rounds: progress.rounds,
+          evidenceCount: progress.evidenceCount,
+          completed: progress.completed,
+          stopReason: progress.stopReason as PersistedRunStopReason,
+          ...(progress.lastFingerprintHash === undefined
+            ? {}
+            : { lastFingerprintHash: progress.lastFingerprintHash }),
+          ...(summary.length === 0 ? {} : { evidenceSummary: summary.slice(0, 4_096) }),
+        });
       },
-    );
-    if (!result.completed) {
-      const reason =
-        result.stopReason === "budget_exhausted"
-          ? `budget exhausted after ${result.rounds} rounds`
-          : result.stopReason === "stall_detected"
-            ? `validator evidence stalled after ${result.rounds} rounds`
-            : result.stopReason;
+    });
+    if (!result.completed)
       throw new Error(
-        `Auto Debug stopped: ${reason}. Review the saved evidence, then /resume ${taskId} <continuation> to continue.`,
+        `Auto Debug stopped: ${describeAutoDebugStop(result)}. Review the saved evidence, then /resume ${taskId} <continuation> to continue.`,
       );
-    }
   }
 
   /**

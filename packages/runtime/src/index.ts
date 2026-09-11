@@ -553,8 +553,10 @@ export {
   MAX_AUTO_DEBUG_EVIDENCE_CHARS,
   boundAutoDebugEvidence,
   buildAutoDebugRoundPrompt,
+  describeAutoDebugStop,
+  runAutoDebugLoop,
 } from "./auto-debug.js";
-export type { AutoDebugRoundInput } from "./auto-debug.js";
+export type { AutoDebugLoopOptions, AutoDebugRound, AutoDebugRoundInput } from "./auto-debug.js";
 export { GoalToolHost, listGoalToolDefinitions } from "./goal-tools.js";
 export type {
   GoalBudgetState,
