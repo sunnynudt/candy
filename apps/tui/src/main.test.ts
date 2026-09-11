@@ -4199,3 +4199,73 @@ test("interactive TUI rejects unsafe or invalid attachment paths", async () => {
     await rm(outside, { recursive: true, force: true });
   }
 });
+
+test("interactive TUI reports unavailable local commands instead of claiming offline checks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-unavailable-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      terminal,
+      trustedShellAutoAvailable: false,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    const startup = await waitForOutput(terminal, /本地命令不可用：/u);
+    assert.match(startup, /无法运行 shell 或 git/u);
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    const access = await waitForOutput(terminal, /访问模式：当前工作区/u);
+    assert.match(access, /本地检查不可用（/u);
+    assert.match(access, /平台门禁/u);
+    assert.doesNotMatch(access, /本地检查自动离线运行/u);
+    terminal.emitInput("/access safe");
+    terminal.emitInput("\r");
+    const safe = await waitForOutput(terminal, /访问模式：安全工作区/u);
+    assert.match(safe, /本地检查不可用（/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interactive TUI keeps the ready wording and stays quiet when local commands are available", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-ready-"));
+  const terminal = new FakeTerminal();
+  try {
+    const runPromise = new TestInteractiveTui({
+      appDataRoot: path.join(root, "app-data"),
+      terminal,
+      trustedShellAutoAvailable: true,
+      shellRunner: {
+        run: async () => ({ code: 0, signal: null, stdout: "", stderr: "", cancelled: false }),
+      },
+      engine: {
+        async *runTurn(input) {
+          yield { type: "turn.started", taskId: input.taskId };
+          yield { type: "turn.completed", taskId: input.taskId };
+        },
+      },
+    }).run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.emitInput("/access current");
+    terminal.emitInput("\r");
+    const access = await waitForOutput(terminal, /访问模式：当前工作区/u);
+    assert.match(access, /本地检查自动离线运行/u);
+    assert.doesNotMatch(access, /本地命令不可用：/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

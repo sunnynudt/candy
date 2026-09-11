@@ -753,6 +753,19 @@ export class InteractiveTui {
     for (const diagnostic of this.#modelConfigDiagnostics) {
       this.write(`models.json warning: ${diagnostic}\n`);
     }
+    // Local commands are the difference between a task that can read and write
+    // files and a task that can also run the repository's own commands (git,
+    // tests, builds). Never leave that capability quietly missing: the status
+    // bar alone does not explain it and /access would otherwise claim offline
+    // checks are ready.
+    const unavailableLocalCommands = this.localCommandUnavailability();
+    if (unavailableLocalCommands !== undefined) {
+      this.write(
+        `本地命令不可用：${unavailableLocalCommands}\n` +
+          "任务仍可读写文件，但无法运行 shell 或 git（如查看分支、创建分支、merge）。" +
+          "若从 Candy 源码仓运行，请在源码仓根目录启动，或用 CANDY_SANDBOX_RUNNER 指向 candy-sandbox-runner\n",
+      );
+    }
     try {
       this.#surface.start();
       await exitPromise;
@@ -3777,6 +3790,22 @@ export class InteractiveTui {
     );
   }
 
+  /**
+   * Why an Auto task cannot run local commands on this host, when Candy can
+   * tell. A missing runner and a closed platform gate are capability failures
+   * the user must see before the task starts; an explicit /local off is a
+   * choice and is not reported.
+   */
+  private localCommandUnavailability(): string | undefined {
+    if (this.#shellRunner === undefined)
+      return "未找到 Candy Sandbox Runner 可执行文件（安装包不完整或路径无法解析）";
+    if (!this.#trustedShellAutoAvailable || !isTrustedShellAutoAvailableOnHost())
+      return process.platform === "win32"
+        ? getWindowsTrustedShellCapabilityStatus().reason
+        : "本构建或本机架构未通过本地命令的平台门禁";
+    return undefined;
+  }
+
   private fullAccessAvailable(): boolean {
     return (
       this.#fullAccessAvailable && isFullAccessAvailableOnHost() && this.#shellRunner !== undefined
@@ -3934,10 +3963,13 @@ export class InteractiveTui {
     // Codex-style.
     if (value === "safe") this.setFullAccessDefault(false);
     const fullAccessNote = this.fullAccessEnabled() ? "；Full access 宽沙箱生效（文件+网络）" : "";
+    const localChecks = this.localCommandsEnabled()
+      ? "本地检查自动离线运行"
+      : `本地检查不可用（${this.localCommandUnavailability() ?? "已被 /local off 关闭"}）`;
     this.write(
       value === "safe"
-        ? "访问模式：安全工作区（默认）；新任务在隔离副本中工作，本地检查自动离线运行；网络仍逐条确认\n"
-        : `访问模式：当前工作区；新任务直接编辑当前工作区，本地检查自动离线运行；网络操作仍需逐条确认${fullAccessNote}\n`,
+        ? `访问模式：安全工作区（默认）；新任务在隔离副本中工作，${localChecks}；网络仍逐条确认\n`
+        : `访问模式：当前工作区；新任务直接编辑当前工作区，${localChecks}；网络操作仍需逐条确认${fullAccessNote}\n`,
     );
   }
 
