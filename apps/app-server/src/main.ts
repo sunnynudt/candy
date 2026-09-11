@@ -81,6 +81,13 @@ interface PiTurnEngine {
   recoverPrompt(taskId: string, cwd: string): Promise<string | undefined>;
 }
 
+/**
+ * Consecutive malformed JSONL lines the stdio loop tolerates before it stops
+ * serving. A single bad line is answered and skipped; a streak means the peer
+ * is not speaking the protocol, so the loop fails closed instead of spinning.
+ */
+export const MAX_CONSECUTIVE_INVALID_LINES = 8;
+
 export class PiAppServerEngine implements RecoverableAgentEngine {
   public constructor(
     private readonly deepseek: PiTurnEngine,
@@ -1775,20 +1782,37 @@ export function runAppServer(
   const write = (message: ProtocolMessage): void => {
     stdout.write(encodeJsonLine(message));
   };
+  const writeInvalidMessage = (): void => {
+    stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
+  };
   void (async () => {
     try {
-      for await (const message of decodeJsonLines(stdin)) {
+      let consecutiveInvalidLines = 0;
+      const messages = decodeJsonLines(stdin, {
+        onInvalidLine: () => {
+          consecutiveInvalidLines += 1;
+          // The peer is the app-managed owner of this process, so one bad line
+          // must not kill every task it holds; a *streak* of bad lines means it
+          // is not speaking the protocol, and Candy fails closed instead of
+          // answering a broken peer forever.
+          if (consecutiveInvalidLines >= MAX_CONSECUTIVE_INVALID_LINES) return "stop";
+          writeInvalidMessage();
+          return "skip";
+        },
+      });
+      for await (const message of messages) {
+        consecutiveInvalidLines = 0;
         try {
           const responses = await controller.dispatch(message, write);
           responses.forEach(write);
         } catch {
-          stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
+          writeInvalidMessage();
         }
       }
     } catch {
-      // A malformed JSONL line ends the decoder, but the server must answer
-      // with the protocol error envelope instead of crashing the process.
-      stdout.write('{"v":1,"kind":"error","code":"invalid_message"}\n');
+      // The final invalid line is answered here, then the loop closes cleanly
+      // instead of leaving an unhandled rejection behind.
+      writeInvalidMessage();
     } finally {
       controller.close();
     }

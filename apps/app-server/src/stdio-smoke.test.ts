@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runAppServer } from "./main.js";
+import { MAX_CONSECUTIVE_INVALID_LINES, runAppServer } from "./main.js";
 
 const sleep = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
@@ -82,6 +82,41 @@ test("a malformed JSONL line answers with the protocol error envelope", async ()
     const output = await harness.waitFor(/"code":"invalid_message"/u);
     assert.match(output, /"kind":"error"/u);
     assert.match(output, /"code":"invalid_message"/u);
+  } finally {
+    harness.stdin.end();
+    await rm(appDataRoot, { recursive: true, force: true });
+  }
+});
+
+test("the stdio loop keeps serving the commands that follow a malformed line", async () => {
+  const appDataRoot = await mkdtemp(path.join(tmpdir(), "candy-app-server-stdio-skip-"));
+  const harness = startStdio(appDataRoot);
+  try {
+    harness.send("not-json");
+    await harness.waitFor(/"code":"invalid_message"/u);
+    harness.send(snapshotCommand("after-bad-line"));
+    const output = await harness.waitFor(/"type":"snapshot"/u);
+    assert.match(output, /"kind":"event"/u);
+    assert.match(output, /"task-1"/u);
+  } finally {
+    harness.stdin.end();
+    await rm(appDataRoot, { recursive: true, force: true });
+  }
+});
+
+test("the stdio loop fails closed after a streak of malformed lines", async () => {
+  const appDataRoot = await mkdtemp(path.join(tmpdir(), "candy-app-server-stdio-stop-"));
+  const harness = startStdio(appDataRoot);
+  try {
+    for (let index = 0; index < MAX_CONSECUTIVE_INVALID_LINES; index += 1) harness.send("not-json");
+    await sleep(100);
+    const output = harness.output();
+    // One error envelope per malformed line, and nothing beyond that.
+    assert.equal((output.match(/"kind":"error"/gu) ?? []).length, MAX_CONSECUTIVE_INVALID_LINES);
+
+    harness.send(snapshotCommand("after-stop"));
+    await sleep(100);
+    assert.equal(harness.output(), output);
   } finally {
     harness.stdin.end();
     await rm(appDataRoot, { recursive: true, force: true });

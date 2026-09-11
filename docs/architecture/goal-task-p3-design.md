@@ -85,7 +85,7 @@ web-ui（`apps/app-server/src/web-ui.test.ts`，1 例）：`app.js` 含 goal 控
 **未验证（spawn 版）`npm run smoke:app-server`。** 症状：在本任务（外层 Candy 命令沙箱）里，该脚本 spawn `apps/app-server/dist/main.js` 并向 stdin 写入一条 `snapshot` 命令后等待子进程 exit；命令在沙箱内被中断（`Command aborted`），且把该 spawn 放进后台子 shell 也同样被中断——沙箱会清理长期存活的子进程。
 
 - **已在进程内等价验证（P5 补充）**：`apps/app-server/src/stdio-smoke.test.ts` 用 `PassThrough` 流调用 `runAppServer(stdin, stdout, { appDataRoot })`，发送与 smoke 完全相同的 JSONL 命令并断言同两个条件（`"kind":"event"`、`"task-1"`、`"type":"snapshot"`），另覆盖“连续两条有效命令”与“非法 JSONL 行”。因此 stdio 循环本身不依赖外部进程管理即可验证；spawn 版 smoke 仍保留给 CI／普通主机。
-- **顺带修复（P5 补充）**：非法 JSONL 行此前会以未处理拒绝结束 stdio 循环（可能带走进程），现在回 `{"v":1,"kind":"error","code":"invalid_message"}` 并干净关闭；“畸形行之后是否继续服务”需 protocol 层决策（跳过 vs 终止），已在 `goal-task-p5-design.md` §6 标注为后续问题。
+- **顺带修复（P5 补充）**：非法 JSONL 行此前会以未处理拒绝结束 stdio 循环（可能带走进程），现在回 `{"v":1,"kind":"error","code":"invalid_message"}` 并干净关闭；“畸形行之后是否继续服务”（跳过 vs 终止）已在 **P6 解决并实现**：完整行解码失败默认跳过并继续服务，连续 8 行失败才 fail closed（见 `goal-task-p5-design.md` §6.4 与 `goal-task-p6-design.md`）。
 - 复现与补验（普通主机）：
   1. `git fetch origin codex/candy-v1-foundation` 并检出对应提交；
   2. `npm run smoke:app-server`（预期输出 `app-server JSONL smoke ok`）；

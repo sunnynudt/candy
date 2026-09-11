@@ -88,6 +88,74 @@ test("bounded JSONL decoding handles frames split across byte chunks", async () 
   assert.deepEqual(messages, [snapshotCommandFixture]);
 });
 
+test("a skippable decode failure keeps the stream aligned on the next line", async () => {
+  async function* lines(): AsyncGenerator<string> {
+    const encoded = encodeJsonLine(snapshotCommandFixture);
+    yield "not-json\n";
+    yield encoded;
+    yield `${JSON.stringify({ v: 1, kind: "command" })}\n`;
+    yield `${"x".repeat(MAX_JSONL_BYTES + 1)}\n`;
+    yield encoded.trimEnd();
+  }
+  const codes: string[] = [];
+  const messages: unknown[] = [];
+  for await (const message of decodeJsonLines(lines(), {
+    onInvalidLine: (error) => {
+      codes.push(error.code);
+      return "skip";
+    },
+  }))
+    messages.push(message);
+
+  assert.deepEqual(codes, ["invalid_message", "invalid_message", "line_too_large"]);
+  assert.deepEqual(messages, [snapshotCommandFixture, snapshotCommandFixture]);
+});
+
+test("a decode failure stops the stream by default and on an explicit stop policy", async () => {
+  async function* invalid(): AsyncGenerator<string> {
+    yield "not-json\n";
+    yield "not-json-either\n";
+  }
+  const isInvalidMessage = (error: unknown): boolean =>
+    error instanceof ProtocolValidationError && error.code === "invalid_message";
+
+  await assert.rejects(async () => {
+    for await (const _message of decodeJsonLines(invalid())) void _message;
+  }, isInvalidMessage);
+
+  let calls = 0;
+  await assert.rejects(async () => {
+    for await (const _message of decodeJsonLines(invalid(), {
+      onInvalidLine: () => {
+        calls += 1;
+        return "stop";
+      },
+    }))
+      void _message;
+  }, isInvalidMessage);
+  assert.equal(calls, 1);
+});
+
+test("an unterminated oversized frame stays fatal even when lines are skippable", async () => {
+  async function* oversized(): AsyncGenerator<string> {
+    yield "x".repeat(MAX_JSONL_BYTES + 1);
+  }
+  let calls = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _message of decodeJsonLines(oversized(), {
+        onInvalidLine: () => {
+          calls += 1;
+          return "skip";
+        },
+      }))
+        void _message;
+    },
+    (error: unknown) => error instanceof ProtocolValidationError && error.code === "line_too_large",
+  );
+  assert.equal(calls, 0);
+});
+
 test("task ids are path-safe at the protocol boundary", () => {
   assert.doesNotThrow(() =>
     validateProtocolMessage({ ...snapshotCommandFixture, taskId: "task_ok-1" }),

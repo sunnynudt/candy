@@ -882,12 +882,47 @@ export function decodeJsonLine(line: string): ProtocolMessage {
 }
 
 /**
+ * How the decoder treats a complete line it cannot decode. `stop` (the
+ * default) fails closed and surfaces the error to the caller; `skip` drops the
+ * line so the stream stays aligned on the next newline.
+ */
+export type InvalidLinePolicy = "skip" | "stop";
+
+export interface JsonLineDecodeOptions {
+  /**
+   * Called once per invalid complete line. Returning `skip` drops the line and
+   * keeps reading; anything else rethrows. Line framing failures that cannot be
+   * resynchronized are never routed here.
+   */
+  readonly onInvalidLine?: (error: ProtocolValidationError) => InvalidLinePolicy;
+}
+
+/**
  * Decode a byte stream without allowing the underlying line reader to
  * materialize an unbounded unterminated JSONL frame first.
+ *
+ * A complete line that is unparseable, oversized, or shape-invalid is reported
+ * through `options.onInvalidLine`; an *unterminated* frame that passes
+ * `MAX_JSONL_BYTES` stays fatal, because the reader cannot tell where the next
+ * valid message starts.
  */
 export async function* decodeJsonLines(
   chunks: AsyncIterable<Uint8Array | string>,
+  options: JsonLineDecodeOptions = {},
 ): AsyncGenerator<ProtocolMessage> {
+  const decodeCompleteLine = (line: Buffer): ProtocolMessage | undefined => {
+    let failure: ProtocolValidationError;
+    try {
+      return decodeJsonLine(line.toString("utf8"));
+    } catch (error) {
+      failure =
+        error instanceof ProtocolValidationError
+          ? error
+          : new ProtocolValidationError("invalid_message", "Protocol line is not valid JSON.");
+    }
+    if (options.onInvalidLine?.(failure) === "skip") return undefined;
+    throw failure;
+  };
   let pending = Buffer.alloc(0);
   for await (const chunk of chunks) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -896,12 +931,10 @@ export async function* decodeJsonLines(
       if (bytes[index] !== 0x0a) continue;
       const segment = bytes.subarray(start, index);
       const line = pending.length === 0 ? segment : Buffer.concat([pending, segment]);
-      if (line.length > MAX_JSONL_BYTES) {
-        throw new ProtocolValidationError("line_too_large", "Protocol line is too large.");
-      }
-      yield decodeJsonLine(line.toString("utf8"));
+      const message = decodeCompleteLine(line);
       pending = Buffer.alloc(0);
       start = index + 1;
+      if (message !== undefined) yield message;
     }
     const tail = bytes.subarray(start);
     if (tail.length > 0) {
@@ -911,7 +944,10 @@ export async function* decodeJsonLines(
       pending = pending.length === 0 ? Buffer.from(tail) : Buffer.concat([pending, tail]);
     }
   }
-  if (pending.length > 0) yield decodeJsonLine(pending.toString("utf8"));
+  if (pending.length > 0) {
+    const message = decodeCompleteLine(pending);
+    if (message !== undefined) yield message;
+  }
 }
 
 export class CommandLedger {
