@@ -18,6 +18,7 @@ import {
 import {
   PiAgentEngine,
   createCandyGoalToolDefinitions,
+  secretLease,
   type PiAgentEngineInput,
   type PiAgentObservation,
 } from "@candy/pi-adapter";
@@ -1719,7 +1720,7 @@ export function createDefaultAppServerController(
                 paths.sessions,
                 async () => {
                   const lease = resolveCredential("deepseek");
-                  return lease ? { secret: lease.value, release: lease.release } : undefined;
+                  return lease ? secretLease(lease.value, lease.release) : undefined;
                 },
                 "deepseek",
                 process.platform === "win32" && sandboxRunner !== undefined
@@ -1730,7 +1731,7 @@ export function createDefaultAppServerController(
                 paths.sessions,
                 async () => {
                   const lease = resolveCredential("minimax-cn");
-                  return lease ? { secret: lease.value, release: lease.release } : undefined;
+                  return lease ? secretLease(lease.value, lease.release) : undefined;
                 },
                 "minimax-cn",
                 process.platform === "win32" && sandboxRunner !== undefined

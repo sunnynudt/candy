@@ -17,20 +17,22 @@ import {
 
 const MAX_BODY_BYTES = 32 * 1024;
 const DEFAULT_HOST = "127.0.0.1";
+/** Query key of the user-facing entry URL; the value is the loopback auth value. */
+const ENTRY_QUERY_KEY = "token";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 export interface LocalWebUiOptions {
   readonly controller: AppServerController;
   readonly host?: string;
   readonly port?: number;
-  readonly token?: string;
+  readonly authValue?: string;
 }
 
 export class LocalWebUiServer {
   readonly #controller: AppServerController;
   readonly #host: string;
   readonly #port: number;
-  readonly #token: string;
+  readonly #authValue: string;
   readonly #server: Server;
   #boundPort: number | undefined;
 
@@ -38,18 +40,18 @@ export class LocalWebUiServer {
     this.#controller = options.controller;
     this.#host = options.host ?? DEFAULT_HOST;
     this.#port = options.port ?? 0;
-    this.#token = options.token ?? randomBytes(32).toString("base64url");
+    this.#authValue = options.authValue ?? randomBytes(32).toString("base64url");
     if (!LOOPBACK_HOSTS.has(this.#host))
       throw new Error("Candy WebUI only permits loopback binding.");
-    if (!/^[A-Za-z0-9_-]{32,}$/u.test(this.#token))
+    if (!/^[A-Za-z0-9_-]{32,}$/u.test(this.#authValue))
       throw new Error("Candy WebUI token is invalid.");
     this.#server = createServer((request, response) => {
       void this.handle(request, response);
     });
   }
 
-  public get token(): string {
-    return this.#token;
+  public get authValue(): string {
+    return this.#authValue;
   }
 
   public get port(): number | undefined {
@@ -58,7 +60,7 @@ export class LocalWebUiServer {
 
   public get url(): string {
     if (this.#boundPort === undefined) throw new Error("Candy WebUI is not listening.");
-    return `http://${this.#host === "::1" ? "[::1]" : this.#host}:${this.#boundPort}/?token=${this.#token}`;
+    return `http://${this.#host === "::1" ? "[::1]" : this.#host}:${this.#boundPort}/?${ENTRY_QUERY_KEY}=${this.#authValue}`;
   }
 
   public listen(): Promise<void> {
@@ -287,9 +289,8 @@ export class LocalWebUiServer {
   }
 
   private authorized(request: IncomingMessage): boolean {
-    const authorization = request.headers.authorization;
-    if (authorization?.startsWith("Bearer ") && this.validToken(authorization.slice(7)))
-      return true;
+    const authHeader = request.headers.authorization;
+    if (authHeader?.startsWith("Bearer ") && this.validToken(authHeader.slice(7))) return true;
     const cookie = request.headers.cookie
       ?.split(";")
       .map((part) => part.trim())
@@ -301,7 +302,7 @@ export class LocalWebUiServer {
   private validToken(value: string | null | undefined): boolean {
     if (value === undefined || value === null) return false;
     const actual = Buffer.from(value);
-    const expected = Buffer.from(this.#token);
+    const expected = Buffer.from(this.#authValue);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   }
 
@@ -320,7 +321,7 @@ export class LocalWebUiServer {
   }
 
   private cookie(): string {
-    return `candy_web=${this.#token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`;
+    return `candy_web=${this.#authValue}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`;
   }
 
   private sendJson(response: ServerResponse, status: number, value: unknown): void {

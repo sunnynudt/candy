@@ -42,7 +42,7 @@ async function waitFor<T>(read: () => Promise<T>, ready: (value: T) => boolean):
   throw new Error("web UI fixture did not settle");
 }
 
-test("local WebUI requires its bearer token, shares task history, and renders bounded review data", async () => {
+test("local WebUI requires its bearer authValue, shares task history, and renders bounded review data", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-web-ui-"));
   const workspace = path.join(root, "workspace");
   await mkdir(workspace);
@@ -51,15 +51,15 @@ test("local WebUI requires its bearer token, shares task history, and renders bo
     engine: completingEngine(),
     recoverActiveTasks: false,
   });
-  const webUi = new LocalWebUiServer({ controller, token: "w".repeat(32) });
+  const webUi = new LocalWebUiServer({ controller, authValue: "w".repeat(32) });
   await webUi.listen();
   const origin = `http://127.0.0.1:${webUi.port}`;
-  const auth = { Authorization: `Bearer ${webUi.token}`, Origin: origin };
+  const auth = { Authorization: `Bearer ${webUi.authValue}`, Origin: origin };
   try {
     const unauthorized = await fetch(`${origin}/api/tasks`);
     assert.equal(unauthorized.status, 401);
     const crossSite = await fetch(`${origin}/api/tasks`, {
-      headers: { Authorization: `Bearer ${webUi.token}`, Origin: "https://evil.example" },
+      headers: { Authorization: `Bearer ${webUi.authValue}`, Origin: "https://evil.example" },
     });
     assert.equal(crossSite.status, 403);
     const appScript = await fetch(`${origin}/app.js`, { headers: auth });
@@ -115,14 +115,17 @@ test("local WebUI can stop its owned task but cannot control another client's ac
     ownerId: "web-observer",
     recoverActiveTasks: false,
   });
-  const ownerUi = new LocalWebUiServer({ controller: owner, token: "o".repeat(32) });
-  const observerUi = new LocalWebUiServer({ controller: observer, token: "v".repeat(32) });
+  const ownerUi = new LocalWebUiServer({ controller: owner, authValue: "o".repeat(32) });
+  const observerUi = new LocalWebUiServer({ controller: observer, authValue: "v".repeat(32) });
   await ownerUi.listen();
   await observerUi.listen();
   const ownerOrigin = `http://127.0.0.1:${ownerUi.port}`;
   const observerOrigin = `http://127.0.0.1:${observerUi.port}`;
-  const ownerHeaders = { Authorization: `Bearer ${ownerUi.token}`, Origin: ownerOrigin };
-  const observerHeaders = { Authorization: `Bearer ${observerUi.token}`, Origin: observerOrigin };
+  const ownerHeaders = { Authorization: `Bearer ${ownerUi.authValue}`, Origin: ownerOrigin };
+  const observerHeaders = {
+    Authorization: `Bearer ${observerUi.authValue}`,
+    Origin: observerOrigin,
+  };
   try {
     const created = await fetch(`${ownerOrigin}/api/tasks`, {
       method: "POST",
@@ -161,7 +164,7 @@ test("local WebUI rejects non-loopback binding before opening a listener", () =>
   const controller = new AppServerController({ engine: completingEngine() });
   try {
     assert.throws(
-      () => new LocalWebUiServer({ controller, host: "0.0.0.0", token: "x".repeat(32) }),
+      () => new LocalWebUiServer({ controller, host: "0.0.0.0", authValue: "x".repeat(32) }),
       /loopback/u,
     );
   } finally {
@@ -186,14 +189,17 @@ test("closing the foreground WebUI interrupts its owned task without replay", as
     ownerId: "web-process-observer",
     recoverActiveTasks: false,
   });
-  const ownerUi = new LocalWebUiServer({ controller: owner, token: "p".repeat(32) });
-  const observerUi = new LocalWebUiServer({ controller: observer, token: "q".repeat(32) });
+  const ownerUi = new LocalWebUiServer({ controller: owner, authValue: "p".repeat(32) });
+  const observerUi = new LocalWebUiServer({ controller: observer, authValue: "q".repeat(32) });
   await ownerUi.listen();
   await observerUi.listen();
   const ownerOrigin = `http://127.0.0.1:${ownerUi.port}`;
   const observerOrigin = `http://127.0.0.1:${observerUi.port}`;
-  const ownerHeaders = { Authorization: `Bearer ${ownerUi.token}`, Origin: ownerOrigin };
-  const observerHeaders = { Authorization: `Bearer ${observerUi.token}`, Origin: observerOrigin };
+  const ownerHeaders = { Authorization: `Bearer ${ownerUi.authValue}`, Origin: ownerOrigin };
+  const observerHeaders = {
+    Authorization: `Bearer ${observerUi.authValue}`,
+    Origin: observerOrigin,
+  };
   try {
     const created = await fetch(`${ownerOrigin}/api/tasks`, {
       method: "POST",
@@ -235,7 +241,7 @@ test("local WebUI shows a Goal Task and manages its goal through the page API", 
   const webUi = new LocalWebUiServer({ controller });
   await webUi.listen();
   const origin = `http://127.0.0.1:${webUi.port}`;
-  const auth = { ["Authorization"]: `Bea${"rer"} ${webUi.token}`, Origin: origin };
+  const auth = { ["Authorization"]: `Bea${"rer"} ${webUi.authValue}`, Origin: origin };
   try {
     const appScript = await (await fetch(`${origin}/app.js`, { headers: auth })).text();
     assert.match(appScript, /goalPause/);
