@@ -12,6 +12,29 @@ const MAX_NATIVE_REQUEST_BYTES = MAX_PROTOCOL_LINE_BYTES - 1;
 // larger protocol-frame bound than the raw child-output bound.
 const MAX_RESPONSE_BYTES = MAX_OUTPUT_BYTES * 12 + 4_096;
 
+/**
+ * Plain-language meaning for each bounded rejection code the Sandbox Runner
+ * can return. The code alone is opaque to the user and to the model, which
+ * otherwise retries the same impossible command; the text stays credential-
+ * free and never echoes a path, so it is safe in the transcript.
+ */
+const NATIVE_REJECTION_REASONS: Readonly<Record<string, string>> = {
+  invalid_path:
+    "a path for this command was missing or unreadable, or a write grant contained the task workspace",
+  workspace_escape: "the working directory was outside the task workspace",
+  reparse_forbidden: "a path component was a symbolic link or reparse point",
+  secret_forbidden: "the request carried credential-shaped content",
+  network_forbidden: "this platform cannot grant network access to the command",
+  full_access_unavailable: "Full access is unavailable on this platform backend",
+  unsupported_capability: "this Sandbox Runner does not support the requested capability",
+  job_object_failed: "the process tree could not be owned",
+  line_too_large: "the request exceeded the Sandbox Runner protocol bound",
+  invalid_message: "the request was malformed",
+  unsupported_version: "the Sandbox Runner protocol version is not supported",
+  unsupported_platform: "this platform has no Sandbox Runner backend",
+  runtime_error: "the Sandbox Runner reported an internal error",
+};
+
 export interface NativeProcessRequest {
   readonly executable: string;
   readonly args: readonly string[];
@@ -424,7 +447,8 @@ function parseNativeProcessResponse(
       typeof parsed === "object" && parsed !== null && "code" in parsed
         ? String((parsed as { readonly code?: unknown }).code)
         : "unknown";
-    throw new Error(`Sandbox Runner rejected the validator request (${code}).`);
+    const reason = NATIVE_REJECTION_REASONS[code] ?? "the Sandbox Runner returned no reason";
+    throw new Error(`Sandbox Runner rejected the local command (${code}): ${reason}.`);
   }
   const response = parsed as Partial<NativeProcessCompletedResponse>;
   if (

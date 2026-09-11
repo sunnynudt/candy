@@ -64,6 +64,26 @@ implementation entries that recorded "Git metadata/ref/reflog write denial"
 describe the superseded profile and are superseded for this property; platform
 enablement from ADR-0010 is unchanged.
 
+## Amendment: a workspace nested inside its own Git common directory
+
+Candy creates a Task Worktree under `<repo>/.git/candy-worktrees/<task>`. That
+worktree can itself be the selected workspace, which happens when Candy is
+started inside a task worktree for its own development. The repository's Git
+common directory is then an **ancestor** of the workspace, so the grant above
+would contain the workspace root and was refused by the runner: the whole shell
+request failed with `invalid_path`, not just the structural Git subcommands.
+
+The control plane now decides each Git metadata path separately:
+
+- inside the workspace — no grant, the workspace is already writable;
+- containing the workspace — downgraded to `readOnlyPaths`, so no request can
+  widen writes beyond the task's own tree while Git can still read the
+  repository metadata it needs to resolve `.git`;
+- otherwise — the `writablePaths` grant described above, unchanged.
+
+The ordinary linked-Worktree case therefore keeps both write grants, and the
+platform and runner contracts are unchanged.
+
 ## Measured profile semantics
 
 The macOS profile is default-deny and resolves one operation by the **last

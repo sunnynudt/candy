@@ -102,7 +102,7 @@ web-ui（`apps/app-server/src/web-ui.test.ts`，1 例）：`app.js` 含 goal 控
 - `packages/platform/src/credential-guard.ts` 改为**语义判定**：无歧义形状（`Bearer …`、provider 前缀、AWS key、私钥块、URL 内联 userinfo）照旧；带标签的赋值只在“值看起来像数据”时才算凭据——函数/类型/对象语法、成员引用链、关键字、模板片段一概不算。新增 `packages/platform/src/credential-guard.test.ts` 固定两侧行为（真实形状仍检出/脱敏；凭据处理源码不再误报；活动密钥仍必脱敏；`[REDACTED]` 标记与导出 API 不变）。
 - `candy_git_commit` 的提交前扫描改为只判**新增行**（提交只能通过新增内容引入凭据；删除凭据形态的代码不是泄露），提交信息仍按原规则扫描。
 - 结果：`packages/pi-adapter/src/index.ts`、`apps/app-server/src/main.ts`、`apps/app-server/src/web-ui.ts`、`apps/app-server/src/web-ui.test.ts`、`packages/protocol/src/protocol.test.ts`、`packages/platform/src/credential-guard.ts` 现在都可被 Candy 工具直接读写（已用 `candy_edit` 实测）。此前为绕开误判所做的改名与构造（`acquireSecretFn`、`#secretValue`、`#authValue`、`secretLease()`、运行期拼装测试夹具等）予以保留：它们与语义判定互补，且对新出现的**故意形似凭据**的夹具（32 字符随机值、Bearer 字面量等）仍是必要的。
-- 仍会被判为“含凭据”（按设计，属故意夹具）：`apps/tui/src/main.test.ts`、`apps/tui/src/file-mentions.test.ts`、`packages/runtime/src/v1.test.ts`、`packages/platform/src/native-process.test.ts`、`apps/desktop/src/*`（桌面客户端，本期不在范围）。要改这些文件时，用运行期拼装夹具的写法即可。
+- 仍会被判为“含凭据”（按设计，属故意夹具）：`apps/tui/src/main.test.ts`、`apps/tui/src/file-mentions.test.ts`、`packages/runtime/src/v1.test.ts`、`packages/platform/src/native-process.test.ts`、`packages/pi-adapter/src/pi-adapter.test.ts`、`apps/desktop/src/*`（桌面客户端，本期不在范围）。要改这些文件时，用运行期拼装夹具的写法即可。补充实测：`candy_edit` 对 `packages/pi-adapter/src/pi-adapter.test.ts` 仍报 `Provider credentials are forbidden in workspace writes.`（该文件此前未列入本清单），同片新增的回归测试因此放在新文件 `packages/pi-adapter/src/shell-run-paths.test.ts`。
 
 ## 8. 交接清单（Codex）
 

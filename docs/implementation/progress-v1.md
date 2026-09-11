@@ -2,6 +2,16 @@
 
 Updated: 2026-08-25
 
+## 嵌套 Task Worktree 工作区的本地命令修复 checkpoint（待普通终端验证）
+
+- **实测缺陷**：当被选中的工作区**本身**是一个位于 `<repo>/.git/candy-worktrees/<task>` 的 Candy Task Worktree 时（自迭代场景），`candy_bash` 对任何命令都返回 `Sandbox Runner rejected the validator request (invalid_path)`，本地命令完全不可用；同一任务里 read/write/edit/search 均正常。触发链：linked Worktree 的 common dir（`<repo>/.git`）是这个工作区的祖先 → 控制面把它登记进 `writablePaths` → runner 的“写授权不得包含工作区根”规则（`native/sandbox-runner/src/main.rs:341-352`）直接拒绝整个请求。ADR-0017 的“授权绝不包含工作区根”只覆盖了常见形态，没有覆盖工作区位于 common dir 之内的形态。
+- **产品修复**：`resolveCandyShellRunPaths` 改为对每个 Git 元数据路径单独判定——位于工作区内（已可写，跳过）、包含工作区（降级为 `readOnlyPaths`，只读不放大写权限）、其余（维持 `writablePaths`）。降级保留了 Git 解析仓库所需的元数据读取，写权限仍不超出任务自身目录；profile 中工作区 `allow file-write*` 仍在最后，工作区自身写权限不受影响。
+- **诊断改进**：`packages/platform/src/native-process.ts` 的 runner 拒绝信息不再一律输出 “rejected the validator request”，改为按错误码映射为可读原因（如 `invalid_path` → 路径缺失/不可读，或写授权包含了任务工作区），文案不含路径与凭据，避免模型对不可能成功的命令盲目重试。
+- **分层（纯移动式重构）**：本地命令策略整体（`wrapCandyShellCommand`、`createCandyShellEnvironment`、`createCandyFullAccessEnvironment`、`resolveCandyShellRunPaths`、Node 运行时与进程执行路径解析、内部 `trySync`/`isPathWithin`）从 `packages/pi-adapter/src/index.ts` 移到新模块 `packages/pi-adapter/src/shell-run-policy.ts`；index 只保留工具定义与调用点，并去掉已不再使用的 `lstatSync`/`readFileSync`/`realpathSync` 导入。`CandyBashPathSeam` 仍是 index 的公开类型，新模块用 `import type` 引用（类型导入运行时被擦除，不构成循环依赖）。行为未变，仅减少 index.ts 的回归半径（约 230 行），安全关键路径策略现在是可单独审阅的一个文件。`apps/tui/src/main.ts` 的拆分未做：渲染/命令分派/生命周期高度耦合，在没有编译与测试反馈的情况下做大规模移动风险不可控，建议单独工作包。
+- **回归覆盖**：新增 `packages/pi-adapter/src/shell-run-paths.test.ts`：①工作区位于 Git common dir 之内时不再发送包含工作区的写授权、该路径降级为只读、且所有写授权都不包含工作区（直接镜像 runner 规则）；②普通 linked Worktree 形态仍同时授权 gitdir 与 common dir。
+- **验证状态**：本次会话的 `candy_bash` 因上述缺陷不可用，无法运行 `npm run check`；build、typecheck、Prettier、ESLint 与定向测试**均未执行**（包括纯移动式重构后的编译与既有适配器测试）。必须在普通终端跑 `npm run check`（含新测试）后再提交与推送，本条目不构成已验证 checkpoint。
+- **附带发现（已知设计行为，仅补清单）**：Candy 的凭据写入守卫按整份文件内容判定，故意形似凭据的夹具文件（见 `docs/architecture/goal-task-p3-design.md` §7）无法用 `candy_edit`/`candy_write` 修改。本次实测 `packages/pi-adapter/src/pi-adapter.test.ts` 也属于这一类（此前未列入 §7 清单，已补），因此新增回归测试放在新文件 `packages/pi-adapter/src/shell-run-paths.test.ts`；该测试文件后续的改动需按 §7 约定（运行期拼装夹具或一次性脚本）处理。
+
 ## 2026-09-11 Trusted Shell 结构级 Git 写入授权 checkpoint
 
 - **产品修复（ADR-0017）**：命令策略层一直允许 `git branch` / `git checkout` / `git switch` / `git merge` / `git rebase` / `git restore` / `git reset` 这类结构级子命令，但 macOS profile 把**所有** Git 元数据登记为只读，导致这些命令在任意工作区形态下都返回 `Operation not permitted`；linked Worktree（如 `<repo>/.claude/worktrees/<name>`）的 gitdir 与 common dir 位于所选工作区之外，工作区授权永远覆盖不到。现在控制面把一次 shell run 的路径策略拆成 `readOnlyPaths`（Node 运行时根、受信依赖目录、`.git` 标记文件）与 `writablePaths`（任务自身仓库的 Worktree gitdir 与 common dir），由 runner 施加为有界 subpath 规则；仓库自身的 `.git` 目录位于工作区内时无需额外授权（不再被钉成只读）。commit/push 仍在命令策略层被拒（只走 `candy_git_commit` 与任务级 `/push allow`），`--hard` / `--force` / `--force-with-lease` / `-f` / `--discard-changes` 等会丢弃用户未提交改动的形态在审批与 spawn 之前就被拒；`.git` 标记保持只读（任务不能把 Worktree 改指向其它仓库），授权路径不允许包含工作区根。Windows 侧该授权未实现且其 Trusted Shell Auto / Full Access 门禁仍关闭，携带 `writablePaths` 的请求 fail closed（`unsupported_capability`），不静默降级。
