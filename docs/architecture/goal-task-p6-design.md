@@ -1,6 +1,6 @@
 # Goal Task P6：P5 遗留三项收尾
 
-状态：**进行中**——④（stdio 非法行策略）已完成并验证；①（`/goal edit` 输入行通道）与 ②（Auto Debug 循环体合并）待做。
+状态：**进行中**——④（stdio 非法行策略）与①（`/goal edit` 预填命令行通道）已完成并验证；②（Auto Debug 循环体合并）待做。
 范围：macOS 先行；Windows 相关复核整体推迟。
 前置：`docs/architecture/goal-task-p5-design.md` §6（三项遗留）、[`goal-task-p3-design.md`](./goal-task-p3-design.md) §6/§7（stdio 冒烟与工具链守卫）。
 
@@ -46,10 +46,47 @@ P5 留下的开放问题是“畸形行之后继续服务（跳过）还是终�
 - 桌面端 `apps/desktop/src/main.ts` 仍用默认策略（读取子进程 stdout 时畸形行终止读取）。桌面端属 V2 范围，本片不改。
 - `controller.dispatch` 抛错时仍统一回 `invalid_message` 信封（未回具体 `code`），且不计入连败预算——那属于“合法帧、非法命令”，每行输入仍只换一条输出。
 
-## 2. ① `/goal edit` 改走“预填输入行 + 编辑器通道”
+## 2. ① `/goal edit`：预填可编辑命令行 + Ctrl+G
 
-待实现。P5 记录：外部编辑器路径在 pi-tui 命令分发过程中 stop/start 渲染循环后，测试终端不再接收输入（`:quit` 失效），已回滚。
+### 2.1 决策
 
-## 3. ② Auto Debug 循环体深度合并
+`/goal edit`（无参）不再自己打开编辑器，也不在命令分发过程中停/启 pi-tui 的渲染循环，而是：
+
+1. 把当前目标写成一条**完整可编辑的命令行**预填到输入行：`/goal replace <objective> [--criterion <text>] [--turns <n>] [--tokens <n>] [--minutes <n>]`；
+2. 把该行的“改完按 Enter 重新开启目标 · Ctrl+G 外部编辑”提示写进 transcript；
+3. 用户直接改行文，或按 Ctrl+G 把整条命令交给 `$EDITOR`（这条通道 P5 已验证可重复使用，编辑结果写回输入行），再按 Enter 提交；
+4. 提交后走的是**已有的 `/goal replace` 路径**（同一校验、同一 goal 状态机、同一 steering/续跑分支），没有新的写回路径。
+
+`/goal edit <objective>` 保持原有的 replace 等价行为不变（只对无参形式启用预填）。
+
+### 2.2 理由
+
+1. **不复用出问题的那段机制**：P5 的失败根因是命令分发中 stop/start 渲染循环；预填输入行只调用已存在的 `editor.setText()`，不碰渲染循环生命周期。
+2. **预填是“用户可见且可改”的**：目标不会因为输入 `/goal edit` 就被隐式改写；改动必须由用户显式提交。
+3. **必须带上预算**：`setGoal` 对省略的预算写 `null`（“无预算”），所以预填必须回填当前回合/token/墙钟预算，否则一次“只想改目标文字”的编辑会静默清掉预算。
+4. **回填不了的要报出来**：`/goal` 只接受 `--minutes`（整分钟），且目标/判据里出现 `--turns`/`--minutes`/`--tokens` 这类 token 会在提交时被当选项重读；这两种情况在预填时给 warning，而不是静默地改掉语义。（非整分钟的墙钟预算目前只能由 app-server/WebUI 写入，TUI 写不出来。）
+5. **不改状态栏/无模式**：没有引入“编辑模式”这类新状态，因此不会与排队输入、steering、自动续跑交错。
+
+### 2.3 涉及文件
+
+| 文件 | 变更 |
+|---|---|
+| `apps/tui/src/pi-tui-surface.ts` | 新增 `prefillInput(value)`：`editor.setText(value)` + `requestRender` |
+| `apps/tui/src/main.ts` | `buildGoalEditCommand()`（目标/判据/预算回填）、`goalEditWarnings()`（flag 冲突与非整分钟墙钟）、`editGoal()`；`/goal edit` 无参走预填，带参仍为 replace |
+| `apps/tui/src/goal-task.test.ts` | 新增 2 例：预填内容含目标/判据/`--turns`，提交后 store 目标被替换且预算保留；带 `--turns` 的客观目标 + 90000ms 墙钟预算给出两条 warning，且提交被 `/goal` 拒绝（证明 warning 对应真问题） |
+| `docs/usage/tui-commands.md`、`goal-task-p2-design.md`、`goal-task-proposal.md`、`goal-task-p5-design.md` | 命令表与历史记录同步 |
+
+### 2.4 验证
+
+- `npm run build`、`npm run lint`、`npm run format:check` 通过。
+- 定向 `node --test apps/tui/dist/goal-task.test.js` → 10/10；`main.test.js + pi-tui-surface.test.js + plan-build.test.js` → 112 例中仅 1 例既有沙箱环境失败。
+- 全量 `npm test`：除 6 个**既有**嵌套沙箱环境失败外全绿。
+
+### 2.5 未做（有意）
+
+- 预填不包含“重新确认”交互：`/goal replace` 本身没有二次确认，改变的是“先看到完整命令行再提交”。
+- 仍未允许 objective/criterion 里的 flag-like token 往返：那是 `/goal` 命令语法本身的限制，不在本项范围。
+
+## 3. ② Auto Debug 循环体合并
 
 待实现。P5 已把会漂移的常量与 prompt 契约收敛到 `packages/runtime/src/auto-debug.ts`；本项要把“跑一轮 + 跑 validator + 记录进度 + 停因映射”也收敛为一个 driver。

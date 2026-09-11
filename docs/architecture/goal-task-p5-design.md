@@ -48,7 +48,7 @@ P5 收尾同时解除了主要“因守卫误判而不可写”的文件（`pi-a
 ## 6. 未完成 / 后续可选
 
 1. **Auto Debug 循环体合并**：把“跑一轮 + 跑 validator + 记录进度 + 停因映射”做成 runtime 内的一个驱动函数，两个客户端只注入 turn/validator 回调。风险：两个客户端的任务状态与事件模型不同，需要先约定跨客户端契约。
-2. **`/goal edit` 外部编辑器编辑（已尝试，暂缓）**：曾实现 surface 的 `editText()` + `goal-edit.ts`（格式/解析）+ `/goal edit` 无参走编辑器。编辑结果能成功写回目标（测试中 store 已更新），但 **pi-tui 的渲染循环在命令分发过程中被 stop/start 后，测试终端不再接收后续输入**（`:quit` 不生效、TUI 无法退出）；`setImmediate` 让出调用栈与 `#resume()` 里重新 `setFocus(editor)` 都未解决。本片已回滚该路径，`/goal edit` 仍然等价于 `/goal replace`（命令行文本），仅保留 `#resume()` 的重设焦点作为防御性修正。复现方式：`/goal <objective>` 后执行 `/goal edit`，用 `launchExternalEditor` 测试探针写回内容，观察 `:quit` 不再生效。建议的下一步：把目标编辑做成“预填输入行 + Ctrl+G”（复用已验证的输入行编辑器通道），或先与 pi-tui 确认 stop/start 后的事件与焦点恢复契约。
+2. **`/goal edit` 外部编辑器编辑（P5 尝试失败，P6 已解决）**：曾实现 surface 的 `editText()` + `goal-edit.ts`（格式/解析）+ `/goal edit` 无参走编辑器。编辑结果能成功写回目标（测试中 store 已更新），但 **pi-tui 的渲染循环在命令分发过程中被 stop/start 后，测试终端不再接收后续输入**（`:quit` 不生效、TUI 无法退出）；`setImmediate` 让出调用栈与 `#resume()` 里重新 `setFocus(editor)` 都未解决。本片已回滚该路径，`/goal edit` 仍然等价于 `/goal replace`（命令行文本）。复现方式：`/goal <objective>` 后执行 `/goal edit`，用 `launchExternalEditor` 测试探针写回内容，观察 `:quit` 不再生效。**P6 采用“预填输入行 + Ctrl+G”：命令不再自己停/启渲染循环，而是把目标写成一条可编辑的 `/goal replace …` 命令行放进输入行（详见 [`goal-task-p6-design.md`](./goal-task-p6-design.md) §2）。**
 3. **普通主机补验项**：live provider 用量契约（P4 §5）；spawn 版 `npm run smoke:app-server`（进程内等价断言已在 `apps/app-server/src/stdio-smoke.test.ts` 覆盖，见 P3 §6）。
 4. **协议层开放问题**：非法 JSONL 行目前结束该 stdio 循环（回错误信封后干净关闭）；是否改为“跳过该行继续服务”需在 protocol 层决定。
 5. **Windows**：按用户要求，本阶段不处理。

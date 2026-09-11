@@ -22,6 +22,7 @@
 | `/goal`       | `/goal \| pause \| resume [text] \| clear`                | 查看摘要 / 暂停自动续跑 / 恢复（blocked 计数重新开始）/ 清除目标                                                                  |
 | `/goal`       | `/goal budget [--turns <n>] [--minutes <n>] [--tokens <n>]` | 查看或设置回合数、墙钟（分钟）、可计费 token 预算                                                                              |
 | `/goal`       | `/goal replace <objective> [options]`                      | 替换当前任务的目标；运行中会通过 steering 注入当前回合                                                                        |
+| `/goal`       | `/goal edit`                                              | 把当前目标预填成可编辑的 `/goal replace …` 命令行；改完按 Enter 重新开启目标，Ctrl+G 用外部编辑器编辑整条命令              |
 | `/workspace`  | `/workspace [path]`                                       | 显示或选择工作区（绝对路径）                                                                                              |
 | `/tasks`      | `/tasks`                                                  | 列出任务（标题/状态/创建更新时间/模型/工作区/revision/Validator）                                                         |
 | `/status`     | `/status [task-id]`                                       | 查看当前或指定任务的状态、执行阶段、审批与恢复信息                                                                        |
@@ -148,5 +149,6 @@
 - `/debug` 创建 Auto Debug 任务（`mode=debug`，要求已配置 validator）：每轮先跑模型回合，再自动运行 validator；失败时把有界、脱敏的验证证据追加到下一轮 prompt 继续修复，直到验证通过、连续两轮证据相同（stall）或达到预算（默认最多 6 轮）。中途可用 `/cancel` 停止；非通过停止会把任务置为 interrupted，只能通过显式 `/resume` 继续。进度写入任务 run 记录（`/status` 可查）。
 - `/undo` 只作用于安全工作区任务：每个会变动的模型回合开始前，Candy 会把当前 changed-file 内容以有界、脱敏快照存入内存 undo 历史（每任务最多 8 轮）；`/undo` 恢复最新一轮快照（凭据形内容永不快照/恢复），并清除过期的 review 状态，之后需重新 `/changes`+`/diff` 审查。当前工作区模式下 Candy 不重置本地修改，请用 git restore/clean。undo 历史不跨重启持久化，重启后仍需显式 `/resume`。
 - `/goal` 创建或管理 Goal Task（`mode=goal`）：目标（`objective`）与可选完成判据持久化在任务元数据中；每个回合结束后，只要目标仍为 `active` 且没有活动回合、待审批、排队用户输入或续跑延迟，Candy 就用同一条 Pi 会话发起下一轮续跑，并注入目标、完成判据、剩余回合/墙钟与审计规则（目标文本作为不可信数据围栏包裹，注入前脱敏且长度有界）。停止条件：目标完成、模型报告阻塞（同一阻塞原因连续 3 个 goal 回合）或运行时连续失败、回合数/墙钟预算耗尽、`/goal pause`、`/cancel`、Candy 退出。预算耗尽时先注入一次收尾指令再停止，**绝不自动标记完成**；连续 3 个“无工具活动且工作区指纹未变”的回合会在状态与注入消息中提示，但不会自动 pause。目标状态、用量与无进展计数随任务持久化，`/status` 与顶部状态栏显示 `goal <status> · <used>/<budget> 轮`；重启/中断后任务为 paused/interrupted，需显式 `/goal resume [text]`（blocked/paused 可恢复；budget_limited/usage_limited 需 `/goal clear` 后重设目标）。
+- `/goal edit` 把当前目标预填成一条完整的 `/goal replace …` 命令行（含现有 `--criterion` 与回合/token/墙钟预算，因为 `/goal` 把省略的预算读作“无预算”）：在输入行里改完按 Enter 即重新开启目标，或按 Ctrl+G 用外部编辑器整条编辑。Candy 不在命令分发过程中停/启渲染循环（那样会让终端不再接收输入）；当目标文本里含有 `--turns`/`--minutes`/`--tokens` 这类会被 `/goal` 当选项重读的 token，或墙钟预算不是整分钟数时，命令会先给出 warning。
 - 凭据、提示词、工具参数、diff 与进程环境均做脱敏/有界处理；凭据只发往批准的 provider 端点。
 - Shell 仅在平台 G2 通过后可用；未启用时显示为不可用能力而非隐藏。

@@ -252,6 +252,127 @@ test("/goal pause stops the continuation and shows the paused goal", async () =>
   }
 });
 
+test("/goal edit prefills the current goal command and re-opens it on submit", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-edit-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Keep the fixture green --criterion npm test exits zero --turns 5");
+    terminal.emitInput("\r");
+    const created = await waitForTask(appDataRoot, (task) => task.goal !== undefined);
+    assert.ok(created?.goal, "the fixture creates a goal");
+    terminal.emitInput(":goal pause");
+    terminal.emitInput("\r");
+    await waitForTask(appDataRoot, (task) => task.goal?.status === "paused");
+
+    terminal.emitInput(":goal edit");
+    terminal.emitInput("\r");
+    const prefilled = await waitForOutput(terminal, /goal edit: adjust the objective/u);
+    // The prefilled line carries the objective and the current budgets, because
+    // `/goal` reads an omitted budget as "no budget".
+    assert.match(
+      prefilled,
+      /\/goal replace Keep the fixture green --criterion npm test exits zero --turns 5/u,
+    );
+    assert.doesNotMatch(prefilled, /goal edit: warning/u);
+
+    // Submitting the prefilled command re-opens the goal through the same
+    // validated `/goal replace` path. The task store is the reliable source of
+    // truth here: the transcript scrolls a fast goal run past the message.
+    terminal.emitInput("\r");
+    const updated = await waitForTask(
+      appDataRoot,
+      (task) => task.goal !== undefined && task.goal.goalId !== created.goal?.goalId,
+    );
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.ok(updated?.goal, "submitting the prefilled command replaces the goal");
+    assert.equal(updated.goal.objective, "Keep the fixture green");
+    assert.equal(updated.goal.completionCriterion, "npm test exits zero");
+    assert.equal(updated.goal.turnBudget, 5);
+    assert.equal(updated.goal.status, "active");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("/goal edit warns when the goal text cannot round-trip through /goal", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-edit-warning-"));
+  const { appDataRoot, workspace } = await goalFixture(root);
+  const terminal = new FakeTerminal();
+  try {
+    const engine: TuiAgentEngine = {
+      async *runTurn(input) {
+        yield { type: "turn.started", taskId: input.taskId };
+        yield { type: "turn.completed", taskId: input.taskId };
+      },
+    };
+    const runPromise = new TestInteractiveTui({
+      appDataRoot,
+      workspacePath: workspace,
+      terminal,
+      engine,
+    }).run();
+    await sleep(50);
+    terminal.emitInput(":goal Keep the fixture green");
+    terminal.emitInput("\r");
+    const created = await waitForTask(appDataRoot, (task) => task.goal !== undefined);
+    assert.ok(created?.goal, "the fixture creates a goal");
+    terminal.emitInput(":goal pause");
+    terminal.emitInput("\r");
+    await waitForTask(appDataRoot, (task) => task.goal?.status === "paused");
+    // A goal text authored outside the TUI (for example by the WebUI) can hold
+    // tokens the `/goal` reader treats as options, and a wall-clock budget that
+    // `--minutes` cannot express.
+    const store = taskStore(appDataRoot);
+    const current = store.get(created.taskId);
+    assert.ok(current, "the goal task is persisted");
+    store.setGoal(current.taskId, current.revision, {
+      objective: "Keep --turns stable",
+      wallClockBudgetMs: 90_000,
+      replace: true,
+    });
+    store.close();
+
+    terminal.emitInput(":goal edit");
+    terminal.emitInput("\r");
+    const output = await waitForOutput(terminal, /goal edit: warning/u);
+    assert.match(output, /\/goal replace Keep --turns stable/u);
+    assert.match(output, /--turns inside the goal text is read as a \/goal option/u);
+    assert.match(output, /the wall-clock budget \(90000ms\) is not a whole number/u);
+
+    // Submitting the warned-about text shows why the warning exists: the reader
+    // rejects the stray option instead of silently cutting the objective.
+    terminal.emitInput("\r");
+    const rejected = await waitForOutput(terminal, /usage: \/goal \[/u);
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
+
+    assert.match(rejected, /usage: \/goal \[/u);
+    const after = taskStore(appDataRoot);
+    assert.equal(after.get(created.taskId)?.goal?.objective, "Keep --turns stable");
+    after.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("queued user input wins the next goal turn", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-goal-yield-"));
   const { appDataRoot, workspace } = await goalFixture(root);

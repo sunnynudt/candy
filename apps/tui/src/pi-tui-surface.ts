@@ -591,6 +591,16 @@ export class CandyTuiSurface {
   }
 
   /**
+   * Replace the input line with an editable command, leaving the cursor at the
+   * end. `/goal edit` uses this instead of editing the goal from inside command
+   * dispatch, which would stop pi-tui's render loop mid-turn.
+   */
+  public prefillInput(value: string): void {
+    this.#editor.setText(value);
+    this.#tui.requestRender();
+  }
+
+  /**
    * Suspend the TUI, open the current editor content in the external
    * editor, and replace the input with the saved result on a clean exit.
    * The TUI resumes in all paths and the Candy-owned temp file is always

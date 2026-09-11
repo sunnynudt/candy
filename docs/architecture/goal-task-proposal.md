@@ -192,7 +192,7 @@ active/… --clear--> [无 goal]
 |---|---|
 | `/goal`（无参） | 显示当前任务 goal 摘要；无 goal 时给出用法 |
 | `/goal <objective> [--criterion …]` | 设置/替换 goal（有未完成 goal 时先确认） |
-| `/goal edit` | 外部编辑器编辑 objective/判据（复用 `/` 编辑器通道） |
+| `/goal edit` | 把当前 objective/判据预填成可编辑的 `/goal replace …` 命令行（含现有预算），Enter 提交生效，Ctrl+G 走外部编辑器（P6 实现：不再在命令分发中停/启渲染循环） |
 | `/goal pause` / `/goal resume` | 暂停 / 恢复自动续跑（resume 可带 continuation） |
 | `/goal clear` | 清除 goal（不影响任务） |
 | `/goal budget …` | 设置/查看预算 |

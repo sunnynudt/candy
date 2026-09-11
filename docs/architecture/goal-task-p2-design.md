@@ -21,7 +21,7 @@
 
 - WebUI / app-server 接入与 protocol 扩展（P3）。
 - token 预算（P4）。
-- 目标文本的外部编辑器交互式编辑（本片 `/goal edit` 是 `/goal replace` 的别名；编辑器通道接入属后续增强）。
+- 目标文本的外部编辑器交互式编辑（后续增强；P2 时 `/goal edit` 是 `/goal replace` 的别名，P6 已改为“预填命令行 + Ctrl+G”）。
 
 ## 2. 设计决策
 
@@ -60,7 +60,7 @@
 | `/goal` | 当前任务目标摘要；无任务时给用法 |
 | `/goal <objective> [--criterion <text>] [--turns <n>] [--minutes <n>]` | 创建 Goal Task（新任务）；当前任务已有未完成目标或仍在运行时拒绝 |
 | `/goal replace <objective> [options]` | 替换当前任务目标（预算与计数重置）；运行中经 steering 注入，空闲时开始续跑回合 |
-| `/goal edit …` | 本片为 `replace` 的别名（外部编辑器编辑待后续） |
+| `/goal edit` | 当前目标预填成可编辑的 `/goal replace …` 命令行（含现有预算）；Enter 提交重新开启目标，Ctrl+G 外部编辑器编辑整条命令（P6 实现） |
 | `/goal pause` | `active → paused`，停止自动续跑 |
 | `/goal resume [text]` | `paused`/`blocked → active`，必要时开始一次续跑回合；blocked 计数重新开始 |
 | `/goal clear` | 清除目标（任务与 transcript 保留） |
@@ -93,4 +93,4 @@
 
 1. P3：app-server `runTask` 接同一 policy（含 `goalTools` 注入与同一 stop-reason 映射），`packages/protocol` 增加 goal 命令/事件；WebUI 复用同一摘要与恢复路径。
 2. P4：Pi Adapter usage 透传 + token 预算。
-3. 可选：目标文本的外部编辑器交互式编辑（`/goal edit` 目前是 `replace` 的别名）。
+3. 可选：目标文本的交互式编辑（`/goal edit` 在 P2 是 `replace` 的别名；P6 改为预填命令行 + Ctrl+G）。

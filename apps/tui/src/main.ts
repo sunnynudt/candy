@@ -447,6 +447,57 @@ function parseGoalArguments(value: string): TuiGoalArguments | string {
 }
 
 /**
+ * Build the editable `/goal replace` command that `/goal edit` prefills. The
+ * submitted line is re-parsed by the same `/goal` reader, so it must also carry
+ * the current budgets: `/goal` treats an omitted budget as "no budget", and an
+ * edit must never silently drop one.
+ */
+function buildGoalEditCommand(goal: {
+  readonly objective: string;
+  readonly completionCriterion?: string | undefined;
+  readonly turnBudget: number | null;
+  readonly tokenBudget: number | null;
+  readonly wallClockBudgetMs: number | null;
+}): string {
+  return [
+    `/goal replace ${goal.objective}`,
+    ...(goal.completionCriterion === undefined ? [] : [`--criterion ${goal.completionCriterion}`]),
+    ...(goal.turnBudget === null ? [] : [`--turns ${goal.turnBudget}`]),
+    ...(goal.tokenBudget === null ? [] : [`--tokens ${goal.tokenBudget}`]),
+    ...(goal.wallClockBudgetMs === null || goal.wallClockBudgetMs % 60_000 !== 0
+      ? []
+      : [`--minutes ${goal.wallClockBudgetMs / 60_000}`]),
+  ].join(" ");
+}
+
+/**
+ * Goal text the prefilled command cannot round-trip, reported instead of
+ * silently changing the goal when the user submits the edited command.
+ */
+function goalEditWarnings(goal: {
+  readonly objective: string;
+  readonly completionCriterion?: string | undefined;
+  readonly wallClockBudgetMs: number | null;
+}): readonly string[] {
+  const objectiveTokens = goal.objective.split(/\s+/u);
+  const criterionTokens = (goal.completionCriterion ?? "").split(/\s+/u);
+  const conflicts = [
+    ...GOAL_FLAGS.filter((flag) => objectiveTokens.includes(flag)),
+    ...GOAL_VALUE_FLAGS.filter((flag) => criterionTokens.includes(flag)),
+  ];
+  const warnings: string[] = [];
+  if (conflicts.length > 0)
+    warnings.push(
+      `${[...new Set(conflicts)].join(", ")} inside the goal text is read as a /goal option, so the objective or criterion would be cut short`,
+    );
+  if (goal.wallClockBudgetMs !== null && goal.wallClockBudgetMs % 60_000 !== 0)
+    warnings.push(
+      `the wall-clock budget (${goal.wallClockBudgetMs}ms) is not a whole number of minutes, and /goal only accepts --minutes, so submitting clears it`,
+    );
+  return warnings;
+}
+
+/**
  * Raised when a Goal Task ends before its goal completed. `resumable` marks
  * the stable goal stops (blocked, budget, usage limit, provider failure, or a
  * yield to the user) that leave the task paused for an explicit resume.
@@ -1240,7 +1291,10 @@ export class InteractiveTui {
         this.replaceGoal(remainder, subcommand);
         return;
       case "edit":
-        this.replaceGoal(remainder, subcommand);
+        // `/goal edit <objective>` keeps the documented replace semantics; a
+        // bare `/goal edit` opens the editable goal command in the input line.
+        if (remainder.length === 0) this.editGoal();
+        else this.replaceGoal(remainder, subcommand);
         return;
       default:
         this.createGoalTask(trimmed);
@@ -1394,12 +1448,35 @@ export class InteractiveTui {
   }
 
   /**
-   * `/goal edit` is an alias of `/goal replace` in this slice: it applies the
-   * text given on the command line. Editing in the user's external editor from
-   * inside a command is deferred: suspending pi-tui's render loop while a
-   * command is being dispatched leaves the harness terminal unable to accept
-   * later input (see goal-task-p5-design.md §6).
+   * `/goal edit` prefills the input line with an editable `/goal replace`
+   * command built from the current goal, so the objective and criterion are
+   * edited in the input line or in `$EDITOR` through the already-verified
+   * Ctrl+G channel. Candy never edits the goal from inside command dispatch:
+   * P5 showed that stopping pi-tui's render loop there leaves the terminal
+   * unable to accept later input (`goal-task-p5-design.md` §6.2).
    */
+  private editGoal(): void {
+    const taskId = this.#currentTaskId;
+    const task = taskId === undefined ? undefined : this.#store.get(taskId);
+    if (task?.goal === undefined) {
+      this.write("no current goal; use /goal <objective> to create one\n");
+      return;
+    }
+    if (this.#surface === undefined) {
+      this.write(
+        "goal edit needs the interactive Candy TUI; use /goal replace <objective> [options] instead\n",
+      );
+      return;
+    }
+    const goal = task.goal;
+    this.#surface.prefillInput(buildGoalEditCommand(goal));
+    this.write(
+      "goal edit: adjust the objective and criterion in the input line, then press Enter to re-open the goal; Ctrl+G edits the command in your editor\n",
+    );
+    for (const warning of goalEditWarnings(goal)) this.write(`goal edit: warning: ${warning}\n`);
+  }
+
+  /** Pause the goal so Candy stops automatic continuation. */
   private pauseGoal(): void {
     const taskId = this.#currentTaskId;
     const task = taskId === undefined ? undefined : this.#store.get(taskId);
