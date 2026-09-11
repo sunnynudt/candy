@@ -753,6 +753,18 @@ function containsShellPublicationAction(command: string): boolean {
         return true;
       const subcommand = findGitSubcommand(argumentsAfterGit);
       if (subcommand === undefined || !safeGitCommands.has(subcommand)) return true;
+      // Structural Git subcommands now write the task's own Git metadata, so
+      // the forms that discard the user's uncommitted work stay refused before
+      // the command reaches the sandbox.
+      if (
+        argumentsAfterGit.some((argument) => {
+          const normalized = argument.toLowerCase();
+          if (normalized === "--hard" || normalized === "--discard-changes") return true;
+          if (normalized.startsWith("--force")) return true;
+          return /^-[a-z]*f[a-z]*$/u.test(normalized);
+        })
+      )
+        return true;
     }
     if (normalizedTokens.some((token) => ["publish", "release", "deploy"].includes(token)))
       return true;
@@ -832,6 +844,8 @@ export interface CandyBashOperationsOptions {
       readonly allowProcessExec?: boolean;
       readonly processExecPaths?: readonly string[];
       readonly readOnlyPaths?: readonly string[];
+      /** Task-owned paths outside the workspace this run may also write. */
+      readonly writablePaths?: readonly string[];
       readonly signal?: AbortSignal;
     }): Promise<NativeProcessResult>;
   };
@@ -954,7 +968,7 @@ export function createCandyBashOperations(
           fullAccess: options.fullAccess === true,
           allowProcessExec: true,
           processExecPaths,
-          readOnlyPaths: resolveCandyShellReadOnlyPaths(
+          ...resolveCandyShellRunPaths(
             root,
             options.trustedGitCommonDirectory,
             options.trustedDependencyDirectory,
@@ -1151,7 +1165,7 @@ export function createCandyNetworkToolDefinition(
           network: true,
           allowProcessExec: true,
           processExecPaths,
-          readOnlyPaths: resolveCandyShellReadOnlyPaths(
+          ...resolveCandyShellRunPaths(
             root,
             options.trustedGitCommonDirectory,
             options.trustedDependencyDirectory,
@@ -1762,43 +1776,64 @@ function createCandyFullAccessEnvironment(
   );
 }
 
-function resolveCandyShellReadOnlyPaths(
+/**
+ * Split the shell run's path policy into the paths the OS profile may only
+ * read and the task-owned Git metadata it may also write.
+ *
+ * A linked Worktree keeps its gitdir and common directory outside the selected
+ * workspace, so the structural Git subcommands Candy's command policy already
+ * allows (`git branch`, `git checkout`, `git merge`, ...) need an explicit
+ * write grant there. The `.git` marker itself stays read-only: repointing a
+ * Worktree at another repository is never part of a task, and a repository
+ * whose own `.git` directory lives inside the workspace needs no extra grant.
+ *
+ * Commit and push are not part of this grant: `containsShellPublicationAction`
+ * still refuses them in a local command, and they remain available only
+ * through `candy_git_commit` and the task's push policy.
+ */
+function resolveCandyShellRunPaths(
   root: string,
   trustedGitCommonDirectory: string | undefined,
   trustedDependencyDirectory: string | undefined,
-): readonly string[] {
+): { readonly readOnlyPaths: readonly string[]; readonly writablePaths: readonly string[] } {
   const marker = path.join(root, ".git");
   const markerMetadata = trySync(() => lstatSync(marker));
   const runtimeRoot = resolveCandyNodeRuntimeRoot();
-  const extraPaths = [
+  const readOnlyPaths: string[] = [
     ...(runtimeRoot === undefined ? [] : [runtimeRoot]),
     ...(trustedDependencyDirectory === undefined ? [] : [trustedDependencyDirectory]),
   ];
-  if (markerMetadata === undefined) return extraPaths;
+  const writablePaths: string[] = [];
+  const settle = () => ({
+    readOnlyPaths: [...new Set(readOnlyPaths)],
+    writablePaths: [...new Set(writablePaths)],
+  });
+  if (markerMetadata === undefined) return settle();
   if (markerMetadata.isSymbolicLink())
     throw new Error("Local command Git metadata marker cannot be a symbolic link.");
-  const paths = [marker];
-  let gitDirectory: string | undefined;
   if (markerMetadata.isDirectory()) {
-    gitDirectory = trySync(() => realpathSync.native(marker));
-  } else if (markerMetadata.isFile()) {
-    const contents = trySync(() => readFileSync(marker, "utf8")) ?? "";
-    const target = contents.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1];
-    if (target !== undefined) {
-      gitDirectory = trySync(() =>
-        realpathSync.native(
-          path.isAbsolute(target) ? target : path.resolve(path.dirname(marker), target),
-        ),
-      );
-    }
+    // The repository's own `.git` directory lives inside the workspace, which
+    // is already writable. Pinning it read-only would refuse Candy's own
+    // structural Git subcommands, and granting it again would be redundant.
+    return settle();
   }
-  if (gitDirectory === undefined) return [...new Set([...paths, ...extraPaths])];
+  if (!markerMetadata.isFile()) return settle();
+  readOnlyPaths.push(marker);
+  const contents = trySync(() => readFileSync(marker, "utf8")) ?? "";
+  const target = contents.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1];
+  if (target === undefined) return settle();
+  const gitDirectory = trySync(() =>
+    realpathSync.native(
+      path.isAbsolute(target) ? target : path.resolve(path.dirname(marker), target),
+    ),
+  );
+  if (gitDirectory === undefined) return settle();
   if (trustedGitCommonDirectory === undefined)
     throw new Error("Local command Git metadata has no Candy-approved common directory.");
   const trustedCommonDirectory = trySync(() => realpathSync.native(trustedGitCommonDirectory));
   if (trustedCommonDirectory === undefined || !isPathWithin(trustedCommonDirectory, gitDirectory))
     throw new Error("Local command Git metadata is outside Candy's approved repository.");
-  paths.push(gitDirectory);
+  const gitMetadataPaths = [gitDirectory];
   const commondir = trySync(() => readFileSync(path.join(gitDirectory, "commondir"), "utf8")) ?? "";
   const commonTarget = commondir.trim();
   if (commonTarget.length > 0) {
@@ -1809,9 +1844,11 @@ function resolveCandyShellReadOnlyPaths(
     );
     if (commonDirectory === undefined || commonDirectory !== trustedCommonDirectory)
       throw new Error("Local command Git common directory changed.");
-    paths.push(commonDirectory);
+    gitMetadataPaths.push(commonDirectory);
   }
-  return [...new Set([...paths, ...extraPaths])];
+  // A path inside the workspace is already read/write for this run.
+  writablePaths.push(...gitMetadataPaths.filter((entry) => !isPathWithin(root, entry)));
+  return settle();
 }
 
 function resolveCandyNodeRuntimeRoot(): string | undefined {

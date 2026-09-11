@@ -2,6 +2,14 @@
 
 Updated: 2026-08-25
 
+## 2026-09-11 Trusted Shell 结构级 Git 写入授权 checkpoint
+
+- **产品修复（ADR-0017）**：命令策略层一直允许 `git branch` / `git checkout` / `git switch` / `git merge` / `git rebase` / `git restore` / `git reset` 这类结构级子命令，但 macOS profile 把**所有** Git 元数据登记为只读，导致这些命令在任意工作区形态下都返回 `Operation not permitted`；linked Worktree（如 `<repo>/.claude/worktrees/<name>`）的 gitdir 与 common dir 位于所选工作区之外，工作区授权永远覆盖不到。现在控制面把一次 shell run 的路径策略拆成 `readOnlyPaths`（Node 运行时根、受信依赖目录、`.git` 标记文件）与 `writablePaths`（任务自身仓库的 Worktree gitdir 与 common dir），由 runner 施加为有界 subpath 规则；仓库自身的 `.git` 目录位于工作区内时无需额外授权（不再被钉成只读）。commit/push 仍在命令策略层被拒（只走 `candy_git_commit` 与任务级 `/push allow`），`--hard` / `--force` / `--force-with-lease` / `-f` / `--discard-changes` 等会丢弃用户未提交改动的形态在审批与 spawn 之前就被拒；`.git` 标记保持只读（任务不能把 Worktree 改指向其它仓库），授权路径不允许包含工作区根。Windows 侧该授权未实现且其 Trusted Shell Auto / Full Access 门禁仍关闭，携带 `writablePaths` 的请求 fail closed（`unsupported_capability`），不静默降级。
+- **协议与实现**：`native/sandbox-runner` 的 `RunRequest` 新增 `writablePaths`，macOS 生成 `(allow file-read* file-map-executable)` + `(allow file-write* (subpath ...))`，并把这些路径纳入祖先元数据探测；`packages/platform` 的 `NativeProcessRequest`/payload/尺寸与凭据扫描同步新增该字段；`packages/pi-adapter` 的 `resolveCandyShellRunPaths` 返回只读/可写两组路径（保留 gitdir 必须位于 Candy 认可 common dir 内、commondir 不得漂移的校验），离线与网络两个调用点共用同一策略。
+- **回归覆盖**：Rust 新增 `macos_writable_paths_grant_read_write_minus_the_workspace_allow`（授权为窄 subpath，祖先只做元数据探测）；适配器新增“工作区内自带 `.git` 目录无需额外授权”与“破坏性 Git 形态被拒、结构级形态放行”两个测试，并更新既有 Git 元数据路径断言；macOS strict containment matrix 的断言由“全部元数据写入被拒”改为“结构级写入被授权 + 标记重指向仍被拒 + 仓库 checkout 写入仍被拒”。
+- **验证**：`cargo test --locked`（native/sandbox-runner）**12/12**；`packages/pi-adapter` 定向测试 **68/69**，唯一未通过项是 `macOS local commands run npm scripts from the current workspace without network`（真实 native runner 的 `sandbox-exec: sandbox_apply: Operation not permitted`，即 Candy 任务沙箱内无法嵌套应用 seatbelt；同一现象可直接用 runner 二进制复现，与本 checkpoint 无关）。完整 `npm run check` 与 macOS strict containment matrix（`npm run smoke:sandbox:macos`）需在普通终端重跑，本 checkpoint 未产出 OS 级证据。
+- **已知残余（记录不阻塞）**：授权范围内的 Git hooks 与仓库 `config` 随之一并变为可写（命令策略仍拒 `git config`），其变更不在任务级工作区复核范围内，与工作区自身 hook/CI 文件同属一个信任类；如需收窄建议后续单独决策。`git restore .` / `git checkout -- .` / 无 `--hard` 的 `git reset` 仍可丢弃未提交改动（本次只拦 `--hard`/`-f`/`--force` 形态）。Windows 分支未在本机编译验证（未安装 windows target）。
+
 ## 2026-08-27 Auto 本地删除长任务闭环 checkpoint（待发布）
 
 - **产品修复**：Auto profile 下，路径约束、目录句柄校验、常规文件校验、竞态复核、凭据扫描和取消检查仍全部保留，但 `candy_delete` 不再触发 TUI 的逐文件 `waiting_approval`；本地文件读写删统一由任务级 Git status/diff/测试结果复核。Read-only 仍拒绝变更，网络及 Git 发布、提交、推送、部署等外部副作用仍走审批。

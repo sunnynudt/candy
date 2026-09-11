@@ -66,6 +66,12 @@ struct RunRequest {
     process_exec_paths: Vec<String>,
     #[serde(rename = "readOnlyPaths", default)]
     read_only_paths: Vec<String>,
+    /// Absolute paths outside the workspace that this one run may also read and
+    /// write. Candy's control plane computes the policy (task-owned Git
+    /// metadata for the selected Worktree); the runner only turns it into
+    /// bounded subpath rules and never decides which paths those are.
+    #[serde(rename = "writablePaths", default)]
+    writable_paths: Vec<String>,
     #[serde(rename = "parentPid", default)]
     parent_pid: u32,
     environment: BTreeMap<String, String>,
@@ -328,6 +334,22 @@ fn run_macos(request: RunRequest) -> String {
             path.to_str().map(str::to_owned)
         })
         .collect::<Vec<_>>();
+    // A granted write path must never contain the workspace root: the
+    // workspace is already writable, so such a grant could only widen the
+    // launch beyond the task's own tree. Non-canonicalizable paths are
+    // dropped, which keeps the run fail-closed instead of failing the task.
+    let mut writable_paths = Vec::new();
+    for value in &request.writable_paths {
+        let Ok(path) = fs::canonicalize(value) else {
+            continue;
+        };
+        if !is_safe_profile_path(&path) || Path::new(workspace).starts_with(&path) {
+            return error_response("invalid_path");
+        }
+        if let Some(value) = path.to_str() {
+            writable_paths.push(value.to_owned());
+        }
+    }
     let mut process_exec_paths = request
         .process_exec_paths
         .iter()
@@ -352,6 +374,7 @@ fn run_macos(request: RunRequest) -> String {
         request.allow_process_exec,
         &process_exec_paths,
         &read_only_paths,
+        &writable_paths,
     );
     let profile = if request.full_access {
         // Full access removes the normal workspace and network restrictions.
@@ -664,6 +687,7 @@ fn sandbox_profile(
     allow_process_exec: bool,
     process_exec_paths: &[String],
     read_only_paths: &[String],
+    writable_paths: &[String],
 ) -> String {
     let executable_parent = profile_string(
         Path::new(executable)
@@ -674,6 +698,23 @@ fn sandbox_profile(
     );
     let workspace = profile_string(workspace);
     let executable = profile_string(executable);
+    // Task-owned Git metadata outside the workspace: a linked Worktree's
+    // gitdir and its common directory must be writable for the structural Git
+    // subcommands Candy's command policy allows (branch/checkout/merge/...).
+    // Candy never lists a path in both policies, so these rules never have to
+    // arbitrate against the read-only denies.
+    let writable_policy = writable_paths
+        .iter()
+        .map(|path| {
+            let profile_path = profile_string(path);
+            format!(
+                "(allow file-read* file-map-executable (subpath \"{}\"))\n\
+                 (allow file-write* (subpath \"{}\"))\n\
+                 ",
+                profile_path, profile_path
+            )
+        })
+        .collect::<String>();
     let read_only_policy = read_only_paths
         .iter()
         .map(|path| {
@@ -697,6 +738,7 @@ fn sandbox_profile(
     let mut metadata_paths = vec![workspace.as_str(), executable.as_str()];
     metadata_paths.extend(process_exec_paths.iter().map(String::as_str));
     metadata_paths.extend(read_only_paths.iter().map(String::as_str));
+    metadata_paths.extend(writable_paths.iter().map(String::as_str));
     // npm's launcher uses `/usr/bin/env`; it is already an allowed system
     // executable, and this adds only the metadata probes for its ancestors.
     metadata_paths.push("/usr/bin/env");
@@ -755,6 +797,7 @@ fn sandbox_profile(
          {}\
          {}\
          {}\
+         {}\
          (allow file-read-metadata file-test-existence\n\
              (literal \"/private\")\n\
              (literal \"/private/var\")\n\
@@ -771,6 +814,7 @@ fn sandbox_profile(
         process_exec_policy,
         process_exec_path_policy,
         read_only_policy,
+        writable_policy,
         network_system_read_policy,
         ancestor_metadata_policy,
         executable_parent,
@@ -1202,6 +1246,14 @@ extern "system" {
 
 #[cfg(windows)]
 fn run_windows(request: RunRequest) -> String {
+    // Candy's macOS Trusted Shell Auto policy grants write access to the task's
+    // own Git metadata outside the workspace. The Windows backend has not
+    // implemented or verified that grant (its Trusted Shell and Full Access
+    // gates are closed), so a request carrying one fails closed instead of
+    // silently running with a narrower capability than the task authorized.
+    if !request.writable_paths.is_empty() {
+        return error_response("unsupported_capability");
+    }
     let paths = match canonical_launch_paths(&request) {
         Ok(paths) => paths,
         Err(code) => return error_response(code),
@@ -2617,6 +2669,7 @@ mod tests {
             false,
             &[],
             &[],
+            &[],
         );
         assert!(profile.contains("(deny default)"));
         assert!(!profile.contains("(allow default)"));
@@ -2639,12 +2692,14 @@ mod tests {
             false,
             &[],
             &[],
+            &[],
         );
         let elevated = super::sandbox_profile(
             "/private/var/folders/fixture/workspace",
             "/bin/bash",
             true,
             false,
+            &[],
             &[],
             &[],
         );
@@ -2655,6 +2710,34 @@ mod tests {
         assert!(elevated.contains("(literal \"/private/etc/ssl/cert.pem\")"));
         assert!(elevated.contains("(literal \"/private/etc/ssl/openssl.cnf\")"));
         assert!(!elevated.contains("(subpath \"/private/etc/ssl\")"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_writable_paths_grant_read_write_minus_the_workspace_allow() {
+        let workspace = "/private/var/folders/fixture/workspace";
+        let git_directory = "/private/var/folders/fixture/repository/.git/worktrees/task";
+        let profile = super::sandbox_profile(
+            workspace,
+            "/bin/bash",
+            false,
+            true,
+            &[],
+            &[workspace.to_owned()],
+            &[git_directory.to_owned()],
+        );
+        assert!(profile.contains(&format!(
+            "(allow file-read* file-map-executable (subpath \"{git_directory}\"))"
+        )));
+        assert!(profile.contains(&format!(
+            "(allow file-write* (subpath \"{git_directory}\"))"
+        )));
+        // The task-owned Git metadata stays a narrow subpath grant: a write
+        // grant never widens to the fixture root that contains the workspace.
+        assert!(!profile.contains("(allow file-write* (subpath \"/private/var/folders/fixture\"))"));
+        // Ancestor metadata probes keep macOS path resolution working for the
+        // granted path without exposing its contents.
+        assert!(profile.contains("(literal \"/private/var/folders/fixture/repository\")"));
     }
 
     #[cfg(target_os = "macos")]
@@ -2679,6 +2762,7 @@ mod tests {
                 "/Library/Developer/CommandLineTools/usr/libexec/git-core".to_owned(),
                 "/Library/Developer/CommandLineTools/usr/lib".to_owned(),
             ],
+            &[],
             &[],
         );
         assert!(profile.contains(

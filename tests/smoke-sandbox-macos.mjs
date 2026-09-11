@@ -32,9 +32,10 @@ const matrix = {
   native: {
     validatorSucceeded: false,
     gitWorktreeSucceeded: false,
-    gitMetadataWriteBlocked: false,
-    gitRefUpdateBlocked: false,
-    gitReflogWriteBlocked: false,
+    gitMetadataWriteGranted: false,
+    gitRefUpdateGranted: false,
+    gitWorktreeMarkerWriteBlocked: false,
+    repositoryCheckoutWriteBlocked: false,
     outsideReadBlocked: false,
     outsideWriteBlocked: false,
     symlinkReadBlocked: false,
@@ -114,11 +115,8 @@ async function runShell(command, signal, network = false) {
       PATH: "/Library/Developer/CommandLineTools/usr/bin:/usr/bin:/bin",
       GIT_CONFIG_NOSYSTEM: "1",
     },
-    readOnlyPaths: [
-      path.join(workspace, ".git"),
-      path.join(repository, ".git"),
-      path.join(repository, ".git", "worktrees", path.basename(workspace)),
-    ],
+    readOnlyPaths: [path.join(workspace, ".git")],
+    writablePaths: [path.join(repository, ".git")],
     signal,
   });
 }
@@ -195,25 +193,34 @@ try {
     throw new Error("The macOS native runner rejected a real Git Task Worktree.");
 
   const gitCommit = await runShell(
-    "git -c user.name=Candy -c user.email=candy@example.invalid commit --allow-empty -qm blocked-commit",
+    "git -c user.name=Candy -c user.email=candy@example.invalid commit --allow-empty -qm granted-commit",
   );
-  matrix.native.gitMetadataWriteBlocked =
-    gitCommit.code !== 0 && /Operation not permitted|Permission denied/u.test(gitCommit.stderr);
-  if (!matrix.native.gitMetadataWriteBlocked)
-    throw new Error("The macOS native runner allowed a Git metadata write.");
+  matrix.native.gitMetadataWriteGranted = gitCommit.code === 0;
+  if (!matrix.native.gitMetadataWriteGranted)
+    throw new Error(
+      "The macOS native runner refused a structural Git write in the task's own metadata.",
+    );
 
-  const gitRefUpdate = await runShell("git update-ref refs/heads/main HEAD");
-  matrix.native.gitRefUpdateBlocked =
-    gitRefUpdate.code !== 0 &&
-    /Operation not permitted|Permission denied/u.test(gitRefUpdate.stderr);
-  if (!matrix.native.gitRefUpdateBlocked)
-    throw new Error("The macOS native runner allowed a Git ref update.");
+  const gitRefUpdate = await runShell("git update-ref refs/heads/smoke-structural HEAD");
+  matrix.native.gitRefUpdateGranted = gitRefUpdate.code === 0;
+  if (!matrix.native.gitRefUpdateGranted)
+    throw new Error("The macOS native runner refused a Git ref update in the task's own metadata.");
 
-  const gitReflog = await runShell("git reflog expire --all");
-  matrix.native.gitReflogWriteBlocked =
-    gitReflog.code !== 0 && /Operation not permitted|Permission denied/u.test(gitReflog.stderr);
-  if (!matrix.native.gitReflogWriteBlocked)
-    throw new Error("The macOS native runner allowed a Git reflog write.");
+  const markerWrite = await runNode(
+    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(workspace, ".git"))}, 'gitdir: /private/tmp/evil\\n'); process.stdout.write('marker-written');`,
+  );
+  matrix.native.gitWorktreeMarkerWriteBlocked =
+    markerWrite.code !== 0 && markerWrite.stdout !== "marker-written";
+  if (!matrix.native.gitWorktreeMarkerWriteBlocked)
+    throw new Error("The macOS native runner allowed the Worktree Git marker to be repointed.");
+
+  const repositoryWrite = await runNode(
+    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(repository, "repository-write.txt"))}, 'repository-write'); process.stdout.write('write-ok');`,
+  );
+  matrix.native.repositoryCheckoutWriteBlocked =
+    repositoryWrite.code !== 0 && !existsSync(path.join(repository, "repository-write.txt"));
+  if (!matrix.native.repositoryCheckoutWriteBlocked)
+    throw new Error("The macOS native runner allowed a write into the task repository checkout.");
 
   const rawRead = await runNode(
     `const fs = require('node:fs'); process.stdout.write(fs.readFileSync(${JSON.stringify(outsideRead)}, 'utf8'));`,

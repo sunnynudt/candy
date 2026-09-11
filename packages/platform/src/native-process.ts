@@ -41,6 +41,14 @@ export interface NativeProcessRequest {
   readonly processExecPaths?: readonly string[];
   /** Paths that the OS profile may read but never write for this shell run. */
   readonly readOnlyPaths?: readonly string[];
+  /**
+   * Paths outside the workspace that this one shell run may also read and
+   * write. Candy's control plane computes the policy (the task's own Git
+   * metadata for a linked Worktree); the runner only applies it as bounded
+   * subpath rules. Provider credentials and Candy-owned state never appear
+   * here.
+   */
+  readonly writablePaths?: readonly string[];
   readonly signal?: AbortSignal;
 }
 
@@ -145,6 +153,7 @@ export class NativeProcessRunner {
       allowProcessExec: request.allowProcessExec === true,
       processExecPaths: request.processExecPaths ?? [],
       readOnlyPaths: request.readOnlyPaths ?? [],
+      writablePaths: request.writablePaths ?? [],
       parentPid: process.pid,
       environment,
     });
@@ -474,6 +483,7 @@ function assertNativeRequestSize(
   addField("allowProcessExec", request.allowProcessExec === true ? 4 : 5);
   addField("processExecPaths", jsonArrayByteLength(request.processExecPaths ?? []));
   addField("readOnlyPaths", jsonArrayByteLength(request.readOnlyPaths ?? []));
+  addField("writablePaths", jsonArrayByteLength(request.writablePaths ?? []));
   addField("parentPid", String(process.pid).length);
   addField("environment", jsonEnvironmentByteLength(environment));
   if (bytes > MAX_NATIVE_REQUEST_BYTES)
@@ -495,6 +505,10 @@ function assertNativeRequestMaterialSafe(
     ]) ?? []),
     ...(request.readOnlyPaths?.map((value): readonly [string, string] => [
       "read-only path",
+      value,
+    ]) ?? []),
+    ...(request.writablePaths?.map((value): readonly [string, string] => [
+      "writable path",
       value,
     ]) ?? []),
     ...environmentEntries(request.environment ?? {}).map((value): readonly [string, string] => [

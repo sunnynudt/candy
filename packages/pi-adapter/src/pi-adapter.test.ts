@@ -2651,6 +2651,7 @@ test("Candy Trusted Shell only grants Candy-approved Git metadata paths", async 
   await writeFile(path.join(workspace, ".git"), `gitdir: ${gitDirectory}\n`);
   await writeFile(path.join(gitDirectory, "commondir"), "../..\n");
   let readOnlyPaths: readonly string[] | undefined;
+  let writablePaths: readonly string[] | undefined;
   let runnerCalled = false;
   const operations = createCandyBashOperations(workspace, {
     bashPath: "/bin/bash",
@@ -2660,6 +2661,7 @@ test("Candy Trusted Shell only grants Candy-approved Git metadata paths", async 
       run: async (request) => {
         runnerCalled = true;
         readOnlyPaths = request.readOnlyPaths;
+        writablePaths = request.writablePaths;
         return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
       },
     },
@@ -2667,12 +2669,11 @@ test("Candy Trusted Shell only grants Candy-approved Git metadata paths", async 
   await operations.exec("git status --short", workspace, { onData: () => undefined });
   assert.equal(runnerCalled, true);
   const runtimeRoot = path.dirname(path.dirname(realpathSync.native(process.execPath)));
-  assert.deepEqual(readOnlyPaths, [
-    path.join(workspace, ".git"),
-    await realpath(gitDirectory),
-    await realpath(commonDirectory),
-    runtimeRoot,
-  ]);
+  assert.deepEqual(readOnlyPaths, [runtimeRoot, path.join(workspace, ".git")]);
+  // A linked Worktree keeps its gitdir and common directory outside the
+  // workspace, so the structural Git subcommands Candy already allows need an
+  // explicit write grant there.
+  assert.deepEqual(writablePaths, [await realpath(gitDirectory), await realpath(commonDirectory)]);
 
   await writeFile(path.join(workspace, ".git"), `gitdir: ${path.dirname(common)}\n`);
   runnerCalled = false;
@@ -2904,4 +2905,69 @@ test("Candy Pi session storage resolves relative session files inside the sessio
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Candy Trusted Shell needs no extra Git grant for a repository inside the workspace", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "candy-trusted-shell-own-repository-"));
+  await mkdir(path.join(workspace, ".git"), { recursive: true });
+  let readOnlyPaths: readonly string[] | undefined;
+  let writablePaths: readonly string[] | undefined;
+  const operations = createCandyBashOperations(workspace, {
+    bashPath: "/bin/bash",
+    exists: () => true,
+    trustedGitCommonDirectory: path.join(workspace, ".git"),
+    runner: {
+      run: async (request) => {
+        readOnlyPaths = request.readOnlyPaths;
+        writablePaths = request.writablePaths;
+        return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+      },
+    },
+  });
+  await operations.exec("git checkout -b task/merge", workspace, { onData: () => undefined });
+  const runtimeRoot = path.dirname(path.dirname(realpathSync.native(process.execPath)));
+  assert.deepEqual(readOnlyPaths, [runtimeRoot]);
+  assert.deepEqual(writablePaths, []);
+});
+
+test("Candy Trusted Shell refuses destructive Git forms and keeps structural ones", async () => {
+  let runnerCalled = false;
+  const operations = createCandyBashOperations("C:\\task-worktree", {
+    bashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    exists: () => true,
+    pathSeam: path.win32,
+    onApproval: async () => true,
+    runner: {
+      run: async () => {
+        runnerCalled = true;
+        return { code: 0, signal: null, stdout: "", stderr: "", cancelled: false };
+      },
+    },
+  });
+  const destructive = [
+    "git reset --hard HEAD",
+    "git clean -fdx",
+    "git checkout -f main",
+    "git checkout --force main",
+    "git branch -f other main",
+    "git fetch --force origin",
+    "git restore --discard-changes .",
+  ];
+  for (const command of destructive) {
+    await assert.rejects(
+      operations.exec(command, "C:\\task-worktree", { onData: () => undefined }),
+      /publication/iu,
+    );
+  }
+  assert.equal(runnerCalled, false);
+  const structural = [
+    "git checkout -b bugfix/lightmerge",
+    "git merge origin/main",
+    "git status --short",
+    "git rev-parse --abbrev-ref HEAD",
+  ];
+  for (const command of structural) {
+    await operations.exec(command, "C:\\task-worktree", { onData: () => undefined });
+  }
+  assert.equal(runnerCalled, true);
 });
