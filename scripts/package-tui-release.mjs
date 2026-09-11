@@ -33,6 +33,7 @@ await rm(stagingRoot, { recursive: true, force: true });
 await mkdir(stagingRoot, { recursive: true });
 
 await copyWithRuntimeDependencies();
+await copySandboxRunner();
 await makeBinBootstrap();
 await writeManifest();
 await writeInstallScripts();
@@ -45,6 +46,42 @@ process.stdout.write(`release version: ${releaseVersion}\n`);
 process.stdout.write(
   `install: ${path.join(releaseRoot, process.platform === "win32" ? "install.cmd" : "install.sh")}\n`,
 );
+
+/**
+ * Ship the Candy Sandbox Runner inside the release payload.
+ *
+ * `resolveNativeProcessRunnerPath` resolves the runner next to the TUI module
+ * (`apps/tui/native`). A release published without it loses offline local
+ * commands, the native validator, and Full access as soon as Candy is launched
+ * from outside the source checkout, so the payload carries its own runner
+ * instead of depending on the launch directory.
+ */
+async function copySandboxRunner() {
+  if (platform !== process.platform) {
+    throw new Error(
+      `Packaging ${platform} from ${process.platform} would omit the Candy Sandbox Runner; package on a ${platform} host instead.`,
+    );
+  }
+  const nativeName = platform === "win32" ? "candy-sandbox-runner.exe" : "candy-sandbox-runner";
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "--manifest-path",
+      path.join(root, "native", "sandbox-runner", "Cargo.toml"),
+    ],
+    { stdio: "inherit" },
+  );
+  const source = path.join(root, "native", "sandbox-runner", "target", "debug", nativeName);
+  if (!existsSync(source)) {
+    throw new Error(`Candy Sandbox Runner build did not produce ${source}.`);
+  }
+  const target = path.join(stagingRoot, "apps", "tui", "native", nativeName);
+  await mkdir(path.dirname(target), { recursive: true });
+  await cp(source, target);
+  if (platform !== "win32") await chmod(target, 0o755);
+}
 
 function parseArgs(rawArgs) {
   const options = {
