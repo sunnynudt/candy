@@ -34,7 +34,8 @@ const matrix = {
     gitWorktreeSucceeded: false,
     gitMetadataWriteGranted: false,
     gitRefUpdateGranted: false,
-    gitWorktreeMarkerWriteBlocked: false,
+    gitWorktreeMarkerRepointAllowed: false,
+    repointedGitMetadataWriteBlocked: false,
     repositoryCheckoutWriteBlocked: false,
     outsideReadBlocked: false,
     outsideWriteBlocked: false,
@@ -206,13 +207,30 @@ try {
   if (!matrix.native.gitRefUpdateGranted)
     throw new Error("The macOS native runner refused a Git ref update in the task's own metadata.");
 
+  // Repointing the Worktree marker changes a workspace file, not the write
+  // grant: Candy's own file tools can rewrite `.git` inside the workspace, and
+  // the profile resolves an operation by its last matching rule, so the
+  // workspace write allow outranks the earlier read-only deny (measured
+  // 2026-09-11). The property that has to hold is that a repointed marker
+  // cannot widen the grant.
+  const repointedGitDirectory = path.join(outside, "repointed-gitdir");
+  await mkdir(repointedGitDirectory, { recursive: true });
   const markerWrite = await runNode(
-    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(workspace, ".git"))}, 'gitdir: /private/tmp/evil\\n'); process.stdout.write('marker-written');`,
+    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(workspace, ".git"))}, 'gitdir: ${repointedGitDirectory}\\n'); process.stdout.write('marker-written');`,
   );
-  matrix.native.gitWorktreeMarkerWriteBlocked =
-    markerWrite.code !== 0 && markerWrite.stdout !== "marker-written";
-  if (!matrix.native.gitWorktreeMarkerWriteBlocked)
-    throw new Error("The macOS native runner allowed the Worktree Git marker to be repointed.");
+  matrix.native.gitWorktreeMarkerRepointAllowed =
+    markerWrite.code === 0 && markerWrite.stdout === "marker-written";
+  if (!matrix.native.gitWorktreeMarkerRepointAllowed)
+    throw new Error(
+      "The macOS native runner refused a workspace-file write; the profile ordering changed and this expectation must be re-derived.",
+    );
+  const repointedWrite = await runNode(
+    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(repointedGitDirectory, "escape.txt"))}, 'escape-write'); process.stdout.write('escape-written');`,
+  );
+  matrix.native.repointedGitMetadataWriteBlocked =
+    repointedWrite.code !== 0 && !existsSync(path.join(repointedGitDirectory, "escape.txt"));
+  if (!matrix.native.repointedGitMetadataWriteBlocked)
+    throw new Error("A repointed Worktree marker widened the write grant.");
 
   const repositoryWrite = await runNode(
     `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(repository, "repository-write.txt"))}, 'repository-write'); process.stdout.write('write-ok');`,
