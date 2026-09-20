@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Candy Runtime Deep Modules",
+    "subtitle": "Small interfaces hide Pi, provider, tool, workspace, browser, storage, and platform complexity",
+    "output": "candy-runtime-modules.html",
+    "viewBox": [1420, 980]
+  },
+  "components": [
+    { "id": "clients", "type": "frontend", "label": "Client Adapters", "sublabel": "TUI / Desktop JSONL", "pos": [40, 320], "size": [170, 68] },
+    { "id": "runtime", "type": "backend", "label": "Candy Runtime", "sublabel": "dispatch / events / snapshot", "pos": [260, 320], "size": [180, 68] },
+    { "id": "engine", "type": "backend", "label": "Task Engine", "sublabel": "one task + one owner", "pos": [500, 320], "size": [170, 68] },
+    { "id": "pi", "type": "backend", "label": "Pi Adapter", "sublabel": "only Pi imports", "pos": [720, 320], "size": [160, 68] },
+    { "id": "provider", "type": "cloud", "label": "Provider Module", "sublabel": "stream + gates + auth", "pos": [940, 180], "size": [180, 68] },
+    { "id": "models", "type": "external", "label": "Domestic Models", "sublabel": "DeepSeek / MiniMax", "pos": [1170, 180], "size": [160, 68] },
+    { "id": "tools", "type": "messagebus", "label": "Tool Host", "sublabel": "policy + execution", "pos": [940, 430], "size": [180, 68] },
+    { "id": "workspace", "type": "database", "label": "Workspace Module", "sublabel": "Local / Worktree / Handoff", "pos": [1170, 430], "size": [170, 68] },
+    { "id": "store", "type": "database", "label": "Task Store", "sublabel": "session + attachment", "pos": [500, 560], "size": [170, 68] },
+    { "id": "browser_port", "type": "frontend", "label": "Browser Port", "sublabel": "observe / act / control", "pos": [940, 610], "size": [180, 68] },
+    { "id": "browser_host", "type": "frontend", "label": "Browser Host", "sublabel": "Electron main", "pos": [1170, 610], "size": [160, 68] },
+    { "id": "platform", "type": "security", "label": "Platform Module", "sublabel": "keychain + paths + locks", "pos": [720, 750], "size": [180, 68] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "@candy/runtime", "wraps": ["runtime", "engine", "pi", "provider", "tools", "store", "browser_port"] },
+    { "kind": "security-group", "label": "Privileged local adapters", "wraps": ["platform"] }
+  ],
+  "connections": [
+    { "from": "clients", "to": "runtime", "variant": "emphasis" },
+    { "from": "runtime", "to": "engine", "variant": "emphasis" },
+    { "from": "engine", "to": "pi", "variant": "emphasis" },
+    { "from": "pi", "to": "provider", "label": "model turn", "variant": "emphasis", "route": "orthogonal-h" },
+    { "from": "provider", "to": "models", "label": "approved HTTPS", "variant": "emphasis", "labelAt": [1145, 262] },
+    { "from": "pi", "to": "tools", "label": "tool call", "route": "orthogonal-h" },
+    { "from": "tools", "to": "workspace", "label": "mutations", "variant": "security" },
+    { "from": "runtime", "to": "store", "label": "state", "fromSide": "bottom", "toSide": "left", "route": "orthogonal-v" },
+    { "from": "tools", "to": "browser_port", "label": "browser tool", "fromSide": "bottom", "toSide": "top", "labelAt": [1030, 540] },
+    { "from": "browser_port", "to": "browser_host", "label": "typed RPC", "variant": "security" },
+    { "from": "provider", "to": "platform", "label": "secret lease", "variant": "security", "fromSide": "bottom", "toSide": "top", "via": [[900, 270], [900, 700], [810, 700]], "labelAt": [900, 520] },
+    { "from": "store", "to": "platform", "label": "app data", "variant": "dashed", "route": "orthogonal-h" },
+    { "from": "workspace", "to": "platform", "label": "paths + locks", "variant": "dashed", "fromSide": "bottom", "toSide": "right", "via": [[1150, 720], [930, 720]], "labelAt": [1040, 738] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "External Interface", "items": ["Runtime exposes only dispatch, events, and snapshot", "TUI and Desktop use the same observable behavior", "Pi types never cross the Runtime seam"] },
+    { "dot": "emerald", "title": "Internal Depth", "items": ["Task Engine owns one model, session, and workspace", "Tool Host centralizes approvals and serialization", "Provider Module owns endpoint and rate policy"] },
+    { "dot": "rose", "title": "Real Seams", "items": ["In-process and JSONL client adapters", "DeepSeek, MiniMax, and deterministic provider adapters", "Windows, macOS, and in-memory platform adapters"] }
+  ]
+}

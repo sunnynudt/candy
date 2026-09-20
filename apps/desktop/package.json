@@ -1,0 +1,19 @@
+{
+  "name": "@candy/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "exports": {
+    ".": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    }
+  },
+  "dependencies": {
+    "electron": "43.2.0",
+    "@candy/platform": "0.0.0",
+    "@candy/protocol": "0.0.0",
+    "@candy/runtime": "0.0.0"
+  }
+}
