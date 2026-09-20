@@ -7,6 +7,13 @@
     { "path": "packages/pi-adapter" },
     { "path": "apps/tui" },
     { "path": "apps/app-server" },
-    { "path": "apps/desktop" }
+    { "path": "apps/desktop" },
+    { "path": "packages/pi-adapter/tsconfig.test.json" },
+    { "path": "packages/platform/tsconfig.test.json" },
+    { "path": "packages/protocol/tsconfig.test.json" },
+    { "path": "packages/runtime/tsconfig.test.json" },
+    { "path": "apps/app-server/tsconfig.test.json" },
+    { "path": "apps/desktop/tsconfig.test.json" },
+    { "path": "apps/tui/tsconfig.test.json" }
   ]
 }

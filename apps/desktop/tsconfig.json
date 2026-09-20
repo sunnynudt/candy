@@ -5,6 +5,7 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/desktop.tsbuildinfo"
   },
+  "exclude": ["src/**/*.test.ts"],
   "include": ["src/**/*.ts", "src/**/*.cts"],
   "references": [
     { "path": "../../packages/platform" },

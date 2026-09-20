@@ -15,7 +15,7 @@ const violations = [];
 async function visit(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name === "dist" || entry.name === "node_modules") {
+    if (entry.name === "dist" || entry.name === "build" || entry.name === "node_modules") {
       continue;
     }
 
