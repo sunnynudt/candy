@@ -82,7 +82,15 @@ V1 does not include:
 - Preserve unrelated user changes.
 - The user has explicitly authorized checkpoint commits and pushes for V1 work on the canonical branch under the rules above. Publishing releases, creating pull requests, and Git operations outside that scope still require explicit authorization.
 
+## Checkpoint evidence and documentation
+
+- Implement the smallest runnable checkpoint and complete its applicable deterministic checks before moving on. Record unavailable platform, provider, or review evidence separately; never treat missing evidence as a pass or weaken a security invariant to close a gate.
+- Maintain current status and unresolved work in `docs/implementation/self-iteration-progress.md`. Store sanitized, revision-bound acceptance summaries in `docs/evidence/`; keep raw reports and machine-specific state in ignored local locations.
+- `docs/archive/` contains frozen historical records, not current product scope, execution authority, or acceptance evidence for a new revision. Product scope, accepted ADRs, and `docs/product/acceptance-v1.md` remain authoritative.
+- Unattended work must not request credentials or inspect other tools' credential stores. Record missing external resources as blocked and continue independent authorized work.
+
 ## Agent skills
+
 
 ### Issue tracker
 

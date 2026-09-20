@@ -1,10 +1,12 @@
+> Historical archive, frozen on 2026-09-20. Statements such as "current", "pending", and "authorized" below apply only to the original checkpoints. This is not current implementation status or execution authority. See the [maintained status index](../implementation/self-iteration-progress.md), [product scope](../product/candy-v1.md), and [acceptance contract](../product/acceptance-v1.md).
+
 # Candy V1 Grilling Handoff
 
 Updated: 2026-08-09
 
 This document records the accepted product decisions and the remaining grilling frontier so another Codex session can continue without reconstructing the discussion. `docs/product/candy-v1.md`, `CONTEXT.md`, and accepted ADRs remain the source of truth when this handoff and a settled decision differ.
 
-Scope note (2026-08-17): this is a historical handoff snapshot. The current V1 contract is the TUI-only scope in [`candy-v1.md`](candy-v1.md) and [`acceptance-v1.md`](acceptance-v1.md); Desktop, Browser Workspace, and their dependent workflows are V2 and the older requirements below are not V1 acceptance criteria.
+Scope note (2026-08-17): this is a historical handoff snapshot. The V1 contract at that time was the TUI-only scope; consult the maintained [product contract](../product/candy-v1.md) and [acceptance standard](../product/acceptance-v1.md) for current scope. Desktop, Browser Workspace, and their dependent workflows are V2 and the older requirements below are not V1 acceptance criteria.
 
 Scope note (2026-09-08): ADR-0015 supersedes the older DeepSeek-first and MiniMax-native-image decisions below. The current direction is a model-neutral provider catalog; MiniMax M3 is an ordinary selectable model, and image attachments follow the selected model capability rather than a provider-specific route.
 

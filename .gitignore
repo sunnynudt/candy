@@ -30,6 +30,9 @@ pnpm-debug.log*
 *.key
 
 # Local developer source-analysis notes and diagrams
+/docs/blog_html/
+/docs/product/candy-current-eli5.html
+/docs/product/permission-experience-spec.md
 /docs/research/candy-source-architecture-2026-08-31.md
 /docs/research/candy-source-security-workspace-2026-08-31.md
 /docs/diagrams/current-source-2026-08-31/
