@@ -1,3 +1,5 @@
+> Historical archive, frozen on 2026-09-20. Statements such as "current", "pending", and "authorized" below apply only to the original checkpoints. This is not current implementation status or execution authority. See the [maintained status index](../implementation/self-iteration-progress.md), [product scope](../product/candy-v1.md), and [acceptance contract](../product/acceptance-v1.md).
+
 # Candy V1 Blocker Register
 
 Updated: 2026-08-25

@@ -1,7 +1,10 @@
 # GitHub Issue Drafts — 创建顺序与命令
 
-这些文件是待发布到本仓库 GitHub Issues 的任务草稿（本会话无 `gh`/Shell 能力，无法直接创建）。
-请在 Candy 仓库根目录按**以下顺序**执行，每个任务一条命令；创建后核对 issue 内容再开始实施。
+这些文件是待核对的历史任务草稿，不是已发布 Issue，也不是当前实施授权。
+
+2026-09-20 核对本仓库全部 GitHub Issues：现有 #2、#3、#4、#5，没有与下列五份草稿一一对应的已发布任务。保留草稿以免丢失未决需求；发布前先核对当前源码、产品合同和现有 Issue，避免重复创建或重开已经完成的工作。
+
+下方命令仅作为核对后的发布参考。当前状态维护在 [实施状态索引](../../implementation/self-iteration-progress.md)，执行与分支规则以 [AGENTS.md](../../../AGENTS.md) 为准。
 
 创建顺序（依赖关系：Issue 1 → Issue 2；Issue 3/4/5 在 1、2 完成或并行评估后执行）：
 
@@ -41,7 +44,7 @@ gh issue create \
 
 - `gh issue list` 核对五个 issue 的编号与顺序；在相关 issue 上按需 `gh issue comment <number>` 补充上下文。
 - Issue 2 的"当前 SHA"以执行时的 `git rev-parse HEAD` 为准（预期为 Issue 1 修复后的提交，不再引用 `a9d1d60d` 之前的状态）。
-- 每个任务完成后：更新 `docs/implementation/todolist-v1.md` / `progress-v1.md`，并按分支策略 commit/push 到 `codex/candy-v1-foundation`（仍需用户显式授权 push 时单独确认）。
+- 每个任务完成后：更新 `docs/implementation/self-iteration-progress.md`，按 `AGENTS.md` 和当前用户授权执行验证、提交与发布。
 - 关闭 issue：`gh issue close <number>`（建议附完成证据摘要后再关闭）。
 
 边界提醒（草稿正文中已写入，执行时请保持一致）：

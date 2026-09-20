@@ -26,4 +26,4 @@
 
 - 上述命令全部通过，或失败/跳过项均有明确原因与环境说明（不把环境受限写成 Pass）。
 - 生成绑定 SHA 的脱敏基线报告，含边界声明。
-- 基线结果同步更新 `docs/implementation/todolist-v1.md` / `progress-v1.md`。
+- 基线结果同步更新 `docs/implementation/self-iteration-progress.md`，验收摘要保存在 `docs/evidence/`。
