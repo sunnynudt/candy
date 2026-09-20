@@ -6,5 +6,6 @@
     "tsBuildInfoFile": "dist/runtime.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../platform" }]
+  "references": [{ "path": "../platform" }],
+  "exclude": ["src/**/*.test.ts"]
 }

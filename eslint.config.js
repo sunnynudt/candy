@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "docs/diagrams/**/*.html"],
+    ignores: ["**/dist/**", "**/build/**", "**/node_modules/**", "docs/diagrams/**/*.html"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

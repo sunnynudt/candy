@@ -1,6 +1,6 @@
 # Candy implementation status and evidence index
 
-Updated: 2026-09-20 (documentation cleanup only; no new acceptance run)
+Updated: 2026-09-20 (documentation cleanup and workspace test layout; no new acceptance run)
 
 ## Scope and authority
 
@@ -29,6 +29,33 @@ This file is the maintained entry point for implementation status. It is also re
 GitHub issue inventory checked on 2026-09-20: [#2](https://github.com/sunnynudt/candy/issues/2), [#3](https://github.com/sunnynudt/candy/issues/3), [#4](https://github.com/sunnynudt/candy/issues/4), and [#5](https://github.com/sunnynudt/candy/issues/5) were open. This is an inventory, not proof that every old issue description matches the current product contract.
 
 ## Documentation maintenance
+
+Workspace test layout maintenance (2026-09-20): moved 35 unit-test files from
+`src/` into workspace-local `tests/` directories: 21 across Pi Adapter, Platform,
+Protocol, and Runtime, plus 14 across App Server, Desktop, and TUI.
+Separate test projects emit into ignored `build/`
+directories; product entry points remain in `dist/`. The unit-test runner maps
+current test sources to compiled outputs so stale artifacts cannot duplicate
+tests. See [test layout](../../tests/README.md). This is a structural change, not
+new platform or provider acceptance evidence.
+
+Validation on the `chore/separate-package-tests` working tree based on `11c46fa`:
+clean TypeScript build, formatting, lint, dependency boundaries, Pi version graph,
+and lifecycle-script checks passed; the four packages passed 292/292 tests.
+The initial package-only migration run was PARTIAL (495/496 passed): the unchanged TUI test
+`default TUI runs an offline npm script in its Task Worktree without a local approval`
+failed because its local command reported failure. The same test failed in
+isolation; its underlying cause remains unresolved. No Windows or live-provider
+acceptance was run for this layout change.
+
+After migrating application tests, a clean rebuild and the same static checks
+passed. All 35 current test files have compiled outputs, with no test files left
+in `src/` or compiled tests in `dist/`. The full run was PARTIAL (494/496 passed):
+the offline npm test still failed, and
+`default TUI composition root isolates new Auto tasks with local commands ready`
+failed during temporary Git-directory cleanup with `ENOTEMPTY`. Test assertions
+and product implementation were unchanged by either migration. The cleanup test
+passed when run alone; this does not convert the full-run failure into a pass.
 
 Update this index with concise changes, exact evidence revisions, and unresolved work. Store sanitized acceptance summaries in `docs/evidence/`. Keep raw logs, sessions, screenshots, machine configuration, and unaccepted personal drafts in ignored local locations.
 
