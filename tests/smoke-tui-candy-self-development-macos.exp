@@ -1,0 +1,143 @@
+log_user 0
+set timeout 180
+log_file -a $env(CANDY_SELF_DEV_PTY_LOG)
+
+proc fail {message} {
+  puts stderr "Candy self-development dogfood failed: $message"
+  exit 1
+}
+
+proc send_command {value} {
+  send -- "$value\r"
+}
+
+proc wait_for {pattern description} {
+  expect {
+    -re $pattern {}
+    timeout { fail "timed out waiting for $description" }
+    eof { fail "TUI exited while waiting for $description" }
+  }
+}
+
+proc send_until {value pattern description} {
+  for {set attempt 0} {$attempt < 8} {incr attempt} {
+    send_command $value
+    expect -timeout 2 -re $pattern { return } timeout {} eof {
+      fail "TUI exited while waiting for $description"
+    }
+    after 250
+  }
+  fail "timed out waiting for $description after command retries"
+}
+
+cd $env(CANDY_SELF_DEV_LAUNCH_DIR)
+spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
+wait_for {开始任务|继续任务} "usable TUI input"
+
+send_command ":workspace $env(CANDY_SELF_DEV_WORKSPACE)"
+wait_for {workspace selected:} "Candy source workspace selection"
+send_command ":profile auto"
+wait_for {profile auto: file read/create/edit/delete enabled;} "Auto profile"
+wait_for {offline local commands on} "offline local command state"
+
+# Exercise a real provider-backed Esc interruption during a long model stream.
+send_command "Do not use tools, edit files, or use network. Write a very long, detailed explanation of Candy V1's runtime boundary and acceptance contract, at least 4000 words, and continue until complete. If this turn is interrupted, do not retry the explanation on continuation; instead confirm that the saved model context is ready to continue."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set model_escape_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for model Esc task creation" }
+  eof { fail "TUI exited while waiting for model Esc task creation" }
+}
+wait_for {正在回答} "model stream for Esc interruption"
+after 500
+send -- "\033"
+wait_for "${model_escape_task_id} interrupted:" "model-stream Esc interruption completion"
+send_command "Continue this same task after the model-stream interruption. Keep the saved context, do not use tools, edit files, or use network. Briefly confirm continuation readiness."
+wait_for "continuing ${model_escape_task_id}" "model-stream same-task continuation"
+wait_for "${model_escape_task_id} completed" "model-stream same-task continuation completion"
+
+# Exercise a real provider-backed Esc interruption during tool execution. The
+# bounded sleep gives the PTY a deterministic tool window without touching the
+# workspace.
+send_command ":new"
+wait_for {new task ready} "tool Esc task creation in the same TUI"
+send_command "For this task, first use candy_bash to run exactly the offline command sleep 30. If the turn is interrupted, do not retry the sleep on continuation; instead explain that the interrupted task kept its context and is ready to continue. Do not edit files or use network."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set escape_task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for Esc task creation" }
+  eof { fail "TUI exited while waiting for Esc task creation" }
+}
+wait_for {运行命令.*candy_bash} "Esc task shell execution"
+send -- "\033"
+wait_for "${escape_task_id} interrupted:" "Esc interruption completion"
+send_command "Continue this same task after the interruption. Keep the saved context, do not retry the sleep, do not edit files, and do not use network. Briefly confirm continuation readiness."
+wait_for "continuing ${escape_task_id}" "same-task continuation"
+wait_for "${escape_task_id} completed" "same-task continuation completion"
+
+send_command ":new"
+wait_for {new task ready} "self-development task creation in the same TUI"
+send_command ":validator $env(CANDY_SELF_DEV_NODE) tests/fixtures/candy-self-development-validator.mjs"
+wait_for {validator configured for new tasks:} "validator configuration"
+
+send_command "Candy maintainer task, first phase only. Your next four actions must be four separate successful candy_read tool calls, in exactly this order, one path per call: docs/product/candy-v1.md; docs/product/acceptance-v1.md; apps/tui/src/main.ts; docs/implementation/self-iteration-progress.md. Do not combine paths, do not substitute candy_bash, and do not use any other tool. After all four reads, briefly discuss the runtime boundary, Task Worktree rule, and verification plan. Stop after the discussion and end your reply with the exact marker SELF_DEV_READ_PHASE_READY_20260908. Do not create, edit, delete, stage, commit, push, or validate any file; do not use network."
+expect {
+  -re {created (task-[a-z0-9]+)[[:space:]]+\(queued\)} { set task_id $expect_out(1,string) }
+  timeout { fail "timed out waiting for self-development task creation" }
+  eof { fail "TUI exited while waiting for self-development task creation" }
+}
+wait_for {SELF_DEV_READ_PHASE_READY_20260908} "self-development read phase marker"
+wait_for "${task_id} completed" "self-development task completion"
+send_command "Second phase: now implement the bounded change discussed above. Create only docs/implementation/self-development-dogfood-note.md in the Task Worktree with exactly two lines: # Candy self-development dogfood and Needs validator repair. Leave the second line wrong for this first turn so the configured validator fails; do not fix it yet. Finally use candy_bash for git diff --check and git status --short. No network, no staging, commit, push, or other file changes; report the change and results. End your reply with the exact marker SELF_DEV_IMPLEMENT_PHASE_READY_20260908."
+wait_for {SELF_DEV_IMPLEMENT_PHASE_READY_20260908} "self-development implementation phase marker"
+wait_for "continuing ${task_id}" "self-development implementation continuation"
+wait_for "${task_id} completed" "self-development implementation completion"
+send_command ":changes"
+wait_for "changed files: ${task_id}" "changed-file review"
+send_command ":diff"
+wait_for "diff ${task_id}" "self-development diff header"
+wait_for {self-development-dogfood-note.md} "self-development diff review"
+after 500
+send_command ":validate"
+wait_for {validator running:} "self-development validator start"
+wait_for {validator fail:} "controlled self-development validator failure"
+send_command "The validator failed as expected because the second line is wrong. Now repair only docs/implementation/self-development-dogfood-note.md so its second line is exactly Verified by the real Candy TUI and DeepSeek Pi Agent Engine. Use candy_bash to rerun git diff --check and git status --short. Do not modify anything else, use network, stage, commit, or push."
+wait_for "continuing ${task_id}" "explicit failure-repair continuation"
+wait_for "${task_id} completed" "failure-repair completion"
+set repair_passed 0
+for {set repair_attempt 0} {$repair_attempt < 3 && $repair_passed == 0} {incr repair_attempt} {
+  send_command ":validate"
+  wait_for {validator running:} "failure-repair validator start"
+  expect {
+    -re {validator pass:} { set repair_passed 1 }
+    -re {validator fail:} {
+      if {$repair_attempt < 2} {
+        send_command "The validator still fails. Repair only docs/implementation/self-development-dogfood-note.md to the exact reviewed two-line content, then use candy_bash for git diff --check and git status --short. Do not change anything else or use network."
+        wait_for "continuing ${task_id}" "retry failure-repair continuation"
+        wait_for "${task_id} completed" "retry failure-repair completion"
+      }
+    }
+    timeout { fail "timed out waiting for failure-repair validator result" }
+    eof { fail "TUI exited during failure-repair validator" }
+  }
+}
+if {$repair_passed == 0} { fail "failure-repair validator did not pass after three bounded attempts" }
+
+send_command ":quit"
+expect eof
+
+spawn -noecho $env(CANDY_SELF_DEV_NODE) $env(CANDY_SELF_DEV_CHILD)
+wait_for {开始任务|继续任务} "TUI restart"
+send_command ":tasks"
+after 250
+send_until ":use $model_escape_task_id" "current task: ${model_escape_task_id}" "history switch to model-stream task"
+send_until ":use $escape_task_id" "current task: ${escape_task_id}" "history switch to interrupted-and-continued task"
+send_until ":use $task_id" "current task: ${task_id}" "history selection"
+send_command ":changes"
+wait_for "changed files: ${task_id}" "history change review"
+send_command ":quit"
+expect eof
+
+set result [open $env(CANDY_SELF_DEV_RESULT) w]
+puts $result "model_escape_task_id=$model_escape_task_id"
+puts $result "escape_task_id=$escape_task_id"
+puts $result "task_id=$task_id"
+close $result

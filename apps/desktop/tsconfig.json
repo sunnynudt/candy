@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/desktop.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts", "src/**/*.cts"],
+  "references": [
+    { "path": "../../packages/platform" },
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/runtime" }
+  ]
+}

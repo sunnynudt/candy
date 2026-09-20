@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Candy Task Lifecycle",
+    "subtitle": "Execution slots, approvals, pause/resume, interruption recovery, and terminal outcomes",
+    "output": "candy-task-lifecycle.html",
+    "viewBox": [1040, 700]
+  },
+  "lanes": [
+    { "id": "main", "label": "Primary lifecycle" },
+    { "id": "waiting", "label": "Approval + pause" },
+    { "id": "recovery", "label": "Recovery" },
+    { "id": "terminal", "label": "Terminal exits" }
+  ],
+  "states": [
+    { "id": "draft", "type": "start", "label": "Draft", "sublabel": "task created", "lane": "main", "col": 0, "step": "01" },
+    { "id": "queued", "type": "waiting", "label": "Queued", "sublabel": "await execution slot", "lane": "main", "col": 1, "step": "02", "tag": "FIFO" },
+    { "id": "running", "type": "active", "label": "Running", "sublabel": "owns execution", "lane": "main", "col": 2, "step": "03", "tag": "one owner" },
+    { "id": "verifying", "type": "decision", "label": "Verifying", "sublabel": "completion criteria", "lane": "main", "col": 3, "step": "04" },
+    { "id": "completed", "type": "success", "label": "Completed", "sublabel": "ready for review", "lane": "main", "col": 4, "step": "05", "tag": "success" },
+    { "id": "approval", "type": "waiting", "label": "Needs Approval", "sublabel": "human decision", "lane": "waiting", "col": 0, "tag": "pause" },
+    { "id": "paused", "type": "waiting", "label": "Paused", "sublabel": "user or stall", "lane": "waiting", "col": 1, "tag": "resumable" },
+    { "id": "interrupted", "type": "external", "label": "Interrupted", "sublabel": "crash or app quit", "lane": "recovery", "col": 2, "tag": "explicit resume" },
+    { "id": "cancelled", "type": "failure", "label": "Cancelled", "sublabel": "user stopped", "lane": "terminal", "col": 0 },
+    { "id": "failed", "type": "failure", "label": "Failed", "sublabel": "terminal error", "lane": "terminal", "col": 1 }
+  ],
+  "transitions": [
+    { "from": "running", "to": "approval", "label": "permission", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelAt": [402, 202] },
+    { "from": "approval", "to": "running", "label": "approved", "variant": "security", "route": "left-channel" },
+    { "from": "running", "to": "paused", "label": "pause / stall", "variant": "dashed", "route": "drop" },
+    { "from": "paused", "to": "queued", "label": "resume", "variant": "dashed", "route": "left-channel" },
+    { "from": "running", "to": "interrupted", "label": "crash / quit", "variant": "security", "route": "drop" },
+    { "from": "interrupted", "to": "queued", "variant": "security", "route": "left-channel" },
+    { "from": "verifying", "to": "running", "label": "not done", "variant": "dashed", "route": "top-channel" },
+    { "from": "queued", "to": "cancelled", "label": "cancel", "variant": "security", "route": "drop", "labelAt": [325, 350] },
+    { "from": "running", "to": "failed", "label": "terminal error", "variant": "security", "route": "drop", "labelAt": [520, 390] },
+    { "from": "paused", "to": "cancelled", "variant": "security", "route": "bottom-channel" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Main Rail", "items": ["Draft to Completed is the primary lifecycle", "Only Running consumes an execution slot", "Verification is explicit before completion"] },
+    { "dot": "amber", "title": "Resumable Waits", "items": ["Approval and Paused retain task context", "Resume re-enters the queue", "Interrupted never resumes silently"] },
+    { "dot": "rose", "title": "Terminal States", "items": ["Completed, Cancelled, and Failed do not auto-restart", "Uncertain tool side effects are not replayed", "Explicit quit records Interrupted before shutdown"] }
+  ]
+}
