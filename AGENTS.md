@@ -61,10 +61,9 @@ V1 does not include:
 
 ## Development rules
 
-- The canonical V1 implementation and delivery branch is `codex/candy-v1-foundation`. Continue V1 work on this branch unless the user explicitly changes the branch policy.
-- Before a work packet, fetch `origin/codex/candy-v1-foundation`. Fast-forward when the remote is ahead; stop for explicit resolution if local and remote histories diverge.
-- After each coherent, verified V1 checkpoint, inspect the staged scope, scan it for credential material, commit it, push it to `origin/codex/candy-v1-foundation`, and verify that the remote branch resolves to the same commit before starting the next work packet.
-- Never force-push or rewrite published V1 branch history. If a checkpoint push still fails after bounded retries, stop before accumulating further local-only work and report the synchronization blocker.
+- The integration branch is `main`. Create task-specific branches from current `origin/main`; the historical `codex/candy-v1-foundation` content was integrated through PR #6.
+- Before a work packet, fetch `origin/main` and check the base. Preserve local changes and never reset or rewrite published history to synchronize.
+- After each coherent, verified checkpoint, inspect the changed scope and scan it for credential material. Commit, push, and open a pull request only within the user's authorized scope; do not push directly to `main`.
 - Treat the exact Pi release as the compatibility anchor for the agent runtime. Node.js must stay on a Pi-tested major line, TypeScript must match the pinned Pi release, and npm must remain compatible with Pi's lockfile/install workflow.
 - Before running npm or node commands, activate the pinned baseline from `.nvmrc` (`nvm use` at the repository root) whenever the active Node is not `v22.23.2`. Never change a machine's global nvm default or other projects' Node versions for Candy work.
 - Pin direct dependencies and the complete `@earendil-works/pi-*` package family to exact accepted versions through the root lockfile and install assertions. Do not allow a mixed Pi package graph.
@@ -80,7 +79,7 @@ V1 does not include:
 - Reuse Pi tools behind a thin Candy Tool Host.
 - Do not add abstractions for hypothetical requirements.
 - Preserve unrelated user changes.
-- The user has explicitly authorized checkpoint commits and pushes for V1 work on the canonical branch under the rules above. Publishing releases, creating pull requests, and Git operations outside that scope still require explicit authorization.
+- Historical authorization for checkpoint pushes to the V1 foundation branch does not authorize direct pushes to `main`. Publishing releases and merging pull requests require explicit authorization.
 
 ## Checkpoint evidence and documentation
 
