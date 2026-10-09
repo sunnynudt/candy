@@ -18,6 +18,7 @@ import { ProviderContractError } from "@candy/pi-adapter";
 import { resetCapabilitiesCache } from "@earendil-works/pi-tui";
 import {
   InMemoryCredentialStore,
+  isTrustedShellAutoAvailable,
   NativeProcessRunner,
   resolveAppPaths,
   SQLiteTaskStore,
@@ -1298,14 +1299,18 @@ test("interactive TUI cancels a turn while compaction is in progress", async () 
   }
 });
 
-test("default TUI composition root isolates new Auto tasks with local commands ready", async () => {
-  if (!isMacosTrustedShellAutoAvailable()) return;
+test("default TUI composition root isolates new Auto tasks with local commands ready", async (t) => {
+  if (!isMacosTrustedShellAutoAvailable()) {
+    t.skip("requires the accepted macOS arm64 Trusted Shell host");
+    return;
+  }
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-trusted-shell-default-on-"));
   const repository = await createTuiGitFixture(root);
   const terminal = new FakeTerminal();
   let observedTrustedShell = false;
+  let runPromise: Promise<void> | undefined;
   try {
-    const runPromise = createDefaultInteractiveTui({
+    runPromise = createDefaultInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       workspacePath: repository,
       terminal,
@@ -1348,12 +1353,18 @@ test("default TUI composition root isolates new Auto tasks with local commands r
     terminal.emitInput("\r");
     await runPromise;
   } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("default TUI runs an offline npm script in its Task Worktree without a local approval", async () => {
-  if (!isMacosTrustedShellAutoAvailable()) return;
+test("default TUI runs an offline npm script in its Task Worktree without a local approval", async (t) => {
+  if (!isMacosTrustedShellAutoAvailable()) {
+    t.skip("requires the accepted macOS arm64 Trusted Shell host");
+    return;
+  }
   const nativeRunner = path.join(
     process.cwd(),
     "native",
@@ -1362,7 +1373,7 @@ test("default TUI runs an offline npm script in its Task Worktree without a loca
     "debug",
     "candy-sandbox-runner",
   );
-  if (!existsSync(nativeRunner)) return;
+  assert.ok(existsSync(nativeRunner), "Build the native Sandbox Runner before this test.");
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-default-local-command-"));
   const repository = await createTuiGitFixture(root);
   const appDataRoot = path.join(root, "app-data");
@@ -1451,7 +1462,7 @@ test("default TUI runs an offline npm script in its Task Worktree without a loca
     );
     const taskId = completed.match(/created (task-[a-z0-9]+)/u)?.[1];
     assert.ok(taskId);
-    assert.match(terminalText(terminal), /运行命令 · candy_bash · 完成/u);
+    assert.match(terminalText(terminal), /运行命令 · candy_bash · 完成/u, terminalText(terminal));
     assert.doesNotMatch(
       terminalText(terminal),
       /waiting for your approval|Local commands enabled/u,
@@ -4238,11 +4249,12 @@ test("interactive TUI reports unavailable local commands instead of claiming off
   }
 });
 
-test("interactive TUI keeps the ready wording and stays quiet when local commands are available", async () => {
+test("interactive TUI reports local command readiness only when the host gate allows it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "candy-tui-local-commands-ready-"));
   const terminal = new FakeTerminal();
+  let runPromise: Promise<void> | undefined;
   try {
-    const runPromise = new TestInteractiveTui({
+    runPromise = new TestInteractiveTui({
       appDataRoot: path.join(root, "app-data"),
       terminal,
       trustedShellAutoAvailable: true,
@@ -4260,12 +4272,22 @@ test("interactive TUI keeps the ready wording and stays quiet when local command
     terminal.emitInput("/access current");
     terminal.emitInput("\r");
     const access = await waitForOutput(terminal, /访问模式：当前工作区/u);
-    assert.match(access, /本地检查自动离线运行/u);
-    assert.doesNotMatch(access, /本地命令不可用：/u);
+    const available = isMacosTrustedShellAutoAvailable() || isTrustedShellAutoAvailable();
+    if (available) {
+      assert.match(access, /本地检查自动离线运行/u);
+      assert.doesNotMatch(access, /本地命令不可用：/u);
+    } else {
+      assert.match(access, /本地检查不可用/u);
+      assert.match(access, /本地命令不可用：/u);
+      assert.doesNotMatch(access, /本地检查自动离线运行/u);
+    }
     terminal.emitInput(":quit");
     terminal.emitInput("\r");
     await runPromise;
   } finally {
+    terminal.emitInput(":quit");
+    terminal.emitInput("\r");
+    await runPromise;
     await rm(root, { recursive: true, force: true });
   }
 });
