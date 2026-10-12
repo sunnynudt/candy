@@ -28,6 +28,30 @@ This file is the maintained entry point for implementation status. It is also re
 
 GitHub issue inventory checked on 2026-09-20: [#2](https://github.com/sunnynudt/candy/issues/2), [#3](https://github.com/sunnynudt/candy/issues/3), [#4](https://github.com/sunnynudt/candy/issues/4), and [#5](https://github.com/sunnynudt/candy/issues/5) were open. This is an inventory, not proof that every old issue description matches the current product contract.
 
+## CI repair follow-up (2026-10-09)
+
+The `fix/ci-platform-tests` working tree is based on main `33c456a`.
+The local-command readiness test now checks the real host gate rather than
+assuming a fake runner enables it. The production containment gate is unchanged.
+The composition-root fixture now waits for TUI shutdown even on assertion failure
+before deleting its temporary Git directory. Two macOS-only fixtures explicitly
+report skips on unsupported hosts, and the native npm fixture fails rather than
+silently passing when its required runner is missing.
+
+CI builds the locked native runner with Rust 1.97.1 before tests and Windows
+native smoke. The integration-branch instructions now reflect the V1 integration
+through PR #6 and subsequent work on main-based branches.
+
+Linux validation: `npm run check` passed, with 494 tests passed, two macOS-only
+fixtures explicitly skipped, and zero failures. TUI, task, app-server and actual
+WebUI process smoke checks passed using the configured writable Candy data
+directory. The historical
+macOS offline npm failure still requires reproduction and native command output
+on an accepted macOS arm64 host; adding diagnostics does not establish its fix.
+The historical ENOTEMPTY failure also requires macOS rerun to verify the cleanup
+correction. No new GitHub Actions, macOS, Windows or live-provider acceptance is
+claimed by this local change.
+
 ## Documentation maintenance
 
 Workspace test layout maintenance (2026-09-20): moved 35 unit-test files from
