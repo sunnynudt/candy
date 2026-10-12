@@ -6,7 +6,7 @@ This document defines when the Candy V1 local operator surfaces are complete. Pr
 
 ## Acceptance policy
 
-- The primary macOS platform is the current stable Tahoe `26.x` Apple Silicon release (currently `26.6.1`). Windows 11 x64 is the second required platform.
+- The primary macOS platform is the current macOS Apple Silicon release at or above the floor declared in `config/platform-support.mjs` (see [ADR-0018](../adr/0018-macos-acceptance-floor.md)). Windows 11 x64 is the second required platform.
 - Every deterministic test must pass. A retry does not convert a failure into a pass.
 - Every enabled provider's required live contract must pass with real credentials through the same Pi Adapter and provider path used by the TUI.
 - A provider or network failure may produce a controlled, actionable result; it must never cause silent fallback, state corruption, uncertain side-effect replay, or secret exposure.
@@ -30,7 +30,7 @@ V1 requires zero open P0/P1 defects. P2 items require explicit product-owner acc
 
 | ID      | Environment                                                  | Required V1 scope                                                                   |
 | ------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| ENV-MAC | Current macOS Tahoe `26.x` Apple Silicon, currently `26.6.1` | TUI, app-data, Keychain, workspace, session, native adapter where enabled           |
+| ENV-MAC | Current macOS Apple Silicon at or above the floor in `config/platform-support.mjs` | TUI, app-data, Keychain, workspace, session, native adapter where enabled           |
 | ENV-WIN | Current supported Windows 11 x64                             | TUI, app-data, Credential Manager, workspace, session, native adapter where enabled |
 
 No current macOS run proves Windows behavior. Unsupported operating systems must fail clearly rather than partially execute.

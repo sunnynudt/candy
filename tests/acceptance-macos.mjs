@@ -4,12 +4,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanChildEnvironment } from "@candy/platform";
+import { macosArchitecture, macosMinimumVersion } from "../config/platform-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const acceptanceRoot = path.join(root, "out", "acceptance", "macos");
 const npmScript = process.env.npm_execpath;
 const reportFileName = "latest.md";
-const acceptanceTarget = "current macOS Tahoe 26.x arm64 host";
+const acceptanceTarget = `macOS ${formatMacosVersion(macosMinimumVersion)} or later on ${macosArchitecture}`;
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("macOS acceptance requires macOS arm64.");
@@ -26,8 +27,11 @@ const lockfileDigest = createHash("sha256")
 const macosVersion = runCapture("/usr/bin/sw_vers", ["-productVersion"]);
 const architecture = runCapture("/usr/bin/uname", ["-m"]);
 const cleanWorktree = runCapture("git", ["status", "--porcelain"]) === "";
-if (!isTahoe26Version(macosVersion) || architecture !== "arm64") {
-  const reason = `current macOS acceptance requires Tahoe 26.x on arm64; received ${macosVersion} on ${architecture}.`;
+if (
+  !meetsMinimumMacosVersion(macosVersion, macosMinimumVersion) ||
+  architecture !== macosArchitecture
+) {
+  const reason = `macOS acceptance requires ${formatMacosVersion(macosMinimumVersion)} or later on ${macosArchitecture}; received ${macosVersion} on ${architecture}.`;
   await writeBlockedReport({
     startedAt,
     revision,
@@ -145,17 +149,39 @@ function runCapture(command, args) {
   }).trim();
 }
 
-function isTahoe26Version(value) {
+/**
+ * Returns true when the supplied macOS product version is at or above the
+ * documented floor. Apple reports versions with 1, 2, or 3 components; missing
+ * components default to 0. There is no upper bound by design: the harness
+ * records the exact version and ADR-0018 governs support claims.
+ */
+function meetsMinimumMacosVersion(value, floor) {
   const parsed = parseMacosVersion(value);
-  return parsed !== undefined && parsed.major === 26;
+  if (parsed === undefined) return false;
+  if (parsed.major !== floor.major) return parsed.major > floor.major;
+  if (parsed.minor !== floor.minor) return parsed.minor > floor.minor;
+  return parsed.patch >= floor.patch;
 }
 
 function parseMacosVersion(value) {
+  if (typeof value !== "string") return undefined;
   const parts = value.split(".").map((part) => Number(part));
-  if (parts.length < 3 || parts.some((part) => !Number.isInteger(part) || part < 0)) {
+  if (
+    parts.length < 1 ||
+    parts.length > 3 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0)
+  ) {
     return undefined;
   }
-  return { major: parts[0], minor: parts[1], patch: parts[2] };
+  return {
+    major: parts[0],
+    minor: parts[1] ?? 0,
+    patch: parts[2] ?? 0,
+  };
+}
+
+function formatMacosVersion(version) {
+  return `${version.major}.${version.minor}.${version.patch}`;
 }
 
 async function writeBlockedReport({

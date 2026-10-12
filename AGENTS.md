@@ -10,7 +10,7 @@ Read `docs/product/acceptance-v1.md` before claiming an implementation slice or 
 ## V1 constraints
 
 - Use TypeScript for product and control-plane code. A narrowly scoped Rust native helper is permitted only for OS command sandboxing and Windows Job Object process ownership; it must not contain model, task, approval, provider, workspace-policy, or UI logic.
-- Support the current macOS Tahoe `26.x` Apple Silicon primary acceptance host (currently `26.6.1`) and Windows 11.
+- Support the current macOS Apple Silicon primary acceptance host at or above the floor declared in `config/platform-support.mjs` (see [ADR-0018](docs/adr/0018-macos-acceptance-floor.md)), and Windows 11.
 - Integrate Pi through a narrow adapter.
 - Do not fork Pi or rewrite its agent loop.
 - Run the TUI runtime in-process.
@@ -57,7 +57,7 @@ V1 does not include:
 - Keep platform-specific credential, process, path, and lock behavior behind narrow adapters.
 - Desktop app-server communication uses typed JSONL over stdio.
 - Communication with the native Sandbox Runner uses a separate versioned typed JSONL protocol over stdio. It must never carry provider credentials.
-- Verify relevant behavior on the current macOS Tahoe `26.x` Apple Silicon host and Windows 11 before claiming cross-platform support.
+- Verify relevant behavior on the current macOS Apple Silicon host (at or above the floor in `config/platform-support.mjs`) and Windows 11 before claiming cross-platform support.
 
 ## Development rules
 
@@ -83,6 +83,7 @@ V1 does not include:
 
 ## Checkpoint evidence and documentation
 
+- Before any verification, detect the current host class (`darwin` + `arm64` is macOS Apple Silicon, `win32` + `x64` is Windows 11). On a MacBook Pro, focus on macOS verification; on a Windows PC, focus on Windows verification. Do not let another platform's CI result influence a judgment about the platform you are on.
 - Implement the smallest runnable checkpoint and complete its applicable deterministic checks before moving on. Record unavailable platform, provider, or review evidence separately; never treat missing evidence as a pass or weaken a security invariant to close a gate.
 - Maintain current status and unresolved work in `docs/implementation/self-iteration-progress.md`. Store sanitized, revision-bound acceptance summaries in `docs/evidence/`; keep raw reports and machine-specific state in ignored local locations.
 - `docs/archive/` contains frozen historical records, not current product scope, execution authority, or acceptance evidence for a new revision. Product scope, accepted ADRs, and `docs/product/acceptance-v1.md` remain authoritative.

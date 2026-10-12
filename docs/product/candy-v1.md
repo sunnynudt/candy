@@ -4,7 +4,7 @@
 
 Candy V1 is a standalone, model-neutral local coding product delivered through a terminal UI (TUI) and a local browser WebUI. It provides a Codex-class local coding loop without requiring Codex, OpenCode, or a separately installed Pi CLI. Each interface runs one agent per task and may run independent tasks concurrently within a bounded limit.
 
-V1 targets the current macOS Tahoe `26.x` Apple Silicon host (currently `26.6.1`) and Windows 11.
+V1 targets the current macOS Apple Silicon host at or above the floor declared in `config/platform-support.mjs` (see [ADR-0018](../adr/0018-macos-acceptance-floor.md)) and Windows 11.
 
 The Electron Desktop client and Browser Workspace are explicitly V2 scope. Their source, adapters, and historical design notes must not be used as evidence that V1 is implemented or accepted.
 
