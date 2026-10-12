@@ -1846,8 +1846,20 @@ function resolveCandyShellRunPaths(
       throw new Error("Local command Git common directory changed.");
     gitMetadataPaths.push(commonDirectory);
   }
-  // A path inside the workspace is already read/write for this run.
-  writablePaths.push(...gitMetadataPaths.filter((entry) => !isPathWithin(root, entry)));
+  // A path inside the workspace is already read/write for this run. A path that
+  // contains the workspace cannot be a write grant: the native runner refuses
+  // that request outright, which would fail every local command with
+  // `invalid_path`. It is still granted read-only, which never widens writes
+  // and keeps Git able to resolve the repository.
+  const canonicalRoot = trySync(() => realpathSync.native(root)) ?? root;
+  for (const entry of gitMetadataPaths) {
+    if (isPathWithin(root, entry)) continue;
+    if (isPathWithin(entry, canonicalRoot)) {
+      readOnlyPaths.push(entry);
+      continue;
+    }
+    writablePaths.push(entry);
+  }
   return settle();
 }
 
